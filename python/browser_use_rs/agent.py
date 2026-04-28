@@ -53,6 +53,7 @@ class Agent:
         effort: str = "xhigh",
         max_steps: int = 30,
         max_tokens: int = 16000,
+        max_consecutive_errors: int = 5,
         client: anthropic.AsyncAnthropic | None = None,
         system_prompt: str = SYSTEM_PROMPT,
     ):
@@ -62,10 +63,12 @@ class Agent:
         self.effort = effort
         self.max_steps = max_steps
         self.max_tokens = max_tokens
+        self.max_consecutive_errors = max_consecutive_errors
         self.client = client or anthropic.AsyncAnthropic()
         self.system_prompt = system_prompt
         self.session = BrowserSession()
         self.usage_log: list[dict] = []
+        self.error_log: list[tuple[int, str]] = []
 
     async def run(self) -> str:
         await self.session.start()
@@ -84,6 +87,7 @@ class Agent:
                 "cache_control": {"type": "ephemeral"},
             }
         ]
+        consecutive_error_turns = 0
 
         for step in range(self.max_steps):
             response = await self.client.messages.create(
@@ -117,6 +121,22 @@ class Agent:
                 *(self._run_tool(tu) for tu in tool_uses)
             )
             messages.append({"role": "user", "content": list(tool_results)})
+
+            # Bail if every tool in this turn failed and that streak hits
+            # the cap — model is likely stuck. The model sees the errors in
+            # tool_result content and can self-correct; we just put a
+            # ceiling on how long we let it spin.
+            if all(r.get("is_error") for r in tool_results):
+                consecutive_error_turns += 1
+                for r in tool_results:
+                    self.error_log.append((step, str(r.get("content", ""))))
+                if consecutive_error_turns >= self.max_consecutive_errors:
+                    return (
+                        f"agent gave up after {consecutive_error_turns} consecutive "
+                        f"all-error turns at step {step}"
+                    )
+            else:
+                consecutive_error_turns = 0
 
         return f"hit max_steps={self.max_steps} without final answer"
 
