@@ -1,11 +1,16 @@
 //! Browser session lifecycle. Spawns Chromium, attaches via CDP, and
 //! exposes the small surface the agent loop actually needs:
 //! `start`, `navigate`, `screenshot`, `dom_snapshot`, `click_index`,
-//! `type_index`, `scroll`, `stop`.
+//! `type_index`, `scroll`, plus tab management.
 //!
-//! Click/type are resolved via the most-recent snapshot's element bbox —
-//! call `dom_snapshot()` before acting on an index.
+//! Multi-tab model: there's always one active tab. Operations that act on
+//! the page (navigate, click, snapshot, ...) target the active tab. Use
+//! `switch_tab` to change which tab is active. New tabs created via
+//! `new_tab` (or page-driven `window.open` followed by `list_tabs` +
+//! `switch_tab`) attach lazily — we hold one CDP session per tab in the
+//! `attached` map.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
@@ -43,6 +48,10 @@ pub enum BrowserError {
     NoSnapshot,
     #[error("element [{0}] is no longer present in the DOM — re-snapshot before acting")]
     ElementGone(u32),
+    #[error("unknown tab target_id: {0}")]
+    UnknownTab(String),
+    #[error("cannot close last tab — call stop() to end the session")]
+    LastTab,
 }
 
 pub type Result<T> = std::result::Result<T, BrowserError>;
@@ -71,13 +80,28 @@ impl Default for LaunchOptions {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct TabInfo {
+    pub target_id: String,
+    pub url: String,
+    pub title: String,
+    pub is_active: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ActiveTab {
+    target_id: String,
+    session_id: String,
+}
+
 pub struct BrowserSession {
     child: Option<Child>,
     conn: Connection,
-    session_id: String,
-    #[allow(dead_code)]
-    target_id: String,
     user_data_dir: Option<PathBuf>,
+    viewport: Option<(u32, u32)>,
+    active: Mutex<ActiveTab>,
+    /// target_id -> session_id for tabs we've attached.
+    attached: Mutex<HashMap<String, String>>,
     last_snapshot: Mutex<Option<DomState>>,
 }
 
@@ -154,12 +178,37 @@ impl BrowserSession {
 
         let conn = Connection::connect(&ws_url).await?;
 
+        // Create + attach the initial tab.
+        let (target_id, session_id) =
+            Self::create_and_attach(&conn, "about:blank", opts.viewport).await?;
+
+        let mut attached = HashMap::new();
+        attached.insert(target_id.clone(), session_id.clone());
+
+        Ok(Self {
+            child: Some(child),
+            conn,
+            user_data_dir: Some(user_data_dir),
+            viewport: opts.viewport,
+            active: Mutex::new(ActiveTab {
+                target_id,
+                session_id,
+            }),
+            attached: Mutex::new(attached),
+            last_snapshot: Mutex::new(None),
+        })
+    }
+
+    /// Create a new target with the given initial URL and attach to it
+    /// (flat session model). Enables Page + DOM domains. Returns
+    /// (target_id, session_id).
+    async fn create_and_attach(
+        conn: &Connection,
+        url: &str,
+        viewport: Option<(u32, u32)>,
+    ) -> Result<(String, String)> {
         let target = conn
-            .send(
-                "Target.createTarget",
-                json!({ "url": "about:blank" }),
-                None,
-            )
+            .send("Target.createTarget", json!({ "url": url }), None)
             .await?;
         let target_id = target
             .get("targetId")
@@ -191,8 +240,7 @@ impl BrowserSession {
         conn.send("DOM.enable", json!({}), Some(&session_id))
             .await?;
 
-        if let Some((w, h)) = opts.viewport {
-            // 0 deviceScaleFactor = use the system default.
+        if let Some((w, h)) = viewport {
             conn.send(
                 "Emulation.setDeviceMetricsOverride",
                 json!({
@@ -206,39 +254,226 @@ impl BrowserSession {
             .await?;
         }
 
-        Ok(Self {
-            child: Some(child),
-            conn,
+        Ok((target_id, session_id))
+    }
+
+    /// Returns the active tab's CDP session id (cloned). Use this wherever
+    /// you'd otherwise pass `Some(&session_id)` to `conn.send`.
+    async fn session_id(&self) -> String {
+        self.active.lock().await.session_id.clone()
+    }
+
+    /// Returns the active tab's target id.
+    pub async fn active_tab_target_id(&self) -> String {
+        self.active.lock().await.target_id.clone()
+    }
+
+    // ---------- tab management ----------
+
+    /// List all page-type targets (i.e. tabs/windows) known to the browser.
+    /// Includes tabs we haven't attached to yet (e.g. opened via
+    /// window.open). is_active is true for the tab that operations target.
+    pub async fn list_tabs(&self) -> Result<Vec<TabInfo>> {
+        let r = self
+            .conn
+            .send("Target.getTargets", json!({}), None)
+            .await?;
+        let active_target = self.active.lock().await.target_id.clone();
+        let mut out = Vec::new();
+        if let Some(arr) = r.get("targetInfos").and_then(Value::as_array) {
+            for ti in arr {
+                if ti.get("type").and_then(Value::as_str) != Some("page") {
+                    continue;
+                }
+                let target_id = ti
+                    .get("targetId")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                if target_id.is_empty() {
+                    continue;
+                }
+                out.push(TabInfo {
+                    is_active: target_id == active_target,
+                    target_id,
+                    url: ti
+                        .get("url")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    title: ti
+                        .get("title")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    /// Switch the active tab. Attaches to the target if not already attached.
+    /// Clears the cached snapshot so the next dom_snapshot reflects the new
+    /// tab's DOM.
+    pub async fn switch_tab(&self, target_id: &str) -> Result<()> {
+        // Already active? No-op.
+        if self.active.lock().await.target_id == target_id {
+            return Ok(());
+        }
+
+        // Attach if needed.
+        let session_id = {
+            let mut attached = self.attached.lock().await;
+            if let Some(sid) = attached.get(target_id) {
+                sid.clone()
+            } else {
+                // Verify the target exists before trying to attach — gives
+                // a clean error rather than a CDP protocol error.
+                let exists = self
+                    .list_tabs()
+                    .await?
+                    .into_iter()
+                    .any(|t| t.target_id == target_id);
+                if !exists {
+                    return Err(BrowserError::UnknownTab(target_id.to_string()));
+                }
+                let attach = self
+                    .conn
+                    .send(
+                        "Target.attachToTarget",
+                        json!({ "targetId": target_id, "flatten": true }),
+                        None,
+                    )
+                    .await?;
+                let sid = attach
+                    .get("sessionId")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| BrowserError::BadResponse {
+                        method: "Target.attachToTarget",
+                        detail: "missing sessionId".into(),
+                    })?
+                    .to_string();
+                self.conn
+                    .send("Page.enable", json!({}), Some(&sid))
+                    .await?;
+                self.conn
+                    .send("DOM.enable", json!({}), Some(&sid))
+                    .await?;
+                if let Some((w, h)) = self.viewport {
+                    self.conn
+                        .send(
+                            "Emulation.setDeviceMetricsOverride",
+                            json!({
+                                "width": w,
+                                "height": h,
+                                "deviceScaleFactor": 0,
+                                "mobile": false,
+                            }),
+                            Some(&sid),
+                        )
+                        .await?;
+                }
+                attached.insert(target_id.to_string(), sid.clone());
+                sid
+            }
+        };
+
+        *self.active.lock().await = ActiveTab {
+            target_id: target_id.to_string(),
             session_id,
+        };
+        // Snapshot is per-tab; invalidate.
+        *self.last_snapshot.lock().await = None;
+        Ok(())
+    }
+
+    /// Open a new tab, attach to it, make it active. If `url` is non-empty,
+    /// the new tab is navigated to it via the same load-event-driven path
+    /// as `navigate`, so `current_url` reflects the requested URL on
+    /// return rather than `about:blank`.
+    pub async fn new_tab(&self, url: &str) -> Result<TabInfo> {
+        let (target_id, session_id) =
+            Self::create_and_attach(&self.conn, "about:blank", self.viewport).await?;
+        self.attached
+            .lock()
+            .await
+            .insert(target_id.clone(), session_id.clone());
+        *self.active.lock().await = ActiveTab {
+            target_id: target_id.clone(),
+            session_id,
+        };
+        *self.last_snapshot.lock().await = None;
+
+        if !url.is_empty() {
+            self.navigate(url).await?;
+        }
+
+        Ok(TabInfo {
             target_id,
-            user_data_dir: Some(user_data_dir),
-            last_snapshot: Mutex::new(None),
+            url: if url.is_empty() {
+                "about:blank".into()
+            } else {
+                url.into()
+            },
+            title: String::new(),
+            is_active: true,
         })
     }
 
-    /// Navigate and wait for `Page.loadEventFired` matching this session.
-    /// Subscribes to events *before* sending Page.navigate to avoid a race
-    /// where the load event arrives before we listen. Returns Ok on the
-    /// 30-second timeout too — pages that legitimately never fire load
-    /// (e.g., infinite-loading SPAs) are still usable.
-    pub async fn navigate(&self, url: &str) -> Result<()> {
-        let mut events = self.conn.events();
+    /// Close a tab. If it was the active tab, switch to whichever other
+    /// tab the browser still has open. Errors if it would close the last
+    /// page — call stop() instead.
+    pub async fn close_tab(&self, target_id: &str) -> Result<()> {
+        let tabs = self.list_tabs().await?;
+        if tabs.len() <= 1 {
+            return Err(BrowserError::LastTab);
+        }
+        if !tabs.iter().any(|t| t.target_id == target_id) {
+            return Err(BrowserError::UnknownTab(target_id.to_string()));
+        }
 
         self.conn
             .send(
-                "Page.navigate",
-                json!({ "url": url }),
-                Some(&self.session_id),
+                "Target.closeTarget",
+                json!({ "targetId": target_id }),
+                None,
             )
             .await?;
+        self.attached.lock().await.remove(target_id);
 
-        let session_id = self.session_id.clone();
+        let was_active = self.active.lock().await.target_id == target_id;
+        if was_active {
+            // Pick any remaining tab and switch.
+            let next = tabs
+                .into_iter()
+                .find(|t| t.target_id != target_id)
+                .ok_or(BrowserError::LastTab)?;
+            self.switch_tab(&next.target_id).await?;
+        }
+        Ok(())
+    }
+
+    // ---------- per-page operations ----------
+
+    /// Navigate and wait for `Page.loadEventFired` matching the active
+    /// tab's session. Subscribes before sending Page.navigate to avoid a
+    /// race. Returns Ok on the 30s timeout too — pages that legitimately
+    /// never fire load (infinite SPAs) are still usable.
+    pub async fn navigate(&self, url: &str) -> Result<()> {
+        let mut events = self.conn.events();
+        let sid = self.session_id().await;
+
+        self.conn
+            .send("Page.navigate", json!({ "url": url }), Some(&sid))
+            .await?;
+
+        let target = sid.clone();
         let wait = async move {
             loop {
                 match events.recv().await {
                     Ok(event) => {
                         if event.method == "Page.loadEventFired"
-                            && event.session_id.as_deref() == Some(&session_id)
+                            && event.session_id.as_deref() == Some(&target)
                         {
                             return Ok::<(), BrowserError>(());
                         }
@@ -259,12 +494,13 @@ impl BrowserSession {
     }
 
     pub async fn screenshot(&self) -> Result<Vec<u8>> {
+        let sid = self.session_id().await;
         let r = self
             .conn
             .send(
                 "Page.captureScreenshot",
                 json!({ "format": "png" }),
-                Some(&self.session_id),
+                Some(&sid),
             )
             .await?;
         let b64 = r
@@ -278,6 +514,7 @@ impl BrowserSession {
     }
 
     pub async fn current_url(&self) -> Result<String> {
+        let sid = self.session_id().await;
         let r = self
             .conn
             .send(
@@ -286,7 +523,7 @@ impl BrowserSession {
                     "expression": "window.location.href",
                     "returnByValue": true,
                 }),
-                Some(&self.session_id),
+                Some(&sid),
             )
             .await?;
         Ok(r.get("result")
@@ -296,10 +533,9 @@ impl BrowserSession {
             .to_string())
     }
 
-    /// Snapshot the visible interactive elements and cache the result so
-    /// subsequent click_index/type_index can resolve indices.
     pub async fn dom_snapshot(&self) -> Result<DomState> {
-        let snap = bu_dom::snapshot(&self.conn, &self.session_id).await?;
+        let sid = self.session_id().await;
+        let snap = bu_dom::snapshot(&self.conn, &sid).await?;
         *self.last_snapshot.lock().await = Some(snap.clone());
         Ok(snap)
     }
@@ -315,8 +551,8 @@ impl BrowserSession {
     /// coordinate space. Walks into same-origin iframes if necessary.
     /// None if the element no longer exists.
     async fn fresh_center(&self, index: u32) -> Result<Option<(f64, f64)>> {
-        // Make sure the index actually came from a recent snapshot.
         let _ = self.lookup(index).await?;
+        let sid = self.session_id().await;
         let script = format!(
             r#"(() => {{
                 const findByIdx = (doc) => {{
@@ -339,8 +575,6 @@ impl BrowserSession {
                 const r = el.getBoundingClientRect();
                 let x = r.left, y = r.top;
                 let win = el.ownerDocument.defaultView;
-                // Walk up through nested iframes accumulating offsets so the
-                // returned coords are in the top window's viewport.
                 while (win && win !== window) {{
                     const fr = win.frameElement;
                     if (!fr) break;
@@ -357,7 +591,7 @@ impl BrowserSession {
             .send(
                 "Runtime.evaluate",
                 json!({ "expression": script, "returnByValue": true }),
-                Some(&self.session_id),
+                Some(&sid),
             )
             .await?;
         let val = r.get("result").and_then(|x| x.get("value"));
@@ -381,6 +615,7 @@ impl BrowserSession {
     }
 
     async fn dispatch_click(&self, x: f64, y: f64) -> Result<()> {
+        let sid = self.session_id().await;
         self.conn
             .send(
                 "Input.dispatchMouseEvent",
@@ -388,7 +623,7 @@ impl BrowserSession {
                     "type": "mouseMoved",
                     "x": x, "y": y,
                 }),
-                Some(&self.session_id),
+                Some(&sid),
             )
             .await?;
         self.conn
@@ -400,7 +635,7 @@ impl BrowserSession {
                     "button": "left",
                     "clickCount": 1,
                 }),
-                Some(&self.session_id),
+                Some(&sid),
             )
             .await?;
         self.conn
@@ -412,31 +647,28 @@ impl BrowserSession {
                     "button": "left",
                     "clickCount": 1,
                 }),
-                Some(&self.session_id),
+                Some(&sid),
             )
             .await?;
         Ok(())
     }
 
     pub async fn type_index(&self, index: u32, text: &str) -> Result<()> {
-        // Click via fresh_center to focus the element, then insertText.
-        // Errors propagate (ElementGone if the element vanished).
         self.click_index(index).await?;
         tokio::time::sleep(Duration::from_millis(50)).await;
+        let sid = self.session_id().await;
         self.conn
             .send(
                 "Input.insertText",
                 json!({ "text": text }),
-                Some(&self.session_id),
+                Some(&sid),
             )
             .await?;
         Ok(())
     }
 
-    /// innerText of the first element matching the CSS selector, or "" if none.
-    /// Uses Runtime.evaluate; selector is JSON-escaped to prevent JS injection
-    /// from prompt-injected content.
     pub async fn get_text(&self, selector: &str) -> Result<String> {
+        let sid = self.session_id().await;
         let sel = serde_json::to_string(selector)?;
         let script = format!(
             r#"(() => {{
@@ -450,7 +682,7 @@ impl BrowserSession {
             .send(
                 "Runtime.evaluate",
                 json!({ "expression": script, "returnByValue": true }),
-                Some(&self.session_id),
+                Some(&sid),
             )
             .await?;
         Ok(r.get("result")
@@ -460,8 +692,8 @@ impl BrowserSession {
             .to_string())
     }
 
-    /// Full document body text, capped to `max_chars` (default 10_000 if 0).
     pub async fn page_text(&self, max_chars: usize) -> Result<String> {
+        let sid = self.session_id().await;
         let cap = if max_chars == 0 { 10_000 } else { max_chars };
         let script = format!(
             r#"(() => {{
@@ -474,7 +706,7 @@ impl BrowserSession {
             .send(
                 "Runtime.evaluate",
                 json!({ "expression": script, "returnByValue": true }),
-                Some(&self.session_id),
+                Some(&sid),
             )
             .await?;
         Ok(r.get("result")
@@ -484,8 +716,8 @@ impl BrowserSession {
             .to_string())
     }
 
-    /// All visible links on the page as (href, text) pairs.
     pub async fn get_links(&self) -> Result<Vec<(String, String)>> {
+        let sid = self.session_id().await;
         let script = r#"(() => {
             const out = [];
             for (const a of document.querySelectorAll('a[href]')) {
@@ -503,7 +735,7 @@ impl BrowserSession {
             .send(
                 "Runtime.evaluate",
                 json!({ "expression": script, "returnByValue": true }),
-                Some(&self.session_id),
+                Some(&sid),
             )
             .await?;
         let s = r
@@ -525,8 +757,8 @@ impl BrowserSession {
             .collect())
     }
 
-    /// Wheel scroll. `dy` is positive for downward scroll (CSS pixels).
     pub async fn scroll(&self, dy: f64) -> Result<()> {
+        let sid = self.session_id().await;
         self.conn
             .send(
                 "Input.dispatchMouseEvent",
@@ -537,14 +769,12 @@ impl BrowserSession {
                     "deltaX": 0.0,
                     "deltaY": dy,
                 }),
-                Some(&self.session_id),
+                Some(&sid),
             )
             .await?;
         Ok(())
     }
 
-    /// Scroll element [N] into view (block-center).
-    /// Returns ElementGone if it's no longer in the DOM.
     pub async fn scroll_to_index(&self, index: u32) -> Result<()> {
         self.fresh_center(index)
             .await?
@@ -553,6 +783,7 @@ impl BrowserSession {
     }
 
     pub async fn scroll_to_top(&self) -> Result<()> {
+        let sid = self.session_id().await;
         self.conn
             .send(
                 "Runtime.evaluate",
@@ -560,16 +791,29 @@ impl BrowserSession {
                     "expression": "window.scrollTo(0, 0)",
                     "returnByValue": true,
                 }),
-                Some(&self.session_id),
+                Some(&sid),
             )
             .await?;
         Ok(())
     }
 
-    /// Poll `document.querySelector(selector)` (across same-origin iframes)
-    /// until it returns truthy or the timeout fires. Returns true on match,
-    /// false on timeout. Useful for waiting on async DOM updates in SPAs.
+    pub async fn scroll_to_bottom(&self) -> Result<()> {
+        let sid = self.session_id().await;
+        self.conn
+            .send(
+                "Runtime.evaluate",
+                json!({
+                    "expression": "window.scrollTo(0, document.body.scrollHeight)",
+                    "returnByValue": true,
+                }),
+                Some(&sid),
+            )
+            .await?;
+        Ok(())
+    }
+
     pub async fn wait_for_selector(&self, selector: &str, timeout_ms: u64) -> Result<bool> {
+        let sid = self.session_id().await;
         let sel = serde_json::to_string(selector)?;
         let script = format!(
             r#"(() => {{
@@ -593,7 +837,7 @@ impl BrowserSession {
                 .send(
                     "Runtime.evaluate",
                     json!({ "expression": &script, "returnByValue": true }),
-                    Some(&self.session_id),
+                    Some(&sid),
                 )
                 .await?;
             let found = r
@@ -609,20 +853,6 @@ impl BrowserSession {
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-    }
-
-    pub async fn scroll_to_bottom(&self) -> Result<()> {
-        self.conn
-            .send(
-                "Runtime.evaluate",
-                json!({
-                    "expression": "window.scrollTo(0, document.body.scrollHeight)",
-                    "returnByValue": true,
-                }),
-                Some(&self.session_id),
-            )
-            .await?;
-        Ok(())
     }
 
     pub async fn stop(mut self) -> Result<()> {
@@ -661,10 +891,7 @@ fn find_chrome() -> Option<PathBuf> {
         "/usr/bin/chromium",
         "/usr/bin/chromium-browser",
     ];
-    candidates
-        .iter()
-        .map(PathBuf::from)
-        .find(|p| p.exists())
+    candidates.iter().map(PathBuf::from).find(|p| p.exists())
 }
 
 fn rand_suffix() -> String {

@@ -155,6 +155,56 @@ async def wait_for(session, selector: str, timeout_ms: int = 5000) -> str:
     return f"appeared: {selector!r}" if found else f"timeout — {selector!r} not found in {timeout_ms}ms"
 
 
+@tool
+async def list_tabs(session) -> str:
+    """List all open browser tabs. Returns lines `* [target_id] url — title`,
+    where `*` marks the active tab. Use the target_id with switch_tab.
+    """
+    tabs = await session.list_tabs()
+    if not tabs:
+        return "(no tabs)"
+    return "\n".join(
+        f"{'*' if active else ' '} [{tid}] {url} — {title}"
+        for tid, url, title, active in tabs
+    )
+
+
+@tool
+async def switch_tab(session, target_id: str) -> str:
+    """Make a different tab active. All subsequent click/snapshot/navigate
+    target this tab. The cached snapshot is cleared — call dom_snapshot
+    after switching.
+
+    Args:
+        target_id: The target_id of the tab (from list_tabs).
+    """
+    await session.switch_tab(target_id)
+    return f"switched to tab {target_id}"
+
+
+@tool
+async def new_tab(session, url: str = "") -> str:
+    """Open a new tab and make it active. The cached snapshot is cleared.
+
+    Args:
+        url: Initial URL. Empty string means about:blank.
+    """
+    tid, opened_url, _title, _active = await session.new_tab(url)
+    return f"opened tab [{tid}] {opened_url}"
+
+
+@tool
+async def close_tab(session, target_id: str) -> str:
+    """Close a tab. If it was active, the session switches to another tab.
+    Errors if it would close the last remaining tab.
+
+    Args:
+        target_id: The target_id of the tab to close (from list_tabs).
+    """
+    await session.close_tab(target_id)
+    return f"closed tab {target_id}"
+
+
 BROWSER_TOOLS = [
     navigate,
     dom_snapshot,
@@ -169,4 +219,8 @@ BROWSER_TOOLS = [
     page_text,
     get_links,
     wait_for,
+    list_tabs,
+    switch_tab,
+    new_tab,
+    close_tab,
 ]

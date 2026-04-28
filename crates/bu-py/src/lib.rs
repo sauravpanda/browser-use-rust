@@ -372,6 +372,66 @@ impl BrowserSession {
         })
     }
 
+    fn list_tabs<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let guard = inner.lock().await;
+            let s = guard
+                .as_ref()
+                .ok_or_else(|| map_err("session not started — call start() first"))?;
+            let tabs = s.list_tabs().await.map_err(map_err)?;
+            Ok(tabs
+                .into_iter()
+                .map(|t| (t.target_id, t.url, t.title, t.is_active))
+                .collect::<Vec<_>>())
+        })
+    }
+
+    fn switch_tab<'py>(
+        &self,
+        py: Python<'py>,
+        target_id: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let guard = inner.lock().await;
+            let s = guard
+                .as_ref()
+                .ok_or_else(|| map_err("session not started — call start() first"))?;
+            s.switch_tab(&target_id).await.map_err(map_err)?;
+            Ok(())
+        })
+    }
+
+    #[pyo3(signature = (url=String::new()))]
+    fn new_tab<'py>(&self, py: Python<'py>, url: String) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let guard = inner.lock().await;
+            let s = guard
+                .as_ref()
+                .ok_or_else(|| map_err("session not started — call start() first"))?;
+            let t = s.new_tab(&url).await.map_err(map_err)?;
+            Ok((t.target_id, t.url, t.title, t.is_active))
+        })
+    }
+
+    fn close_tab<'py>(
+        &self,
+        py: Python<'py>,
+        target_id: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let guard = inner.lock().await;
+            let s = guard
+                .as_ref()
+                .ok_or_else(|| map_err("session not started — call start() first"))?;
+            s.close_tab(&target_id).await.map_err(map_err)?;
+            Ok(())
+        })
+    }
+
     fn stop<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         future_into_py(py, async move {
