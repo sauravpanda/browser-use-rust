@@ -56,6 +56,7 @@ class Agent:
         max_consecutive_errors: int = 5,
         client: anthropic.AsyncAnthropic | None = None,
         system_prompt: str = SYSTEM_PROMPT,
+        sensitive_data: dict[str, str] | None = None,
     ):
         self.task = task
         self.tools_by_name: dict[str, Tool] = {t.name: t for t in tools}
@@ -66,6 +67,11 @@ class Agent:
         self.max_consecutive_errors = max_consecutive_errors
         self.client = client or anthropic.AsyncAnthropic()
         self.system_prompt = system_prompt
+        # Map of placeholder ("<API_KEY>") -> real value ("sk-..."). Tool inputs
+        # from the model are scanned for placeholders and replaced with real
+        # values before the tool runs; tool outputs are scrubbed in the other
+        # direction so the real value never reaches the LLM context.
+        self.sensitive_data: dict[str, str] = sensitive_data or {}
         self.session = BrowserSession()
         self.usage_log: list[dict] = []
         self.error_log: list[tuple[int, str]] = []
@@ -149,18 +155,28 @@ class Agent:
                 "content": f"unknown tool: {tu.name}",
                 "is_error": True,
             }
+        # Replace placeholders the model emitted with real secrets BEFORE
+        # the tool runs. The model never sees the real value.
+        real_input = _expand_secrets(tu.input, self.sensitive_data)
         try:
-            raw = await tool.func(self.session, **tu.input)
+            raw = await tool.func(self.session, **real_input)
+            content = _format_result(raw)
+            # Scrub real values out of tool output before sending it back
+            # to the LLM. Image content blocks are left alone — secrets
+            # shouldn't be visible in screenshots, and we don't OCR them.
+            content = _redact_secrets(content, self.sensitive_data)
             return {
                 "type": "tool_result",
                 "tool_use_id": tu.id,
-                "content": _format_result(raw),
+                "content": content,
             }
         except Exception as e:
+            msg = f"tool error: {type(e).__name__}: {e}"
+            msg = _redact_secrets(msg, self.sensitive_data)
             return {
                 "type": "tool_result",
                 "tool_use_id": tu.id,
-                "content": f"tool error: {type(e).__name__}: {e}",
+                "content": msg,
                 "is_error": True,
             }
 
@@ -197,3 +213,42 @@ def _format_result(result: Any):
     if isinstance(result, str):
         return result
     return str(result)
+
+
+def _expand_secrets(value: Any, secrets: dict[str, str]) -> Any:
+    """Walk tool input recursively, replacing placeholder strings with real
+    values. Strings that contain a placeholder substring get the substring
+    swapped — this lets the model say `Bearer <API_KEY>` and we expand to
+    `Bearer sk-...`."""
+    if not secrets:
+        return value
+    if isinstance(value, str):
+        for placeholder, real in secrets.items():
+            if placeholder in value:
+                value = value.replace(placeholder, real)
+        return value
+    if isinstance(value, list):
+        return [_expand_secrets(v, secrets) for v in value]
+    if isinstance(value, dict):
+        return {k: _expand_secrets(v, secrets) for k, v in value.items()}
+    return value
+
+
+def _redact_secrets(content: Any, secrets: dict[str, str]) -> Any:
+    """Walk tool output, replacing real secret values with their placeholders
+    before the model sees them. Inverse of _expand_secrets. Image blocks
+    pass through unchanged — we don't OCR base64 PNGs."""
+    if not secrets:
+        return content
+    if isinstance(content, str):
+        for placeholder, real in secrets.items():
+            if real and real in content:
+                content = content.replace(real, placeholder)
+        return content
+    if isinstance(content, list):
+        return [_redact_secrets(c, secrets) for c in content]
+    if isinstance(content, dict):
+        if content.get("type") == "image":
+            return content
+        return {k: _redact_secrets(v, secrets) for k, v in content.items()}
+    return content
