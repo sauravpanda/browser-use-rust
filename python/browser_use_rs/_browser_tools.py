@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import os
+import time
 
 from browser_use_rs.tools import tool
 
@@ -114,6 +116,20 @@ async def screenshot(session) -> dict:
         "media_type": "image/png",
         "data": base64.b64encode(png).decode("ascii"),
     }
+
+
+@tool
+async def save_pdf(session) -> str:
+    """Render the current page to a PDF and save it under the session's
+    download directory. Returns the absolute file path. Headless-only.
+    """
+    pdf_bytes = await session.pdf()
+    download_dir = await session.download_dir()
+    fname = f"page-{int(time.time())}.pdf"
+    path = os.path.join(download_dir, fname)
+    with open(path, "wb") as f:
+        f.write(pdf_bytes)
+    return f"saved {len(pdf_bytes)} bytes to {path}"
 
 
 @tool
@@ -275,6 +291,7 @@ BROWSER_TOOLS = [
     scroll_to_top,
     scroll_to_bottom,
     screenshot,
+    save_pdf,
     get_text,
     page_text,
     get_links,

@@ -649,6 +649,24 @@ impl BrowserSession {
         }
     }
 
+    /// Render the active page to PDF bytes. Headless-only — headful mode's
+    /// printToPDF requires extra Chrome flags we don't set.
+    pub async fn pdf(&self) -> Result<Vec<u8>> {
+        let sid = self.session_id().await;
+        let r = self
+            .conn
+            .send("Page.printToPDF", json!({}), Some(&sid))
+            .await?;
+        let b64 = r
+            .get("data")
+            .and_then(Value::as_str)
+            .ok_or_else(|| BrowserError::BadResponse {
+                method: "Page.printToPDF",
+                detail: "missing data".into(),
+            })?;
+        Ok(STANDARD.decode(b64)?)
+    }
+
     pub async fn screenshot(&self) -> Result<Vec<u8>> {
         let sid = self.session_id().await;
         let r = self
