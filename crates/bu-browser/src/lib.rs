@@ -566,6 +566,51 @@ impl BrowserSession {
         Ok(())
     }
 
+    /// Poll `document.querySelector(selector)` (across same-origin iframes)
+    /// until it returns truthy or the timeout fires. Returns true on match,
+    /// false on timeout. Useful for waiting on async DOM updates in SPAs.
+    pub async fn wait_for_selector(&self, selector: &str, timeout_ms: u64) -> Result<bool> {
+        let sel = serde_json::to_string(selector)?;
+        let script = format!(
+            r#"(() => {{
+                const findIn = (doc) => {{
+                    if (doc.querySelector({sel})) return true;
+                    for (const iframe of doc.querySelectorAll('iframe')) {{
+                        try {{
+                            const sub = iframe.contentDocument;
+                            if (sub && findIn(sub)) return true;
+                        }} catch (e) {{}}
+                    }}
+                    return false;
+                }};
+                return findIn(document);
+            }})()"#
+        );
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
+        loop {
+            let r = self
+                .conn
+                .send(
+                    "Runtime.evaluate",
+                    json!({ "expression": &script, "returnByValue": true }),
+                    Some(&self.session_id),
+                )
+                .await?;
+            let found = r
+                .get("result")
+                .and_then(|x| x.get("value"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if found {
+                return Ok(true);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Ok(false);
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
     pub async fn scroll_to_bottom(&self) -> Result<()> {
         self.conn
             .send(

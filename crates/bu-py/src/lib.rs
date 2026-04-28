@@ -353,6 +353,25 @@ impl BrowserSession {
         })
     }
 
+    #[pyo3(signature = (selector, timeout_ms=5000))]
+    fn wait_for_selector<'py>(
+        &self,
+        py: Python<'py>,
+        selector: String,
+        timeout_ms: u64,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let guard = inner.lock().await;
+            let s = guard
+                .as_ref()
+                .ok_or_else(|| map_err("session not started — call start() first"))?;
+            s.wait_for_selector(&selector, timeout_ms)
+                .await
+                .map_err(map_err)
+        })
+    }
+
     fn stop<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         future_into_py(py, async move {

@@ -139,6 +139,22 @@ async def get_links(session) -> str:
     return "\n".join(f"{text or '(no text)'} -> {href}" for href, text in links)
 
 
+@tool
+async def wait_for(session, selector: str, timeout_ms: int = 5000) -> str:
+    """Wait for an element matching the CSS selector to appear in the DOM.
+
+    Use after a click or navigation that triggers async content (SPAs,
+    lazy-loaded sections). Returns whether the element appeared before the
+    timeout. Same-origin iframes are searched.
+
+    Args:
+        selector: A CSS selector to wait for, e.g. ".search-result" or "#login-success".
+        timeout_ms: Max milliseconds to wait. Default 5000.
+    """
+    found = await session.wait_for_selector(selector, timeout_ms)
+    return f"appeared: {selector!r}" if found else f"timeout — {selector!r} not found in {timeout_ms}ms"
+
+
 BROWSER_TOOLS = [
     navigate,
     dom_snapshot,
@@ -152,4 +168,5 @@ BROWSER_TOOLS = [
     get_text,
     page_text,
     get_links,
+    wait_for,
 ]
