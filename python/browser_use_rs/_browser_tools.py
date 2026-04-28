@@ -56,13 +56,38 @@ async def type_text(session, index: int, text: str) -> str:
 
 @tool
 async def scroll(session, dy: float) -> str:
-    """Scroll the page vertically.
+    """Scroll the page vertically by a relative offset.
 
     Args:
         dy: Pixels to scroll. Positive scrolls down, negative scrolls up.
     """
     await session.scroll(dy)
     return f"scrolled {dy} px"
+
+
+@tool
+async def scroll_to(session, index: int) -> str:
+    """Scroll element [N] from the most recent dom_snapshot into view (centered).
+
+    Args:
+        index: The [N] index of the element to bring into view.
+    """
+    await session.scroll_to_index(index)
+    return f"scrolled to [{index}]"
+
+
+@tool
+async def scroll_to_top(session) -> str:
+    """Scroll to the very top of the page."""
+    await session.scroll_to_top()
+    return "scrolled to top"
+
+
+@tool
+async def scroll_to_bottom(session) -> str:
+    """Scroll to the very bottom of the page."""
+    await session.scroll_to_bottom()
+    return "scrolled to bottom"
 
 
 @tool
@@ -120,6 +145,9 @@ BROWSER_TOOLS = [
     click,
     type_text,
     scroll,
+    scroll_to,
+    scroll_to_top,
+    scroll_to_bottom,
     screenshot,
     get_text,
     page_text,

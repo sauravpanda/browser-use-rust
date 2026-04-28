@@ -275,6 +275,46 @@ impl BrowserSession {
         })
     }
 
+    fn scroll_to_index<'py>(
+        &self,
+        py: Python<'py>,
+        index: u32,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let guard = inner.lock().await;
+            let s = guard
+                .as_ref()
+                .ok_or_else(|| map_err("session not started — call start() first"))?;
+            s.scroll_to_index(index).await.map_err(map_err)?;
+            Ok(())
+        })
+    }
+
+    fn scroll_to_top<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let guard = inner.lock().await;
+            let s = guard
+                .as_ref()
+                .ok_or_else(|| map_err("session not started — call start() first"))?;
+            s.scroll_to_top().await.map_err(map_err)?;
+            Ok(())
+        })
+    }
+
+    fn scroll_to_bottom<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let guard = inner.lock().await;
+            let s = guard
+                .as_ref()
+                .ok_or_else(|| map_err("session not started — call start() first"))?;
+            s.scroll_to_bottom().await.map_err(map_err)?;
+            Ok(())
+        })
+    }
+
     fn get_text<'py>(&self, py: Python<'py>, selector: String) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         future_into_py(py, async move {

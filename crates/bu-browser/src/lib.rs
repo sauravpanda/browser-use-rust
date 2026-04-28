@@ -543,6 +543,43 @@ impl BrowserSession {
         Ok(())
     }
 
+    /// Scroll element [N] into view (block-center).
+    /// Returns ElementGone if it's no longer in the DOM.
+    pub async fn scroll_to_index(&self, index: u32) -> Result<()> {
+        self.fresh_center(index)
+            .await?
+            .ok_or(BrowserError::ElementGone(index))?;
+        Ok(())
+    }
+
+    pub async fn scroll_to_top(&self) -> Result<()> {
+        self.conn
+            .send(
+                "Runtime.evaluate",
+                json!({
+                    "expression": "window.scrollTo(0, 0)",
+                    "returnByValue": true,
+                }),
+                Some(&self.session_id),
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn scroll_to_bottom(&self) -> Result<()> {
+        self.conn
+            .send(
+                "Runtime.evaluate",
+                json!({
+                    "expression": "window.scrollTo(0, document.body.scrollHeight)",
+                    "returnByValue": true,
+                }),
+                Some(&self.session_id),
+            )
+            .await?;
+        Ok(())
+    }
+
     pub async fn stop(mut self) -> Result<()> {
         let _ = self.conn.send("Browser.close", json!({}), None).await;
         if let Some(mut child) = self.child.take() {
