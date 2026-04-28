@@ -76,4 +76,52 @@ async def screenshot(session) -> dict:
     }
 
 
-BROWSER_TOOLS = [navigate, dom_snapshot, click, type_text, scroll, screenshot]
+@tool
+async def get_text(session, selector: str) -> str:
+    """Read the visible text of the first element matching a CSS selector.
+
+    Use when you need the content of a specific element you can describe
+    with a CSS selector (id, class, tag, attribute) — faster than reading
+    the whole page.
+
+    Args:
+        selector: A CSS selector, e.g. "#main h1" or "article.story .title".
+    """
+    text = await session.get_text(selector)
+    return text or "(no element matched, or element has no text)"
+
+
+@tool
+async def page_text(session, max_chars: int = 10000) -> str:
+    """Read the rendered text of the entire page body.
+
+    Use when you need to read prose / article content that isn't well
+    addressed by interactive-element indices. Capped at max_chars to keep
+    the context window in check.
+
+    Args:
+        max_chars: Maximum characters to return. Default 10000.
+    """
+    return await session.page_text(max_chars)
+
+
+@tool
+async def get_links(session) -> str:
+    """List all visible links on the page as `<text> -> <url>` lines."""
+    links = await session.get_links()
+    if not links:
+        return "(no links on page)"
+    return "\n".join(f"{text or '(no text)'} -> {href}" for href, text in links)
+
+
+BROWSER_TOOLS = [
+    navigate,
+    dom_snapshot,
+    click,
+    type_text,
+    scroll,
+    screenshot,
+    get_text,
+    page_text,
+    get_links,
+]

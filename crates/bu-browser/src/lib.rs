@@ -37,6 +37,8 @@ pub enum BrowserError {
     BadResponse { method: &'static str, detail: String },
     #[error("base64 decode: {0}")]
     Base64(#[from] base64::DecodeError),
+    #[error("serde: {0}")]
+    Serde(#[from] serde_json::Error),
     #[error("no dom snapshot taken yet — call dom_snapshot() before acting on an index")]
     NoSnapshot,
     #[error("element [{0}] is no longer present in the DOM — re-snapshot before acting")]
@@ -429,6 +431,98 @@ impl BrowserSession {
             )
             .await?;
         Ok(())
+    }
+
+    /// innerText of the first element matching the CSS selector, or "" if none.
+    /// Uses Runtime.evaluate; selector is JSON-escaped to prevent JS injection
+    /// from prompt-injected content.
+    pub async fn get_text(&self, selector: &str) -> Result<String> {
+        let sel = serde_json::to_string(selector)?;
+        let script = format!(
+            r#"(() => {{
+                const el = document.querySelector({sel});
+                if (!el) return "";
+                return (el.innerText || el.textContent || "").trim();
+            }})()"#
+        );
+        let r = self
+            .conn
+            .send(
+                "Runtime.evaluate",
+                json!({ "expression": script, "returnByValue": true }),
+                Some(&self.session_id),
+            )
+            .await?;
+        Ok(r.get("result")
+            .and_then(|x| x.get("value"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string())
+    }
+
+    /// Full document body text, capped to `max_chars` (default 10_000 if 0).
+    pub async fn page_text(&self, max_chars: usize) -> Result<String> {
+        let cap = if max_chars == 0 { 10_000 } else { max_chars };
+        let script = format!(
+            r#"(() => {{
+                const t = (document.body && (document.body.innerText || document.body.textContent)) || "";
+                return t.trim().slice(0, {cap});
+            }})()"#
+        );
+        let r = self
+            .conn
+            .send(
+                "Runtime.evaluate",
+                json!({ "expression": script, "returnByValue": true }),
+                Some(&self.session_id),
+            )
+            .await?;
+        Ok(r.get("result")
+            .and_then(|x| x.get("value"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string())
+    }
+
+    /// All visible links on the page as (href, text) pairs.
+    pub async fn get_links(&self) -> Result<Vec<(String, String)>> {
+        let script = r#"(() => {
+            const out = [];
+            for (const a of document.querySelectorAll('a[href]')) {
+                const r = a.getBoundingClientRect();
+                if (r.width < 1 || r.height < 1) continue;
+                out.push({
+                    href: a.href,
+                    text: (a.innerText || a.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 200)
+                });
+            }
+            return JSON.stringify(out);
+        })()"#;
+        let r = self
+            .conn
+            .send(
+                "Runtime.evaluate",
+                json!({ "expression": script, "returnByValue": true }),
+                Some(&self.session_id),
+            )
+            .await?;
+        let s = r
+            .get("result")
+            .and_then(|x| x.get("value"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| BrowserError::BadResponse {
+                method: "get_links",
+                detail: "expected JSON string".into(),
+            })?;
+        let parsed: Vec<Value> = serde_json::from_str(s)?;
+        Ok(parsed
+            .into_iter()
+            .filter_map(|v| {
+                let href = v.get("href")?.as_str()?.to_string();
+                let text = v.get("text")?.as_str()?.to_string();
+                Some((href, text))
+            })
+            .collect())
     }
 
     /// Wheel scroll. `dy` is positive for downward scroll (CSS pixels).
