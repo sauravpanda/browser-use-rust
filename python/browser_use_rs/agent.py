@@ -1,5 +1,6 @@
 """Agent loop: drives `claude-opus-4-7` against a tool set with native tool
-calling, adaptive thinking, and prompt-cached system + tool definitions.
+calling, adaptive thinking, prompt-cached system + tool definitions, and
+parallel concurrent tool execution.
 
 Manual loop (not the SDK tool runner) so we can return image content blocks
 from tools like `screenshot` — the runner currently only surfaces strings.
@@ -7,6 +8,7 @@ from tools like `screenshot` — the runner currently only surfaces strings.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import anthropic
@@ -87,6 +89,12 @@ class Agent:
             response = await self.client.messages.create(
                 model=self.model,
                 max_tokens=self.max_tokens,
+                # Top-level auto-caches the last cacheable block (the most
+                # recent message), so the conversation prefix grows the cache
+                # incrementally turn by turn. Combined with the manual
+                # breakpoint on `system`, that's 2 breakpoints: tools+system,
+                # and tools+system+messages-so-far.
+                cache_control={"type": "ephemeral"},
                 system=system,
                 tools=tool_defs,
                 thinking={"type": "adaptive"},
@@ -101,41 +109,40 @@ class Agent:
 
             messages.append({"role": "assistant", "content": response.content})
 
-            tool_results = []
-            for tu in tool_uses:
-                tool = self.tools_by_name.get(tu.name)
-                if tool is None:
-                    tool_results.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tu.id,
-                            "content": f"unknown tool: {tu.name}",
-                            "is_error": True,
-                        }
-                    )
-                    continue
-                try:
-                    raw = await tool.func(self.session, **tu.input)
-                    tool_results.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tu.id,
-                            "content": _format_result(raw),
-                        }
-                    )
-                except Exception as e:
-                    tool_results.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tu.id,
-                            "content": f"tool error: {type(e).__name__}: {e}",
-                            "is_error": True,
-                        }
-                    )
-
-            messages.append({"role": "user", "content": tool_results})
+            # Run all tool_use blocks concurrently. The model emits multiple
+            # tool calls per turn deliberately (parallel tool calling) — we
+            # honor that with asyncio.gather. Tool implementations are
+            # responsible for any locking they need against shared state.
+            tool_results = await asyncio.gather(
+                *(self._run_tool(tu) for tu in tool_uses)
+            )
+            messages.append({"role": "user", "content": list(tool_results)})
 
         return f"hit max_steps={self.max_steps} without final answer"
+
+    async def _run_tool(self, tu) -> dict:
+        tool = self.tools_by_name.get(tu.name)
+        if tool is None:
+            return {
+                "type": "tool_result",
+                "tool_use_id": tu.id,
+                "content": f"unknown tool: {tu.name}",
+                "is_error": True,
+            }
+        try:
+            raw = await tool.func(self.session, **tu.input)
+            return {
+                "type": "tool_result",
+                "tool_use_id": tu.id,
+                "content": _format_result(raw),
+            }
+        except Exception as e:
+            return {
+                "type": "tool_result",
+                "tool_use_id": tu.id,
+                "content": f"tool error: {type(e).__name__}: {e}",
+                "is_error": True,
+            }
 
     def _log_usage(self, step: int, usage) -> None:
         self.usage_log.append(
