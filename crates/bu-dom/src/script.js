@@ -1,7 +1,6 @@
 (() => {
     'use strict';
 
-    // Tags that are *always* their own click target.
     const INTRINSIC_TAGS = new Set([
         'a', 'button', 'input', 'select', 'textarea'
     ]);
@@ -39,31 +38,31 @@
         return false;
     };
 
-    // Walk up looking for an intrinsic ancestor. Used to dedupe
-    // cursor:pointer descendants of real buttons/links.
     const hasIntrinsicAncestor = (el) => {
         let p = el.parentElement;
-        while (p && p !== document.body) {
+        const root = el.ownerDocument.body;
+        while (p && p !== root) {
             if (isIntrinsic(p)) return true;
             p = p.parentElement;
         }
         return false;
     };
 
-    const isVisible = (el, style) => {
+    const isVisibleInOwnerWindow = (el, style, doc) => {
         if (style.display === 'none' || style.visibility === 'hidden') return false;
         if (parseFloat(style.opacity) === 0) return false;
         const r = el.getBoundingClientRect();
         if (r.width < 1 || r.height < 1) return false;
-        if (r.bottom < 0 || r.top > window.innerHeight) return false;
-        if (r.right < 0 || r.left > window.innerWidth) return false;
+        const win = doc.defaultView || window;
+        if (r.bottom < 0 || r.top > win.innerHeight) return false;
+        if (r.right < 0 || r.left > win.innerWidth) return false;
         return true;
     };
 
-    const isTopAtCenter = (el, r) => {
+    const isTopAtCenter = (el, r, doc) => {
         const cx = r.left + r.width / 2;
         const cy = r.top + r.height / 2;
-        const top = document.elementFromPoint(cx, cy);
+        const top = doc.elementFromPoint(cx, cy);
         if (!top) return false;
         return top === el || el.contains(top) || top.contains(el);
     };
@@ -93,8 +92,6 @@
             }
             out[k] = v.slice(0, 200);
         }
-        // src is omitted from KEEP_ATTRS because data: URIs swamp the LLM
-        // view; only include short non-data src values when present.
         const src = el.getAttribute('src');
         if (src && !src.startsWith('data:') && src.length <= 200) {
             out['src'] = src;
@@ -102,55 +99,73 @@
         return out;
     };
 
-    // Clear any data-bu-idx left over from a prior snapshot so attribute
-    // counts and selectors don't accumulate stale state.
-    for (const old of document.querySelectorAll('[data-bu-idx]')) {
-        old.removeAttribute('data-bu-idx');
-    }
+    // Clear stale data-bu-idx everywhere it might live (top doc + same-origin iframes).
+    const clearStale = (doc) => {
+        for (const old of doc.querySelectorAll('[data-bu-idx]')) {
+            old.removeAttribute('data-bu-idx');
+        }
+        for (const iframe of doc.querySelectorAll('iframe')) {
+            try {
+                const sub = iframe.contentDocument;
+                if (sub) clearStale(sub);
+            } catch (e) { /* cross-origin */ }
+        }
+    };
+    clearStale(document);
 
     const elements = [];
     let idx = 1;
-    const all = document.querySelectorAll('*');
-    for (const el of all) {
-        // Never include anything inside an SVG — the SVG (or its parent button)
-        // stands in as the click target.
-        if (isInsideSvg(el)) continue;
-        // The SVG itself is only included when it's explicitly interactive.
-        if (el.tagName === 'svg' || el.tagName === 'SVG') {
-            if (!isIntrinsic(el) && !el.getAttribute('aria-label')) continue;
+
+    // Walk a document collecting interactive elements. `(offsetX, offsetY)`
+    // shifts bbox coordinates from the document's local viewport into the
+    // top window's viewport, so click_index can dispatch at absolute coords.
+    const collect = (doc, offsetX, offsetY) => {
+        const all = doc.querySelectorAll('*');
+        for (const el of all) {
+            if (isInsideSvg(el)) continue;
+            if (el.tagName === 'svg' || el.tagName === 'SVG') {
+                if (!isIntrinsic(el) && !el.getAttribute('aria-label')) continue;
+            }
+
+            const style = getComputedStyle(el);
+            const intrinsic = isIntrinsic(el);
+            const cursorOnly = !intrinsic && style.cursor === 'pointer';
+
+            if (!intrinsic && !cursorOnly) continue;
+            if (cursorOnly && hasIntrinsicAncestor(el)) continue;
+            if (!isVisibleInOwnerWindow(el, style, doc)) continue;
+
+            const r = el.getBoundingClientRect();
+            if (!isTopAtCenter(el, r, doc)) continue;
+
+            const text = collectText(el);
+            const attrs = collectAttrs(el);
+            if (!text && Object.keys(attrs).length === 0) continue;
+
+            el.setAttribute('data-bu-idx', String(idx));
+            elements.push({
+                index: idx,
+                tag: el.tagName.toLowerCase(),
+                text: text,
+                attrs: attrs,
+                bbox: { x: r.x + offsetX, y: r.y + offsetY, w: r.width, h: r.height }
+            });
+            idx++;
         }
 
-        const style = getComputedStyle(el);
-        const intrinsic = isIntrinsic(el);
-        const cursorOnly = !intrinsic && style.cursor === 'pointer';
+        // Recurse into same-origin iframes. Cross-origin frames throw on
+        // contentDocument access — catch and skip; they need a separate
+        // CDP target attach to walk, which is deferred.
+        for (const iframe of doc.querySelectorAll('iframe')) {
+            let sub = null;
+            try { sub = iframe.contentDocument; } catch (e) { continue; }
+            if (!sub) continue;
+            const fr = iframe.getBoundingClientRect();
+            collect(sub, offsetX + fr.x, offsetY + fr.y);
+        }
+    };
 
-        if (!intrinsic && !cursorOnly) continue;
-
-        // cursor:pointer is mostly inherited; only keep when the element is
-        // genuinely the click target (no intrinsic ancestor wraps it).
-        if (cursorOnly && hasIntrinsicAncestor(el)) continue;
-
-        if (!isVisible(el, style)) continue;
-        const r = el.getBoundingClientRect();
-        if (!isTopAtCenter(el, r)) continue;
-
-        const text = collectText(el);
-        const attrs = collectAttrs(el);
-        // Drop residual noise: nothing identifying, nothing to read.
-        if (!text && Object.keys(attrs).length === 0) continue;
-
-        // Tag the element with its index so subsequent click/type can find
-        // it again even if the DOM reflows between snapshot and action.
-        el.setAttribute('data-bu-idx', String(idx));
-        elements.push({
-            index: idx,
-            tag: el.tagName.toLowerCase(),
-            text: text,
-            attrs: attrs,
-            bbox: { x: r.x, y: r.y, w: r.width, h: r.height }
-        });
-        idx++;
-    }
+    collect(document, 0, 0);
 
     return JSON.stringify({
         url: document.URL,

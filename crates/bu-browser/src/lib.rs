@@ -286,19 +286,45 @@ impl BrowserSession {
     }
 
     /// Find the element by its `data-bu-idx` attribute, scroll it into the
-    /// viewport, and return its current center. None if the element no
-    /// longer exists. This is the source of truth for click/type — bboxes
-    /// from the snapshot are stale the moment the page reflows.
+    /// viewport, and return its current center in the top window's
+    /// coordinate space. Walks into same-origin iframes if necessary.
+    /// None if the element no longer exists.
     async fn fresh_center(&self, index: u32) -> Result<Option<(f64, f64)>> {
         // Make sure the index actually came from a recent snapshot.
         let _ = self.lookup(index).await?;
         let script = format!(
             r#"(() => {{
-                const el = document.querySelector('[data-bu-idx="{index}"]');
+                const findByIdx = (doc) => {{
+                    const el = doc.querySelector('[data-bu-idx="{index}"]');
+                    if (el) return el;
+                    for (const iframe of doc.querySelectorAll('iframe')) {{
+                        try {{
+                            const sub = iframe.contentDocument;
+                            if (sub) {{
+                                const found = findByIdx(sub);
+                                if (found) return found;
+                            }}
+                        }} catch (e) {{}}
+                    }}
+                    return null;
+                }};
+                const el = findByIdx(document);
                 if (!el) return null;
                 el.scrollIntoView({{block: 'center', behavior: 'instant'}});
                 const r = el.getBoundingClientRect();
-                return {{ x: r.left + r.width / 2, y: r.top + r.height / 2 }};
+                let x = r.left, y = r.top;
+                let win = el.ownerDocument.defaultView;
+                // Walk up through nested iframes accumulating offsets so the
+                // returned coords are in the top window's viewport.
+                while (win && win !== window) {{
+                    const fr = win.frameElement;
+                    if (!fr) break;
+                    const frR = fr.getBoundingClientRect();
+                    x += frR.left;
+                    y += frR.top;
+                    win = win.parent;
+                }}
+                return {{ x: x + r.width / 2, y: y + r.height / 2 }};
             }})()"#
         );
         let r = self
