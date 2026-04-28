@@ -51,6 +51,10 @@ pub struct LaunchOptions {
     pub chrome_path: Option<PathBuf>,
     pub user_data_dir: Option<PathBuf>,
     pub extra_args: Vec<String>,
+    /// Viewport (width, height) in CSS pixels. When set, we pass
+    /// --window-size to Chrome and call Emulation.setDeviceMetricsOverride
+    /// after attach so JS-visible viewport matches the OS window.
+    pub viewport: Option<(u32, u32)>,
 }
 
 impl Default for LaunchOptions {
@@ -60,6 +64,7 @@ impl Default for LaunchOptions {
             chrome_path: None,
             user_data_dir: None,
             extra_args: Vec::new(),
+            viewport: None,
         }
     }
 }
@@ -110,6 +115,9 @@ impl BrowserSession {
             .arg(format!("--user-data-dir={}", user_data_dir.display()));
         if opts.headless {
             cmd.arg("--headless=new");
+        }
+        if let Some((w, h)) = opts.viewport {
+            cmd.arg(format!("--window-size={w},{h}"));
         }
         for a in &opts.extra_args {
             cmd.arg(a);
@@ -180,6 +188,21 @@ impl BrowserSession {
             .await?;
         conn.send("DOM.enable", json!({}), Some(&session_id))
             .await?;
+
+        if let Some((w, h)) = opts.viewport {
+            // 0 deviceScaleFactor = use the system default.
+            conn.send(
+                "Emulation.setDeviceMetricsOverride",
+                json!({
+                    "width": w,
+                    "height": h,
+                    "deviceScaleFactor": 0,
+                    "mobile": false,
+                }),
+                Some(&session_id),
+            )
+            .await?;
+        }
 
         Ok(Self {
             child: Some(child),

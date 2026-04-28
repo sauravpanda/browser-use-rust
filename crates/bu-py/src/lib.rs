@@ -145,21 +145,39 @@ impl DomState {
 #[pyclass]
 struct BrowserSession {
     inner: Arc<Mutex<Option<bu_browser::BrowserSession>>>,
+    launch_opts: Arc<bu_browser::LaunchOptions>,
 }
 
 #[pymethods]
 impl BrowserSession {
     #[new]
-    fn new() -> Self {
+    #[pyo3(signature = (headless=true, viewport=None, chrome_path=None, extra_chrome_args=None))]
+    fn new(
+        headless: bool,
+        viewport: Option<(u32, u32)>,
+        chrome_path: Option<String>,
+        extra_chrome_args: Option<Vec<String>>,
+    ) -> Self {
+        let opts = bu_browser::LaunchOptions {
+            headless,
+            chrome_path: chrome_path.map(std::path::PathBuf::from),
+            user_data_dir: None,
+            extra_args: extra_chrome_args.unwrap_or_default(),
+            viewport,
+        };
         Self {
             inner: Arc::new(Mutex::new(None)),
+            launch_opts: Arc::new(opts),
         }
     }
 
     fn start<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
+        let opts = (*self.launch_opts).clone();
         future_into_py(py, async move {
-            let s = bu_browser::BrowserSession::start().await.map_err(map_err)?;
+            let s = bu_browser::BrowserSession::launch(opts)
+                .await
+                .map_err(map_err)?;
             *inner.lock().await = Some(s);
             Ok(())
         })
