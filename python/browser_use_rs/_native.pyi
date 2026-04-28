@@ -64,6 +64,26 @@ class BrowserSession:
     async def list_downloads(
         self,
     ) -> list[tuple[str, str, str, str, int, int, str]]: ...
+    async def get_cookies(
+        self,
+    ) -> list[tuple[str, str, str, str, float, bool, bool]]: ...
+    async def set_cookie(
+        self,
+        name: str,
+        value: str,
+        domain: str,
+        path: str = "/",
+        expires: float = -1.0,
+        secure: bool = False,
+        http_only: bool = False,
+    ) -> None: ...
+    async def delete_cookie(
+        self,
+        name: str,
+        domain: str | None = None,
+        path: str | None = None,
+    ) -> None: ...
+    async def clear_cookies(self) -> None: ...
     async def stop(self) -> None: ...
 
 def version() -> str: ...

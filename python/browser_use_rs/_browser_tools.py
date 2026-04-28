@@ -206,6 +206,34 @@ async def close_tab(session, target_id: str) -> str:
 
 
 @tool
+async def get_cookies(session) -> str:
+    """List all cookies the browser holds, one per line as
+    `name=<value> domain=<d> path=<p> [secure] [httpOnly]`. Use to inspect
+    auth or session state.
+    """
+    cookies = await session.get_cookies()
+    if not cookies:
+        return "(no cookies)"
+    lines = []
+    for name, value, domain, path, _expires, secure, http_only in cookies:
+        flags = []
+        if secure:
+            flags.append("secure")
+        if http_only:
+            flags.append("httpOnly")
+        flag_str = f" [{','.join(flags)}]" if flags else ""
+        lines.append(f"{name}={value} domain={domain} path={path}{flag_str}")
+    return "\n".join(lines)
+
+
+@tool
+async def clear_cookies(session) -> str:
+    """Clear ALL browser cookies. Useful for resetting auth between tasks."""
+    await session.clear_cookies()
+    return "all cookies cleared"
+
+
+@tool
 async def list_downloads(session) -> str:
     """List downloads triggered during this session. Each line includes the
     state (inProgress / completed / canceled), the suggested filename, and
@@ -240,4 +268,6 @@ BROWSER_TOOLS = [
     new_tab,
     close_tab,
     list_downloads,
+    get_cookies,
+    clear_cookies,
 ]

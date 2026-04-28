@@ -443,6 +443,97 @@ impl BrowserSession {
         })
     }
 
+    fn get_cookies<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let guard = inner.lock().await;
+            let s = guard
+                .as_ref()
+                .ok_or_else(|| map_err("session not started — call start() first"))?;
+            let cookies = s.get_cookies().await.map_err(map_err)?;
+            Ok(cookies
+                .into_iter()
+                .map(|c| {
+                    (
+                        c.name,
+                        c.value,
+                        c.domain,
+                        c.path,
+                        c.expires,
+                        c.secure,
+                        c.http_only,
+                    )
+                })
+                .collect::<Vec<_>>())
+        })
+    }
+
+    #[pyo3(signature = (name, value, domain, path=String::from("/"), expires=-1.0, secure=false, http_only=false))]
+    #[allow(clippy::too_many_arguments)]
+    fn set_cookie<'py>(
+        &self,
+        py: Python<'py>,
+        name: String,
+        value: String,
+        domain: String,
+        path: String,
+        expires: f64,
+        secure: bool,
+        http_only: bool,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let guard = inner.lock().await;
+            let s = guard
+                .as_ref()
+                .ok_or_else(|| map_err("session not started — call start() first"))?;
+            let cookie = bu_browser::Cookie {
+                name,
+                value,
+                domain,
+                path,
+                expires,
+                secure,
+                http_only,
+            };
+            s.set_cookie(&cookie).await.map_err(map_err)?;
+            Ok(())
+        })
+    }
+
+    #[pyo3(signature = (name, domain=None, path=None))]
+    fn delete_cookie<'py>(
+        &self,
+        py: Python<'py>,
+        name: String,
+        domain: Option<String>,
+        path: Option<String>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let guard = inner.lock().await;
+            let s = guard
+                .as_ref()
+                .ok_or_else(|| map_err("session not started — call start() first"))?;
+            s.delete_cookie(&name, domain.as_deref(), path.as_deref())
+                .await
+                .map_err(map_err)?;
+            Ok(())
+        })
+    }
+
+    fn clear_cookies<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let guard = inner.lock().await;
+            let s = guard
+                .as_ref()
+                .ok_or_else(|| map_err("session not started — call start() first"))?;
+            s.clear_cookies().await.map_err(map_err)?;
+            Ok(())
+        })
+    }
+
     fn list_downloads<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         future_into_py(py, async move {

@@ -90,6 +90,18 @@ pub struct TabInfo {
 }
 
 #[derive(Debug, Clone)]
+pub struct Cookie {
+    pub name: String,
+    pub value: String,
+    pub domain: String,
+    pub path: String,
+    /// Unix timestamp (seconds). -1 means session cookie.
+    pub expires: f64,
+    pub secure: bool,
+    pub http_only: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct DownloadInfo {
     pub guid: String,
     pub suggested_filename: String,
@@ -255,6 +267,75 @@ impl BrowserSession {
 
     pub fn download_dir(&self) -> &std::path::Path {
         &self.download_dir
+    }
+
+    // ---------- cookies ----------
+
+    /// All cookies across all domains. Network domain commands need a page
+    /// session to dispatch — we use the active tab's session.
+    pub async fn get_cookies(&self) -> Result<Vec<Cookie>> {
+        let sid = self.session_id().await;
+        let r = self
+            .conn
+            .send("Network.getAllCookies", json!({}), Some(&sid))
+            .await?;
+        let arr = r
+            .get("cookies")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        Ok(arr.into_iter().filter_map(parse_cookie).collect())
+    }
+
+    /// Set or replace a cookie. `expires < 0` makes it a session cookie.
+    pub async fn set_cookie(&self, cookie: &Cookie) -> Result<()> {
+        let sid = self.session_id().await;
+        let mut params = json!({
+            "name": cookie.name,
+            "value": cookie.value,
+            "domain": cookie.domain,
+            "path": cookie.path,
+            "secure": cookie.secure,
+            "httpOnly": cookie.http_only,
+        });
+        if cookie.expires >= 0.0 {
+            params["expires"] = json!(cookie.expires);
+        }
+        self.conn
+            .send("Network.setCookie", params, Some(&sid))
+            .await?;
+        Ok(())
+    }
+
+    /// Delete a cookie by name. Pass domain/path to scope, or None to
+    /// delete from any matching cookie store (CDP defaults to current doc).
+    pub async fn delete_cookie(
+        &self,
+        name: &str,
+        domain: Option<&str>,
+        path: Option<&str>,
+    ) -> Result<()> {
+        let sid = self.session_id().await;
+        let mut params = json!({ "name": name });
+        if let Some(d) = domain {
+            params["domain"] = json!(d);
+        }
+        if let Some(p) = path {
+            params["path"] = json!(p);
+        }
+        self.conn
+            .send("Network.deleteCookies", params, Some(&sid))
+            .await?;
+        Ok(())
+    }
+
+    /// Clear ALL browser cookies.
+    pub async fn clear_cookies(&self) -> Result<()> {
+        let sid = self.session_id().await;
+        self.conn
+            .send("Network.clearBrowserCookies", json!({}), Some(&sid))
+            .await?;
+        Ok(())
     }
 
     /// Snapshot the current downloads tracked by this session. State is
@@ -967,6 +1048,27 @@ fn find_chrome() -> Option<PathBuf> {
         "/usr/bin/chromium-browser",
     ];
     candidates.iter().map(PathBuf::from).find(|p| p.exists())
+}
+
+fn parse_cookie(v: Value) -> Option<Cookie> {
+    let o = v.as_object()?;
+    Some(Cookie {
+        name: o.get("name")?.as_str()?.to_string(),
+        value: o.get("value")?.as_str()?.to_string(),
+        domain: o
+            .get("domain")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        path: o
+            .get("path")
+            .and_then(Value::as_str)
+            .unwrap_or("/")
+            .to_string(),
+        expires: o.get("expires").and_then(Value::as_f64).unwrap_or(-1.0),
+        secure: o.get("secure").and_then(Value::as_bool).unwrap_or(false),
+        http_only: o.get("httpOnly").and_then(Value::as_bool).unwrap_or(false),
+    })
 }
 
 /// Background task: subscribe to CDP events and update the downloads map
