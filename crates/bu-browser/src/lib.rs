@@ -18,6 +18,7 @@ use serde_json::{json, Value};
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
+use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::Mutex;
 
 #[derive(Debug, Error)]
@@ -188,7 +189,14 @@ impl BrowserSession {
         })
     }
 
+    /// Navigate and wait for `Page.loadEventFired` matching this session.
+    /// Subscribes to events *before* sending Page.navigate to avoid a race
+    /// where the load event arrives before we listen. Returns Ok on the
+    /// 30-second timeout too — pages that legitimately never fire load
+    /// (e.g., infinite-loading SPAs) are still usable.
     pub async fn navigate(&self, url: &str) -> Result<()> {
+        let mut events = self.conn.events();
+
         self.conn
             .send(
                 "Page.navigate",
@@ -197,30 +205,29 @@ impl BrowserSession {
             )
             .await?;
 
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-        loop {
-            let r = self
-                .conn
-                .send(
-                    "Runtime.evaluate",
-                    json!({
-                        "expression": "document.readyState",
-                        "returnByValue": true,
-                    }),
-                    Some(&self.session_id),
-                )
-                .await?;
-            if r.get("result")
-                .and_then(|x| x.get("value"))
-                .and_then(Value::as_str)
-                == Some("complete")
-            {
-                return Ok(());
+        let session_id = self.session_id.clone();
+        let wait = async move {
+            loop {
+                match events.recv().await {
+                    Ok(event) => {
+                        if event.method == "Page.loadEventFired"
+                            && event.session_id.as_deref() == Some(&session_id)
+                        {
+                            return Ok::<(), BrowserError>(());
+                        }
+                    }
+                    Err(RecvError::Lagged(_)) => continue,
+                    Err(RecvError::Closed) => {
+                        return Err(BrowserError::Cdp(CdpError::Closed));
+                    }
+                }
             }
-            if tokio::time::Instant::now() >= deadline {
-                return Ok(());
-            }
-            tokio::time::sleep(Duration::from_millis(75)).await;
+        };
+
+        match tokio::time::timeout(Duration::from_secs(30), wait).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Ok(()),
         }
     }
 

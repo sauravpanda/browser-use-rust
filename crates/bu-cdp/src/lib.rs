@@ -2,8 +2,8 @@
 //!
 //! Lowest layer: a thin async WebSocket transport. `Connection::send` sends
 //! a CDP method call and awaits the matching response, multiplexed by message
-//! id. Events (messages without an `id`) are silently dropped for now —
-//! event subscription will land when something needs it.
+//! id. Events (messages without an `id`) are fanned out via a broadcast
+//! channel — subscribe via `Connection::events()`.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -12,7 +12,7 @@ use std::sync::Arc;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use thiserror::Error;
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
@@ -35,10 +35,20 @@ pub type Result<T> = std::result::Result<T, CdpError>;
 
 type Pending = Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value>>>>>;
 
+/// A CDP event (a message from the browser without an `id` — fired in
+/// response to a domain being enabled, e.g. `Page.loadEventFired`).
+#[derive(Clone, Debug)]
+pub struct CdpEvent {
+    pub method: String,
+    pub session_id: Option<String>,
+    pub params: Value,
+}
+
 pub struct Connection {
     next_id: AtomicI64,
     pending: Pending,
     outbound: mpsc::UnboundedSender<Message>,
+    events_tx: broadcast::Sender<CdpEvent>,
     _reader: JoinHandle<()>,
     _writer: JoinHandle<()>,
 }
@@ -52,6 +62,11 @@ impl Connection {
         let pending_for_reader = pending.clone();
 
         let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Message>();
+        // 1024 is large enough that bursty event traffic (e.g. Network events
+        // when DOM.enable is on) doesn't drop a navigate-completion event
+        // before slow consumers get to it.
+        let (events_tx, _) = broadcast::channel::<CdpEvent>(1024);
+        let events_for_reader = events_tx.clone();
 
         let writer = tokio::spawn(async move {
             while let Some(msg) = out_rx.recv().await {
@@ -72,24 +87,33 @@ impl Connection {
                 let Ok(v) = serde_json::from_str::<Value>(&txt) else {
                     continue;
                 };
-                let Some(id) = v.get("id").and_then(Value::as_i64) else {
-                    // event — drop for v1
-                    continue;
-                };
-                let tx = pending_for_reader.lock().await.remove(&id);
-                if let Some(tx) = tx {
-                    let result = if let Some(err) = v.get("error") {
-                        let code = err.get("code").and_then(Value::as_i64).unwrap_or(0);
-                        let message = err
-                            .get("message")
+                if let Some(id) = v.get("id").and_then(Value::as_i64) {
+                    let tx = pending_for_reader.lock().await.remove(&id);
+                    if let Some(tx) = tx {
+                        let result = if let Some(err) = v.get("error") {
+                            let code = err.get("code").and_then(Value::as_i64).unwrap_or(0);
+                            let message = err
+                                .get("message")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string();
+                            Err(CdpError::Protocol { code, message })
+                        } else {
+                            Ok(v.get("result").cloned().unwrap_or(Value::Null))
+                        };
+                        let _ = tx.send(result);
+                    }
+                } else if let Some(method) = v.get("method").and_then(Value::as_str) {
+                    let event = CdpEvent {
+                        method: method.to_string(),
+                        session_id: v
+                            .get("sessionId")
                             .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .to_string();
-                        Err(CdpError::Protocol { code, message })
-                    } else {
-                        Ok(v.get("result").cloned().unwrap_or(Value::Null))
+                            .map(String::from),
+                        params: v.get("params").cloned().unwrap_or(Value::Null),
                     };
-                    let _ = tx.send(result);
+                    // err means no current subscribers — fine, drop the event
+                    let _ = events_for_reader.send(event);
                 }
             }
             // connection closed: notify any pending callers
@@ -103,9 +127,17 @@ impl Connection {
             next_id: AtomicI64::new(1),
             pending,
             outbound: out_tx,
+            events_tx,
             _reader: reader,
             _writer: writer,
         })
+    }
+
+    /// Subscribe to CDP events. Each subscriber gets every event from the
+    /// point of subscription onward; messages prior to subscribe are not
+    /// replayed. Slow consumers may receive `Lagged` errors and miss events.
+    pub fn events(&self) -> broadcast::Receiver<CdpEvent> {
+        self.events_tx.subscribe()
     }
 
     /// Send a CDP method call and await the response. `session_id` routes the
