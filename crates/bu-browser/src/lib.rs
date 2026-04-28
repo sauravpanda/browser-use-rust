@@ -86,6 +86,8 @@ pub struct TabInfo {
     pub target_id: String,
     pub url: String,
     pub title: String,
+    /// "page" for top-level tabs/windows, "iframe" for cross-origin frames.
+    pub target_type: String,
     pub is_active: bool,
 }
 
@@ -426,9 +428,10 @@ impl BrowserSession {
 
     // ---------- tab management ----------
 
-    /// List all page-type targets (i.e. tabs/windows) known to the browser.
-    /// Includes tabs we haven't attached to yet (e.g. opened via
-    /// window.open). is_active is true for the tab that operations target.
+    /// List all attachable browseable targets — pages (tabs/windows) and
+    /// cross-origin iframes (out-of-process frames). The agent can switch
+    /// to any of them via switch_tab. Workers and the browser target itself
+    /// are filtered out. is_active marks the target that operations target.
     pub async fn list_tabs(&self) -> Result<Vec<TabInfo>> {
         let r = self
             .conn
@@ -438,7 +441,15 @@ impl BrowserSession {
         let mut out = Vec::new();
         if let Some(arr) = r.get("targetInfos").and_then(Value::as_array) {
             for ti in arr {
-                if ti.get("type").and_then(Value::as_str) != Some("page") {
+                let ttype = ti
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                // "page" = top-level tab; "iframe" = OOP frame. Other types
+                // (service_worker, shared_worker, browser, other) are not
+                // useful for our control surface.
+                if ttype != "page" && ttype != "iframe" {
                     continue;
                 }
                 let target_id = ti
@@ -462,6 +473,7 @@ impl BrowserSession {
                         .and_then(Value::as_str)
                         .unwrap_or("")
                         .to_string(),
+                    target_type: ttype,
                 });
             }
         }
@@ -516,7 +528,11 @@ impl BrowserSession {
                     .send("DOM.enable", json!({}), Some(&sid))
                     .await?;
                 if let Some((w, h)) = self.viewport {
-                    self.conn
+                    // Emulation.setDeviceMetricsOverride is top-level only;
+                    // OOP iframe targets reject it. Best-effort: ignore the
+                    // error so we can still attach to and operate on iframes.
+                    let _ = self
+                        .conn
                         .send(
                             "Emulation.setDeviceMetricsOverride",
                             json!({
@@ -527,7 +543,7 @@ impl BrowserSession {
                             }),
                             Some(&sid),
                         )
-                        .await?;
+                        .await;
                 }
                 attached.insert(target_id.to_string(), sid.clone());
                 sid
@@ -572,6 +588,7 @@ impl BrowserSession {
                 url.into()
             },
             title: String::new(),
+            target_type: "page".into(),
             is_active: true,
         })
     }

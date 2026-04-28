@@ -429,7 +429,7 @@ impl BrowserSession {
             let tabs = s.list_tabs().await.map_err(map_err)?;
             Ok(tabs
                 .into_iter()
-                .map(|t| (t.target_id, t.url, t.title, t.is_active))
+                .map(|t| (t.target_id, t.url, t.title, t.target_type, t.is_active))
                 .collect::<Vec<_>>())
         })
     }
@@ -459,7 +459,7 @@ impl BrowserSession {
                 .as_ref()
                 .ok_or_else(|| map_err("session not started — call start() first"))?;
             let t = s.new_tab(&url).await.map_err(map_err)?;
-            Ok((t.target_id, t.url, t.title, t.is_active))
+            Ok((t.target_id, t.url, t.title, t.target_type, t.is_active))
         })
     }
 

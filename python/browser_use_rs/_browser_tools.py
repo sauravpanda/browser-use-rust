@@ -217,15 +217,17 @@ async def wait_for(session, selector: str, timeout_ms: int = 5000) -> str:
 
 @tool
 async def list_tabs(session) -> str:
-    """List all open browser tabs. Returns lines `* [target_id] url — title`,
-    where `*` marks the active tab. Use the target_id with switch_tab.
+    """List all attachable contexts — top-level tabs and cross-origin
+    iframes. Each line is `* [type:target_id] url — title`, where `*`
+    marks the active context. Use the target_id with switch_tab. Switching
+    to an iframe target lets you snapshot/click inside that frame.
     """
     tabs = await session.list_tabs()
     if not tabs:
         return "(no tabs)"
     return "\n".join(
-        f"{'*' if active else ' '} [{tid}] {url} — {title}"
-        for tid, url, title, active in tabs
+        f"{'*' if active else ' '} [{ttype}:{tid}] {url} — {title}"
+        for tid, url, title, ttype, active in tabs
     )
 
 
@@ -249,7 +251,7 @@ async def new_tab(session, url: str = "") -> str:
     Args:
         url: Initial URL. Empty string means about:blank.
     """
-    tid, opened_url, _title, _active = await session.new_tab(url)
+    tid, opened_url, _title, _ttype, _active = await session.new_tab(url)
     return f"opened tab [{tid}] {opened_url}"
 
 
