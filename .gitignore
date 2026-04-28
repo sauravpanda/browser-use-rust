@@ -1,0 +1,29 @@
+# Rust
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.so
+*.pyd
+.venv/
+.venv*/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+wheels/
+
+# Example run artifacts
+python/examples/*.png
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,21 @@
+[package]
+name = "bu-py"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "PyO3 bindings: the only crate Python knows about"
+
+[lib]
+name = "_native"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+bu-cdp.workspace = true
+bu-browser.workspace = true
+bu-dom.workspace = true
+pyo3 = { workspace = true, features = ["extension-module"] }
+pyo3-async-runtimes.workspace = true
+tokio.workspace = true

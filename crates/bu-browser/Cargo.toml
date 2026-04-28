@@ -1,0 +1,20 @@
+[package]
+name = "bu-browser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Browser session lifecycle and CDP-driven page automation"
+
+[dependencies]
+bu-cdp.workspace = true
+bu-dom.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+url.workspace = true
+base64.workspace = true
