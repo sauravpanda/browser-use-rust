@@ -246,6 +246,23 @@ impl BrowserSession {
         })
     }
 
+    fn upload_file<'py>(
+        &self,
+        py: Python<'py>,
+        index: u32,
+        paths: Vec<String>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let guard = inner.lock().await;
+            let s = guard
+                .as_ref()
+                .ok_or_else(|| map_err("session not started — call start() first"))?;
+            s.upload_file(index, &paths).await.map_err(map_err)?;
+            Ok(())
+        })
+    }
+
     fn type_index<'py>(
         &self,
         py: Python<'py>,

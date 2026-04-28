@@ -809,6 +809,62 @@ impl BrowserSession {
         Ok(())
     }
 
+    /// Set files on an `<input type="file">` element identified by its
+    /// data-bu-idx. Paths must be absolute. Same-frame only — the element
+    /// must live in the active page's main document.
+    pub async fn upload_file(&self, index: u32, paths: &[String]) -> Result<()> {
+        let _ = self.lookup(index).await?;
+        let sid = self.session_id().await;
+        let script = format!(
+            r#"(() => {{
+                const el = document.querySelector('[data-bu-idx="{index}"]');
+                if (!el) return null;
+                if (el.tagName !== 'INPUT' || (el.type || '').toLowerCase() !== 'file') return 'NOT_FILE_INPUT';
+                return el;
+            }})()"#
+        );
+        let r = self
+            .conn
+            .send(
+                "Runtime.evaluate",
+                json!({ "expression": script, "returnByValue": false }),
+                Some(&sid),
+            )
+            .await?;
+        let res = r.get("result");
+        // Reject the not-a-file-input sentinel before trying to bind objectId.
+        if res.and_then(|x| x.get("value")).and_then(Value::as_str) == Some("NOT_FILE_INPUT") {
+            return Err(BrowserError::BadResponse {
+                method: "upload_file",
+                detail: format!("element [{index}] is not <input type=\"file\">"),
+            });
+        }
+        let object_id = res
+            .and_then(|x| x.get("objectId"))
+            .and_then(Value::as_str)
+            .ok_or(BrowserError::ElementGone(index))?;
+        self.conn
+            .send(
+                "DOM.setFileInputFiles",
+                json!({
+                    "files": paths,
+                    "objectId": object_id,
+                }),
+                Some(&sid),
+            )
+            .await?;
+        // Release the JS reference we held.
+        let _ = self
+            .conn
+            .send(
+                "Runtime.releaseObject",
+                json!({ "objectId": object_id }),
+                Some(&sid),
+            )
+            .await;
+        Ok(())
+    }
+
     pub async fn type_index(&self, index: u32, text: &str) -> Result<()> {
         self.click_index(index).await?;
         tokio::time::sleep(Duration::from_millis(50)).await;

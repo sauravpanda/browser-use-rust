@@ -55,6 +55,21 @@ async def type_text(session, index: int, text: str) -> str:
 
 
 @tool
+async def upload_file(session, index: int, path: str) -> str:
+    """Attach a file to an `<input type="file">` element by its [N] index.
+
+    The file path must be absolute. Use this for forms that need a real file
+    selection (resume upload, profile picture, etc).
+
+    Args:
+        index: The [N] index of the file input element.
+        path: Absolute path to the file to attach.
+    """
+    await session.upload_file(index, [path])
+    return f"attached {path} to [{index}]"
+
+
+@tool
 async def scroll(session, dy: float) -> str:
     """Scroll the page vertically by a relative offset.
 
@@ -254,6 +269,7 @@ BROWSER_TOOLS = [
     dom_snapshot,
     click,
     type_text,
+    upload_file,
     scroll,
     scroll_to,
     scroll_to_top,
