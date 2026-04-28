@@ -1042,6 +1042,37 @@ impl BrowserSession {
         Ok(())
     }
 
+    /// Block until the active tab's next `Page.loadEventFired`. Use after a
+    /// click that triggers full navigation (vs. SPA route changes — for
+    /// those, use wait_for_selector). Returns false on timeout, true if
+    /// the event fired before then.
+    pub async fn wait_for_navigation(&self, timeout_ms: u64) -> Result<bool> {
+        let mut events = self.conn.events();
+        let sid = self.session_id().await;
+        let wait = async move {
+            loop {
+                match events.recv().await {
+                    Ok(event) => {
+                        if event.method == "Page.loadEventFired"
+                            && event.session_id.as_deref() == Some(&sid)
+                        {
+                            return Ok::<bool, BrowserError>(true);
+                        }
+                    }
+                    Err(RecvError::Lagged(_)) => continue,
+                    Err(RecvError::Closed) => {
+                        return Err(BrowserError::Cdp(CdpError::Closed));
+                    }
+                }
+            }
+        };
+        match tokio::time::timeout(Duration::from_millis(timeout_ms), wait).await {
+            Ok(Ok(b)) => Ok(b),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Ok(false),
+        }
+    }
+
     pub async fn wait_for_selector(&self, selector: &str, timeout_ms: u64) -> Result<bool> {
         let sid = self.session_id().await;
         let sel = serde_json::to_string(selector)?;

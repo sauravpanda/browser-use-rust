@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import os
 import time
@@ -171,6 +172,34 @@ async def get_links(session) -> str:
 
 
 @tool
+async def sleep(session, seconds: float) -> str:
+    """Pause for the given number of seconds. Use for short waits when no
+    selector or event reliably signals readiness (animations, debounced
+    inputs). Prefer wait_for or wait_for_navigation when a real signal exists.
+
+    Args:
+        seconds: Wait duration. Capped at 30 to keep loops responsive.
+    """
+    capped = max(0.0, min(seconds, 30.0))
+    await asyncio.sleep(capped)
+    return f"slept {capped}s"
+
+
+@tool
+async def wait_for_navigation(session, timeout_ms: int = 10000) -> str:
+    """Wait for the active tab to fire its next page-load event.
+
+    Use after a click that triggers a full navigation (vs an SPA route
+    change). Returns whether the event fired before the timeout.
+
+    Args:
+        timeout_ms: Max milliseconds to wait. Default 10000.
+    """
+    fired = await session.wait_for_navigation(timeout_ms)
+    return "navigation complete" if fired else f"timeout — no load event in {timeout_ms}ms"
+
+
+@tool
 async def wait_for(session, selector: str, timeout_ms: int = 5000) -> str:
     """Wait for an element matching the CSS selector to appear in the DOM.
 
@@ -296,6 +325,8 @@ BROWSER_TOOLS = [
     page_text,
     get_links,
     wait_for,
+    wait_for_navigation,
+    sleep,
     list_tabs,
     switch_tab,
     new_tab,
