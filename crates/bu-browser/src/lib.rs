@@ -39,6 +39,8 @@ pub enum BrowserError {
     Base64(#[from] base64::DecodeError),
     #[error("no dom snapshot taken yet — call dom_snapshot() before acting on an index")]
     NoSnapshot,
+    #[error("element [{0}] is no longer present in the DOM — re-snapshot before acting")]
+    ElementGone(u32),
 }
 
 pub type Result<T> = std::result::Result<T, BrowserError>;
@@ -283,9 +285,47 @@ impl BrowserSession {
         Ok(snap.get(index)?.clone())
     }
 
+    /// Find the element by its `data-bu-idx` attribute, scroll it into the
+    /// viewport, and return its current center. None if the element no
+    /// longer exists. This is the source of truth for click/type — bboxes
+    /// from the snapshot are stale the moment the page reflows.
+    async fn fresh_center(&self, index: u32) -> Result<Option<(f64, f64)>> {
+        // Make sure the index actually came from a recent snapshot.
+        let _ = self.lookup(index).await?;
+        let script = format!(
+            r#"(() => {{
+                const el = document.querySelector('[data-bu-idx="{index}"]');
+                if (!el) return null;
+                el.scrollIntoView({{block: 'center', behavior: 'instant'}});
+                const r = el.getBoundingClientRect();
+                return {{ x: r.left + r.width / 2, y: r.top + r.height / 2 }};
+            }})()"#
+        );
+        let r = self
+            .conn
+            .send(
+                "Runtime.evaluate",
+                json!({ "expression": script, "returnByValue": true }),
+                Some(&self.session_id),
+            )
+            .await?;
+        let val = r.get("result").and_then(|x| x.get("value"));
+        match val {
+            None | Some(&Value::Null) => Ok(None),
+            Some(Value::Object(o)) => {
+                let x = o.get("x").and_then(Value::as_f64).unwrap_or(0.0);
+                let y = o.get("y").and_then(Value::as_f64).unwrap_or(0.0);
+                Ok(Some((x, y)))
+            }
+            _ => Ok(None),
+        }
+    }
+
     pub async fn click_index(&self, index: u32) -> Result<()> {
-        let el = self.lookup(index).await?;
-        let (cx, cy) = el.bbox.center();
+        let (cx, cy) = self
+            .fresh_center(index)
+            .await?
+            .ok_or(BrowserError::ElementGone(index))?;
         self.dispatch_click(cx, cy).await
     }
 
@@ -328,6 +368,8 @@ impl BrowserSession {
     }
 
     pub async fn type_index(&self, index: u32, text: &str) -> Result<()> {
+        // Click via fresh_center to focus the element, then insertText.
+        // Errors propagate (ElementGone if the element vanished).
         self.click_index(index).await?;
         tokio::time::sleep(Duration::from_millis(50)).await;
         self.conn

@@ -102,6 +102,12 @@
         return out;
     };
 
+    // Clear any data-bu-idx left over from a prior snapshot so attribute
+    // counts and selectors don't accumulate stale state.
+    for (const old of document.querySelectorAll('[data-bu-idx]')) {
+        old.removeAttribute('data-bu-idx');
+    }
+
     const elements = [];
     let idx = 1;
     const all = document.querySelectorAll('*');
@@ -133,13 +139,17 @@
         // Drop residual noise: nothing identifying, nothing to read.
         if (!text && Object.keys(attrs).length === 0) continue;
 
+        // Tag the element with its index so subsequent click/type can find
+        // it again even if the DOM reflows between snapshot and action.
+        el.setAttribute('data-bu-idx', String(idx));
         elements.push({
-            index: idx++,
+            index: idx,
             tag: el.tagName.toLowerCase(),
             text: text,
             attrs: attrs,
             bbox: { x: r.x, y: r.y, w: r.width, h: r.height }
         });
+        idx++;
     }
 
     return JSON.stringify({
