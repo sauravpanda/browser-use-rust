@@ -205,6 +205,22 @@ async def close_tab(session, target_id: str) -> str:
     return f"closed tab {target_id}"
 
 
+@tool
+async def list_downloads(session) -> str:
+    """List downloads triggered during this session. Each line includes the
+    state (inProgress / completed / canceled), the suggested filename, and
+    the on-disk path. Read completed files from disk to inspect them.
+    """
+    rows = await session.list_downloads()
+    if not rows:
+        return "(no downloads)"
+    lines = []
+    for guid, name, url, state, recv, total, path in rows:
+        bytes_str = f"{recv}/{total}" if total else f"{recv}"
+        lines.append(f"[{state}] {name or '(unnamed)'} ({bytes_str} bytes) -> {path}  src: {url}")
+    return "\n".join(lines)
+
+
 BROWSER_TOOLS = [
     navigate,
     dom_snapshot,
@@ -223,4 +239,5 @@ BROWSER_TOOLS = [
     switch_tab,
     new_tab,
     close_tab,
+    list_downloads,
 ]

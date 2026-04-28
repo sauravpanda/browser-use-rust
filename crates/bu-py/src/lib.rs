@@ -432,6 +432,42 @@ impl BrowserSession {
         })
     }
 
+    fn download_dir<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let guard = inner.lock().await;
+            let s = guard
+                .as_ref()
+                .ok_or_else(|| map_err("session not started — call start() first"))?;
+            Ok(s.download_dir().to_string_lossy().to_string())
+        })
+    }
+
+    fn list_downloads<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let guard = inner.lock().await;
+            let s = guard
+                .as_ref()
+                .ok_or_else(|| map_err("session not started — call start() first"))?;
+            let downloads = s.list_downloads().await;
+            Ok(downloads
+                .into_iter()
+                .map(|d| {
+                    (
+                        d.guid,
+                        d.suggested_filename,
+                        d.url,
+                        d.state,
+                        d.received_bytes,
+                        d.total_bytes,
+                        d.file_path.to_string_lossy().to_string(),
+                    )
+                })
+                .collect::<Vec<_>>())
+        })
+    }
+
     fn stop<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         future_into_py(py, async move {

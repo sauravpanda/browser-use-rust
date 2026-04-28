@@ -13,6 +13,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 
 use base64::engine::general_purpose::STANDARD;
@@ -89,6 +90,28 @@ pub struct TabInfo {
 }
 
 #[derive(Debug, Clone)]
+pub struct DownloadInfo {
+    pub guid: String,
+    pub suggested_filename: String,
+    pub url: String,
+    pub state: String, // "inProgress" | "completed" | "canceled"
+    pub received_bytes: u64,
+    pub total_bytes: u64,
+    /// Where the file lands on disk. Chrome saves downloads under
+    /// `download_dir/<guid>` by default with our setDownloadBehavior config.
+    pub file_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Default)]
+struct DownloadState {
+    suggested_filename: String,
+    url: String,
+    state: String,
+    received_bytes: u64,
+    total_bytes: u64,
+}
+
+#[derive(Debug, Clone)]
 struct ActiveTab {
     target_id: String,
     session_id: String,
@@ -103,6 +126,13 @@ pub struct BrowserSession {
     /// target_id -> session_id for tabs we've attached.
     attached: Mutex<HashMap<String, String>>,
     last_snapshot: Mutex<Option<DomState>>,
+    /// guid -> latest state, populated by a background event task.
+    downloads: Arc<Mutex<HashMap<String, DownloadState>>>,
+    download_dir: PathBuf,
+    /// Owned only to keep the event task alive; not joined explicitly —
+    /// the task exits when the broadcast channel closes (i.e. Connection
+    /// is dropped).
+    _download_task: tokio::task::JoinHandle<()>,
 }
 
 impl BrowserSession {
@@ -178,6 +208,27 @@ impl BrowserSession {
 
         let conn = Connection::connect(&ws_url).await?;
 
+        // Configure where downloads land + start the background tracker
+        // BEFORE creating the first tab so we don't miss early events.
+        let download_dir = user_data_dir.join("downloads");
+        std::fs::create_dir_all(&download_dir)?;
+        let downloads: Arc<Mutex<HashMap<String, DownloadState>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let task_events = conn.events();
+        let task_downloads = downloads.clone();
+        let download_task = tokio::spawn(track_downloads(task_events, task_downloads));
+
+        conn.send(
+            "Browser.setDownloadBehavior",
+            json!({
+                "behavior": "allow",
+                "downloadPath": download_dir.to_string_lossy(),
+                "eventsEnabled": true,
+            }),
+            None,
+        )
+        .await?;
+
         // Create + attach the initial tab.
         let (target_id, session_id) =
             Self::create_and_attach(&conn, "about:blank", opts.viewport).await?;
@@ -196,7 +247,31 @@ impl BrowserSession {
             }),
             attached: Mutex::new(attached),
             last_snapshot: Mutex::new(None),
+            downloads,
+            download_dir,
+            _download_task: download_task,
         })
+    }
+
+    pub fn download_dir(&self) -> &std::path::Path {
+        &self.download_dir
+    }
+
+    /// Snapshot the current downloads tracked by this session. State is
+    /// "inProgress" | "completed" | "canceled".
+    pub async fn list_downloads(&self) -> Vec<DownloadInfo> {
+        let map = self.downloads.lock().await;
+        map.iter()
+            .map(|(guid, s)| DownloadInfo {
+                guid: guid.clone(),
+                suggested_filename: s.suggested_filename.clone(),
+                url: s.url.clone(),
+                state: s.state.clone(),
+                received_bytes: s.received_bytes,
+                total_bytes: s.total_bytes,
+                file_path: self.download_dir.join(guid),
+            })
+            .collect()
     }
 
     /// Create a new target with the given initial URL and attach to it
@@ -892,6 +967,68 @@ fn find_chrome() -> Option<PathBuf> {
         "/usr/bin/chromium-browser",
     ];
     candidates.iter().map(PathBuf::from).find(|p| p.exists())
+}
+
+/// Background task: subscribe to CDP events and update the downloads map
+/// when Browser.downloadWillBegin / downloadProgress fire. Exits when the
+/// broadcast channel closes (i.e. Connection is dropped).
+async fn track_downloads(
+    mut events: tokio::sync::broadcast::Receiver<bu_cdp::CdpEvent>,
+    downloads: Arc<Mutex<HashMap<String, DownloadState>>>,
+) {
+    loop {
+        match events.recv().await {
+            Ok(event) => {
+                let params = match event.params.as_object() {
+                    Some(p) => p,
+                    None => continue,
+                };
+                let guid = params
+                    .get("guid")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                if guid.is_empty() {
+                    continue;
+                }
+                match event.method.as_str() {
+                    "Browser.downloadWillBegin" | "Page.downloadWillBegin" => {
+                        let mut map = downloads.lock().await;
+                        let entry = map.entry(guid).or_default();
+                        entry.suggested_filename = params
+                            .get("suggestedFilename")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string();
+                        entry.url = params
+                            .get("url")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string();
+                        if entry.state.is_empty() {
+                            entry.state = "inProgress".to_string();
+                        }
+                    }
+                    "Browser.downloadProgress" | "Page.downloadProgress" => {
+                        let mut map = downloads.lock().await;
+                        let entry = map.entry(guid).or_default();
+                        if let Some(s) = params.get("state").and_then(Value::as_str) {
+                            entry.state = s.to_string();
+                        }
+                        if let Some(rb) = params.get("receivedBytes").and_then(Value::as_u64) {
+                            entry.received_bytes = rb;
+                        }
+                        if let Some(tb) = params.get("totalBytes").and_then(Value::as_u64) {
+                            entry.total_bytes = tb;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+        }
+    }
 }
 
 fn rand_suffix() -> String {
