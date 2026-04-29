@@ -144,6 +144,13 @@ class Agent:
         """The current conversation history fed to the LLM each step."""
         return list(self._messages)
 
+    @property
+    def history(self) -> AgentHistoryList:
+        """Alias for `self.state.history`. Eval consumers read this
+        directly after `agent.run()` returns: `agent.history.history[i]`,
+        `agent.history.final_result()`, etc."""
+        return self.state.history
+
     async def run(
         self,
         max_steps: int | None = None,
@@ -304,21 +311,31 @@ class Agent:
             )
 
     async def _capture_state(self) -> BrowserStateSummary:
-        """Lightweight pre-step snapshot for the callback / history view.
+        """Pre-step snapshot stored in history for the judge / callbacks.
+
+        Always captures a screenshot regardless of `use_vision` — matching
+        browser_use, where `use_vision` controls whether the LLM *sees* the
+        image, not whether it lands in history. Eval consumers iterate
+        `history.history[i].state.get_screenshot()` to feed judges, and
+        most run with `use_vision=False`, so gating capture on it produced
+        empty judge inputs.
+
         Doesn't force a DOM snapshot — the model decides when to call that
-        tool. We just read current URL + optionally a screenshot."""
+        tool.
+        """
         url = ""
         try:
             url = await self.session.current_url()
         except Exception:
             pass
         screenshot_b64: str | None = None
-        if self.use_vision:
-            try:
-                png = await self.session.screenshot()
-                screenshot_b64 = base64.b64encode(png).decode("ascii")
-            except Exception:
-                screenshot_b64 = None
+        try:
+            png = await self.session.screenshot()
+            screenshot_b64 = base64.b64encode(png).decode("ascii")
+        except Exception:
+            # If we can't snapshot (no active tab yet, browser closing),
+            # fall through with screenshot=None — better than crashing.
+            screenshot_b64 = None
         return BrowserStateSummary(url=url, title="", screenshot=screenshot_b64)
 
     async def _run_tool(
