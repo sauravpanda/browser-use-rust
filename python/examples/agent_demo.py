@@ -14,8 +14,8 @@ full cost is printed at the end.
 
 import asyncio
 
-from browser_use_rs._browser_tools import BROWSER_TOOLS
-from browser_use_rs.agent import Agent
+from browser_use_rs import Agent
+from browser_use_rs.llm import ChatAnthropic
 
 # Opus 4.7 pricing per 1M tokens (cached at the time of writing).
 COST_INPUT_PER_M = 5.00
@@ -25,25 +25,28 @@ COST_CACHE_WRITE_PER_M = COST_INPUT_PER_M * 1.25  # 5-min TTL writes
 
 
 async def main() -> None:
+    llm = ChatAnthropic(
+        model="claude-opus-4-7",
+        max_tokens=4000,
+        effort="high",
+    )
     agent = Agent(
         task=(
             "Go to https://news.ycombinator.com and tell me the title and "
             "current points of the top story. Be concise — one sentence."
         ),
-        tools=BROWSER_TOOLS,
+        llm=llm,
         max_steps=8,
-        max_tokens=4000,
-        effort="high",
     )
 
     print(f"task: {agent.task}")
-    print(f"model={agent.model} effort={agent.effort} max_steps={agent.max_steps}")
+    print(f"model={llm.model} effort={llm.effort} max_steps={agent.max_steps}")
     print()
 
-    result = await agent.run()
+    history = await agent.run()
 
     print("\n=== FINAL ANSWER ===")
-    print(result)
+    print(history.final_result())
 
     print("\n=== USAGE PER STEP ===")
     total_in = total_out = total_cache_read = total_cache_write = 0

@@ -151,12 +151,13 @@ struct BrowserSession {
 #[pymethods]
 impl BrowserSession {
     #[new]
-    #[pyo3(signature = (headless=true, viewport=Some((1280, 900)), chrome_path=None, extra_chrome_args=None))]
+    #[pyo3(signature = (headless=true, viewport=Some((1280, 900)), chrome_path=None, extra_chrome_args=None, cdp_url=None))]
     fn new(
         headless: bool,
         viewport: Option<(u32, u32)>,
         chrome_path: Option<String>,
         extra_chrome_args: Option<Vec<String>>,
+        cdp_url: Option<String>,
     ) -> Self {
         let opts = bu_browser::LaunchOptions {
             headless,
@@ -164,6 +165,7 @@ impl BrowserSession {
             user_data_dir: None,
             extra_args: extra_chrome_args.unwrap_or_default(),
             viewport,
+            cdp_url,
         };
         Self {
             inner: Arc::new(Mutex::new(None)),
@@ -171,10 +173,23 @@ impl BrowserSession {
         }
     }
 
+    /// Alias for stop() — matches browser_use's BrowserSession.kill() name.
+    fn kill<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        self.stop(py)
+    }
+
     fn start<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         let opts = (*self.launch_opts).clone();
         future_into_py(py, async move {
+            // Idempotent: if already started, no-op. Lets the Agent call
+            // start() unconditionally even when the caller pre-started.
+            {
+                let guard = inner.lock().await;
+                if guard.is_some() {
+                    return Ok(());
+                }
+            }
             let s = bu_browser::BrowserSession::launch(opts)
                 .await
                 .map_err(map_err)?;

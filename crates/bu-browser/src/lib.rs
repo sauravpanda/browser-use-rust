@@ -67,6 +67,12 @@ pub struct LaunchOptions {
     /// --window-size to Chrome and call Emulation.setDeviceMetricsOverride
     /// after attach so JS-visible viewport matches the OS window.
     pub viewport: Option<(u32, u32)>,
+    /// If set, skip launching Chromium and attach to an existing CDP
+    /// endpoint at this URL (`ws://...` or `http(s)://.../json/version`).
+    /// Used by cloud browser providers (Anchor, Browserbase, Hyperbrowser,
+    /// Daytona, BrightData). When attached, `stop()` detaches but does
+    /// NOT call Browser.close — the remote owner manages the browser.
+    pub cdp_url: Option<String>,
 }
 
 impl Default for LaunchOptions {
@@ -77,6 +83,7 @@ impl Default for LaunchOptions {
             user_data_dir: None,
             extra_args: Vec::new(),
             viewport: None,
+            cdp_url: None,
         }
     }
 }
@@ -136,6 +143,10 @@ pub struct BrowserSession {
     conn: Connection,
     user_data_dir: Option<PathBuf>,
     viewport: Option<(u32, u32)>,
+    /// True when we attached to an existing CDP endpoint (cdp_url=...).
+    /// stop() must NOT call Browser.close for remote-owned browsers — the
+    /// cloud provider manages the lifecycle and would error or leak state.
+    attached_only: bool,
     active: Mutex<ActiveTab>,
     /// target_id -> session_id for tabs we've attached.
     attached: Mutex<HashMap<String, String>>,
@@ -161,6 +172,9 @@ impl BrowserSession {
     }
 
     pub async fn launch(opts: LaunchOptions) -> Result<Self> {
+        if let Some(url) = opts.cdp_url.clone() {
+            return Self::attach(url, opts).await;
+        }
         let chrome = opts
             .chrome_path
             .clone()
@@ -265,6 +279,7 @@ impl BrowserSession {
             conn,
             user_data_dir: Some(user_data_dir),
             viewport: opts.viewport,
+            attached_only: false,
             active: Mutex::new(ActiveTab {
                 target_id,
                 session_id,
@@ -276,6 +291,145 @@ impl BrowserSession {
             last_navigation,
             _event_task: event_task,
         })
+    }
+
+    /// Connect to an already-running browser via its CDP WebSocket. The
+    /// remote owner manages the browser process; stop() detaches but does
+    /// not call Browser.close. Used for cloud browser providers (Anchor,
+    /// Browserbase, Hyperbrowser, Daytona, BrightData), local long-lived
+    /// Chromium instances, or test fixtures.
+    ///
+    /// `cdp_url` must be the WebSocket URL (`ws://...` or `wss://...`).
+    /// Pre-resolve `http://host:port/json/version` if your provider only
+    /// gives an HTTP endpoint.
+    async fn attach(cdp_url: String, opts: LaunchOptions) -> Result<Self> {
+        let conn = Connection::connect(&cdp_url).await?;
+
+        // Tracking state: same shape as the spawn path. download_dir is a
+        // local temp path used for cdp event bookkeeping only — actual
+        // bytes land wherever the remote browser was configured to write.
+        let download_dir = std::env::temp_dir().join(format!(
+            "bu-rs-attached-{}-{}",
+            std::process::id(),
+            rand_suffix()
+        ));
+        let _ = std::fs::create_dir_all(&download_dir);
+        let downloads: Arc<Mutex<HashMap<String, DownloadState>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let last_navigation: Arc<Mutex<Option<tokio::time::Instant>>> =
+            Arc::new(Mutex::new(None));
+        let task_events = conn.events();
+        let task_downloads = downloads.clone();
+        let task_last_nav = last_navigation.clone();
+        let event_task =
+            tokio::spawn(track_browser_events(task_events, task_downloads, task_last_nav));
+
+        // Best-effort: ask remote for download events. Some providers
+        // reject Browser.setDownloadBehavior; ignore if so.
+        let _ = conn
+            .send(
+                "Browser.setDownloadBehavior",
+                json!({
+                    "behavior": "allowAndName",
+                    "eventsEnabled": true,
+                }),
+                None,
+            )
+            .await;
+
+        // Find an existing top-level page to attach to. If none, create one.
+        let (target_id, session_id) = match Self::find_existing_page(&conn).await? {
+            Some(tid) => {
+                let attach = conn
+                    .send(
+                        "Target.attachToTarget",
+                        json!({ "targetId": tid, "flatten": true }),
+                        None,
+                    )
+                    .await?;
+                let sid = attach
+                    .get("sessionId")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| BrowserError::BadResponse {
+                        method: "Target.attachToTarget",
+                        detail: "missing sessionId".into(),
+                    })?
+                    .to_string();
+                let _ = conn.send("Page.enable", json!({}), Some(&sid)).await;
+                let _ = conn.send("DOM.enable", json!({}), Some(&sid)).await;
+                if let Some((w, h)) = opts.viewport {
+                    let _ = conn
+                        .send(
+                            "Emulation.setDeviceMetricsOverride",
+                            json!({
+                                "width": w,
+                                "height": h,
+                                "deviceScaleFactor": 0,
+                                "mobile": false,
+                            }),
+                            Some(&sid),
+                        )
+                        .await;
+                }
+                (tid, sid)
+            }
+            None => Self::create_and_attach(&conn, "about:blank", opts.viewport).await?,
+        };
+
+        let mut attached = HashMap::new();
+        attached.insert(target_id.clone(), session_id.clone());
+
+        Ok(Self {
+            child: None,
+            conn,
+            user_data_dir: None,
+            viewport: opts.viewport,
+            attached_only: true,
+            active: Mutex::new(ActiveTab {
+                target_id,
+                session_id,
+            }),
+            attached: Mutex::new(attached),
+            last_snapshot: Mutex::new(None),
+            downloads,
+            download_dir,
+            last_navigation,
+            _event_task: event_task,
+        })
+    }
+
+    /// Find a usable existing page target, if any. Filters out workers,
+    /// the browser target, and detached/empty entries.
+    async fn find_existing_page(conn: &Connection) -> Result<Option<String>> {
+        let r = conn.send("Target.getTargets", json!({}), None).await?;
+        let Some(arr) = r.get("targetInfos").and_then(Value::as_array) else {
+            return Ok(None);
+        };
+        for ti in arr {
+            let ttype = ti.get("type").and_then(Value::as_str).unwrap_or("");
+            if ttype != "page" {
+                continue;
+            }
+            let attached = ti.get("attached").and_then(Value::as_bool).unwrap_or(false);
+            // Prefer unattached pages so we don't fight with another client.
+            if attached {
+                continue;
+            }
+            if let Some(tid) = ti.get("targetId").and_then(Value::as_str) {
+                return Ok(Some(tid.to_string()));
+            }
+        }
+        // Fallback: any page, even attached.
+        for ti in arr {
+            let ttype = ti.get("type").and_then(Value::as_str).unwrap_or("");
+            if ttype != "page" {
+                continue;
+            }
+            if let Some(tid) = ti.get("targetId").and_then(Value::as_str) {
+                return Ok(Some(tid.to_string()));
+            }
+        }
+        Ok(None)
     }
 
     pub fn download_dir(&self) -> &std::path::Path {
@@ -1141,12 +1295,23 @@ impl BrowserSession {
     }
 
     pub async fn stop(mut self) -> Result<()> {
-        let _ = self.conn.send("Browser.close", json!({}), None).await;
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill().await;
-        }
-        if let Some(dir) = self.user_data_dir.take() {
-            let _ = std::fs::remove_dir_all(dir);
+        // Attached sessions: detach from the active tab and let the remote
+        // owner keep the browser alive. Calling Browser.close here would
+        // kill someone else's resource.
+        if self.attached_only {
+            let sid = self.session_id().await;
+            let _ = self
+                .conn
+                .send("Target.detachFromTarget", json!({ "sessionId": sid }), None)
+                .await;
+        } else {
+            let _ = self.conn.send("Browser.close", json!({}), None).await;
+            if let Some(mut child) = self.child.take() {
+                let _ = child.kill().await;
+            }
+            if let Some(dir) = self.user_data_dir.take() {
+                let _ = std::fs::remove_dir_all(dir);
+            }
         }
         Ok(())
     }
@@ -1154,11 +1319,13 @@ impl BrowserSession {
 
 impl Drop for BrowserSession {
     fn drop(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            let _ = child.start_kill();
-        }
-        if let Some(dir) = self.user_data_dir.take() {
-            let _ = std::fs::remove_dir_all(dir);
+        if !self.attached_only {
+            if let Some(mut child) = self.child.take() {
+                let _ = child.start_kill();
+            }
+            if let Some(dir) = self.user_data_dir.take() {
+                let _ = std::fs::remove_dir_all(dir);
+            }
         }
     }
 }

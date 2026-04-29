@@ -7,11 +7,41 @@ package and call into the native layer for browser/CDP/DOM work.
 
 from browser_use_rs._native import (
     Bbox,
-    BrowserSession,
     DomElement,
     DomState,
     version,
 )
+from browser_use_rs.agent import Agent
+from browser_use_rs.browser import BrowserProfile, BrowserSession
+from browser_use_rs.controller import Controller
+from browser_use_rs.tools import Tool, tool
+from browser_use_rs.views import (
+    ActionResult,
+    AgentHistory,
+    AgentHistoryList,
+    AgentOutput,
+    AgentState,
+    BrowserStateSummary,
+    StepMetadata,
+)
 
-__all__ = ["Bbox", "BrowserSession", "DomElement", "DomState", "version"]
+__all__ = [
+    "ActionResult",
+    "Agent",
+    "AgentHistory",
+    "AgentHistoryList",
+    "AgentOutput",
+    "AgentState",
+    "Bbox",
+    "BrowserProfile",
+    "BrowserSession",
+    "BrowserStateSummary",
+    "Controller",
+    "DomElement",
+    "DomState",
+    "StepMetadata",
+    "Tool",
+    "tool",
+    "version",
+]
 __version__ = version()

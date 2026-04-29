@@ -14,8 +14,8 @@ $0.005 - $0.10 for this demo. Total cost printed at the end.
 
 import asyncio
 
-from browser_use_rs._browser_tools import BROWSER_TOOLS
-from browser_use_rs.agent_gemini import GeminiAgent
+from browser_use_rs import Agent
+from browser_use_rs.llm import ChatGoogle
 
 # Gemini 2.5 Flash pricing per 1M tokens (regular, non-cached).
 COST_INPUT_PER_M = 0.30
@@ -24,23 +24,24 @@ COST_CACHE_READ_PER_M = COST_INPUT_PER_M * 0.25
 
 
 async def main() -> None:
-    agent = GeminiAgent(
+    llm = ChatGoogle(model="gemini-2.5-flash")
+    agent = Agent(
         task=(
             "Go to https://news.ycombinator.com and tell me the title and "
             "current points of the top story. Be concise — one sentence."
         ),
-        tools=BROWSER_TOOLS,
+        llm=llm,
         max_steps=8,
     )
 
     print(f"task: {agent.task}")
-    print(f"model={agent.model} max_steps={agent.max_steps}")
+    print(f"model={llm.model} max_steps={agent.max_steps}")
     print()
 
-    result = await agent.run()
+    history = await agent.run()
 
     print("\n=== FINAL ANSWER ===")
-    print(result)
+    print(history.final_result())
 
     print("\n=== USAGE PER STEP ===")
     total_in = total_out = total_cache_read = 0
