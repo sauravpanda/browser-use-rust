@@ -128,6 +128,18 @@ class AgentHistoryList:
 
     history: list[AgentHistory] = field(default_factory=list)
     usage: ChatInvokeUsage = field(default_factory=ChatInvokeUsage)
+    # Set by `Agent._judge_and_log()` when the inline judge runs.
+    # Eval consumers read via `is_judged()` / `judgement()`.
+    _judgement_data: dict[str, Any] | None = field(default=None, repr=False)
+
+    def _set_judgement(self, data: dict[str, Any]) -> None:
+        self._judgement_data = data
+
+    def is_judged(self) -> bool:
+        return self._judgement_data is not None
+
+    def judgement(self) -> dict[str, Any] | None:
+        return self._judgement_data
 
     def final_result(self) -> str | None:
         """Last `done` action's extracted_content, falling back to the

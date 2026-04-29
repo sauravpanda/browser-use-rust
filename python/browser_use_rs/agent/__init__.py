@@ -92,6 +92,13 @@ class Agent:
     ):
         self.task = task
         self.llm = llm
+        # Inline-judge inputs. eval/service.py:712 calls
+        # `agent._judge_and_log()` after run() for ComprehensiveV1 grading
+        # and reads `agent.history.is_judged()` / `.judgement()` after.
+        # We pluck these from the compat kwargs so the captured llm and
+        # ground truth are available to the inline judge.
+        self.judge_llm: BaseChatModel | None = _compat_kwargs.pop("judge_llm", None)
+        self.ground_truth: str | None = _compat_kwargs.pop("ground_truth", None)
         # Tool source: explicit tools= wins, then controller=, then defaults.
         controller = _compat_kwargs.pop("controller", None)
         if tools is None and controller is not None:
@@ -195,6 +202,64 @@ class Agent:
     async def add_new_task(self, new_task: str) -> None:
         """Append a follow-up user instruction. Next run() picks it up."""
         self._messages.append(UserMessage(content=new_task))
+
+    async def _judge_and_log(self) -> dict[str, Any] | None:
+        """Run an inline LLM-based judge and store the verdict on history.
+
+        Mirrors `browser_use.Agent._judge_and_log()` so eval consumers
+        can grade ComprehensiveV1-style runs. After this call,
+        `self.history.is_judged()` returns True and `self.history.judgement()`
+        returns the verdict dict (`reasoning`, `verdict`, `score`,
+        `impossible_task`, `reached_captcha`).
+
+        Lower fidelity than browser_use's full ComprehensiveV1 judge — we
+        feed the trajectory + final answer + ground truth text to
+        `self.judge_llm` and parse a JSON verdict. No screenshot input.
+        For per-step screenshot judging, use the eval suite's deferred
+        judge types (simplev1 / onlinemind2web / webjudge) instead.
+
+        Returns the verdict dict (also stored), or None if judge_llm
+        wasn't supplied at construction.
+        """
+        if self.judge_llm is None:
+            return None
+
+        # Build a compact trajectory string for the judge.
+        steps: list[str] = []
+        final_answer: str | None = None
+        for i, h in enumerate(self.state.history.history):
+            actions = ", ".join(
+                f"{tc.name}({tc.args})" for tc in h.output.tool_calls
+            ) or "(no tool calls)"
+            steps.append(f"step {i + 1}: url={h.state.url} | {actions}")
+            for r in h.result:
+                if r.is_done and r.extracted_content:
+                    final_answer = r.extracted_content
+
+        prompt = (
+            f"You are evaluating whether an autonomous browser agent successfully "
+            f"completed a task.\n\n"
+            f"TASK:\n{self.task}\n\n"
+            f"GROUND TRUTH (reference answer, may be empty):\n{self.ground_truth or '(none)'}\n\n"
+            f"AGENT TRAJECTORY ({len(steps)} steps):\n"
+            + "\n".join(steps)
+            + f"\n\nAGENT FINAL ANSWER:\n{final_answer or '(no done action)'}\n\n"
+            f"Decide if the agent completed the task. Respond ONLY with JSON of "
+            f'the form: {{"verdict": true|false, "reasoning": "...", '
+            f'"score": 0-100, "impossible_task": true|false, '
+            f'"reached_captcha": true|false}}. No prose outside JSON.'
+        )
+
+        from browser_use_rs.llm.base import UserMessage as _UM
+
+        completion = await self.judge_llm.ainvoke(
+            [_UM(content=prompt)],
+            tools=[],
+            system="You are a strict, concise judge. Output JSON only.",
+        )
+        verdict = _parse_judgement(completion.text or "")
+        self.state.history._set_judgement(verdict)
+        return verdict
 
     # ------------------------------------------------------------------
     # internal
@@ -429,6 +494,44 @@ class _MessageManagerView:
     @property
     def last_input_messages(self) -> list[Message]:
         return list(self._agent._messages)
+
+
+def _parse_judgement(text: str) -> dict[str, Any]:
+    """Best-effort JSON extraction from a judge LLM response.
+
+    Models sometimes wrap JSON in ```json fences or trailing prose; pull
+    the first balanced object. Falls back to a not-judged-shape verdict
+    on parse failure so downstream code doesn't crash.
+    """
+    import json as _json
+    import re as _re
+
+    fence = _re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=_re.S)
+    if fence:
+        candidate = fence.group(1)
+    else:
+        start = text.find("{")
+        end = text.rfind("}")
+        candidate = text[start : end + 1] if start != -1 and end > start else "{}"
+    try:
+        parsed = _json.loads(candidate)
+        if isinstance(parsed, dict):
+            return {
+                "verdict": bool(parsed.get("verdict", False)),
+                "reasoning": str(parsed.get("reasoning", "")),
+                "score": float(parsed.get("score", 0.0)),
+                "impossible_task": bool(parsed.get("impossible_task", False)),
+                "reached_captcha": bool(parsed.get("reached_captcha", False)),
+            }
+    except (ValueError, TypeError):
+        pass
+    return {
+        "verdict": False,
+        "reasoning": f"judge response could not be parsed: {text[:200]}",
+        "score": 0.0,
+        "impossible_task": False,
+        "reached_captcha": False,
+    }
 
 
 async def _maybe_await(value: Any) -> Any:
