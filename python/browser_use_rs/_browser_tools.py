@@ -311,9 +311,13 @@ async def list_downloads(session) -> str:
     return "\n".join(lines)
 
 
+# Note: `dom_snapshot` is intentionally NOT in the default tool set.
+# Agent._loop auto-injects a fresh DOM snapshot at the start of every turn
+# via _inject_page_state(), so the LLM already has the page state without
+# spending a round trip on it. The function remains importable for callers
+# who want to explicitly include it in a custom tool list.
 BROWSER_TOOLS = [
     navigate,
-    dom_snapshot,
     click,
     type_text,
     upload_file,

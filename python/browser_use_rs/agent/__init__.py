@@ -46,15 +46,27 @@ DEFAULT_SYSTEM_PROMPT = """\
 You are a browser-use agent. You control a real Chromium browser through a
 small set of tools and complete the user's task by calling them.
 
+You receive a fresh page snapshot (URL + numbered interactive elements) at
+the start of every turn — do NOT call a snapshot tool yourself. Reference
+elements by their `[N]` index from the most recent snapshot.
+
 Strategy:
-- Snapshot the page, then act. Re-snapshot after any action that changes
-  the page (navigate, click, type, scroll).
+- Read the page snapshot, then act. After clicks/navigates the next turn's
+  snapshot reflects the new page; indices are not stable across turns.
 - Prefer clicking visible links over navigating to known URLs — that
   verifies the page is in the expected state.
 - When the page is unfamiliar or text is ambiguous, take a screenshot.
 - When the task is complete, respond with a final answer in plain text. Do
   NOT call any further tools — your text turn is the answer.
 """
+
+# Tag prefix that identifies auto-injected per-step page-state messages.
+# We use it to find and supersede the previous step's snapshot so the
+# conversation doesn't accumulate stale DOMs across long runs.
+_PAGE_STATE_TAG = "[PAGE_STATE]"
+_PAGE_STATE_SUPERSEDED = (
+    f"{_PAGE_STATE_TAG} (superseded — see latest page state below)"
+)
 
 
 StepStartCallback = Callable[
@@ -295,6 +307,7 @@ class Agent:
 
             t0 = time.monotonic()
             state_summary = await self._capture_state()
+            self._inject_page_state(state_summary)
 
             completion = await self.llm.ainvoke(
                 self._messages,
@@ -382,30 +395,94 @@ class Agent:
     async def _capture_state(self) -> BrowserStateSummary:
         """Pre-step snapshot stored in history for the judge / callbacks.
 
-        Always captures a screenshot regardless of `use_vision` — matching
-        browser_use, where `use_vision` controls whether the LLM *sees* the
-        image, not whether it lands in history. Eval consumers iterate
-        `history.history[i].state.get_screenshot()` to feed judges, and
-        most run with `use_vision=False`, so gating capture on it produced
-        empty judge inputs.
+        Always captures a screenshot AND a DOM snapshot regardless of
+        `use_vision` — matching browser_use, where `use_vision` controls
+        whether the LLM *sees* the image, not whether it lands in history.
+        Eval consumers iterate `history.history[i].state.get_screenshot()`
+        to feed judges, and most run with `use_vision=False`, so gating
+        capture on it produced empty judge inputs.
 
-        Doesn't force a DOM snapshot — the model decides when to call that
-        tool.
+        The DOM text lands on `summary.elements_text` so
+        `_inject_page_state` can prepend it to the next LLM call without
+        a second snapshot round trip.
         """
         url = ""
         try:
             url = await self.session.current_url()
         except Exception:
             pass
+
         screenshot_b64: str | None = None
         try:
             png = await self.session.screenshot()
             screenshot_b64 = base64.b64encode(png).decode("ascii")
         except Exception:
-            # If we can't snapshot (no active tab yet, browser closing),
-            # fall through with screenshot=None — better than crashing.
             screenshot_b64 = None
-        return BrowserStateSummary(url=url, title="", screenshot=screenshot_b64)
+
+        dom_text = ""
+        try:
+            snap = await self.session.dom_snapshot()
+            dom_text = snap.to_llm_string()
+        except Exception:
+            # No active page yet (very first step before initial_actions
+            # navigate, or a frame transition mid-step). Skip — the LLM
+            # gets a "(no page state available)" placeholder instead of
+            # crashing the run.
+            dom_text = ""
+
+        return BrowserStateSummary(
+            url=url,
+            title="",
+            screenshot=screenshot_b64,
+            elements_text=dom_text,
+        )
+
+    def _inject_page_state(self, state: BrowserStateSummary) -> None:
+        """Append a UserMessage with the current page state so the LLM sees
+        the DOM without spending a turn on `dom_snapshot`. Older auto-injected
+        snapshots are replaced with a one-line "superseded" placeholder so the
+        conversation doesn't accumulate stale DOMs across long runs.
+
+        When `use_vision=True` and we captured a screenshot, attach it as an
+        ImagePart alongside the DOM text — same one-message shape upstream
+        browser_use uses for state messages.
+        """
+        # Supersede any prior page-state messages. Their indices are stale
+        # the moment a new snapshot lands; keeping them just inflates tokens.
+        for msg in self._messages:
+            if not isinstance(msg, UserMessage):
+                continue
+            if isinstance(msg.content, str) and msg.content.startswith(_PAGE_STATE_TAG):
+                msg.content = _PAGE_STATE_SUPERSEDED
+            elif isinstance(msg.content, list):
+                # Mixed text+image state message from a prior vision-on step.
+                first = msg.content[0] if msg.content else None
+                if (
+                    isinstance(first, TextPart)
+                    and first.text.startswith(_PAGE_STATE_TAG)
+                ):
+                    msg.content = _PAGE_STATE_SUPERSEDED
+
+        dom_text = state.elements_text or ""
+        if not dom_text:
+            body = (
+                f"{_PAGE_STATE_TAG}\nURL: {state.url}\n"
+                "(no DOM snapshot available — page not ready)"
+            )
+        else:
+            body = f"{_PAGE_STATE_TAG}\n{dom_text}"
+
+        if self.use_vision and state.screenshot:
+            self._messages.append(
+                UserMessage(
+                    content=[
+                        TextPart(text=body),
+                        ImagePart(data=state.screenshot, media_type="image/png"),
+                    ]
+                )
+            )
+        else:
+            self._messages.append(UserMessage(content=body))
 
     async def _run_tool(
         self, tc: ToolCall
