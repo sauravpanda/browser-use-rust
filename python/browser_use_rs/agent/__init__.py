@@ -103,6 +103,53 @@ _PAGE_STATE_SUPERSEDED = (
     f"{_PAGE_STATE_TAG} (superseded — see latest page state below)"
 )
 
+# Validation prompts injected once per task right before the agent's
+# final answer. Forces the LLM to re-check it against the original task
+# and the latest page snapshot. Closes the observed self-report ↔
+# judge gap from the v0.4.13 eval batch (~30pp delta where the agent
+# confidently submitted off-by-nuance answers the judge marked wrong).
+#
+# Two variants: text-mode (no done tool registered — final answer is a
+# plain text turn) and done-mode (Controller(output_model=X) registered
+# the done tool — final answer is a done() call with structured args).
+# The mode difference matters because the LLM must use the SAME
+# finishing mechanism on the validated turn.
+
+_VALIDATION_CHECKLIST = (
+    "Before committing, re-check it against the ORIGINAL TASK and the "
+    "LATEST PAGE SNAPSHOT shown above:\n"
+    "  • Did you answer EVERY part of the task? (e.g. if the task asks "
+    "for title AND date AND price, your answer must include all three.)\n"
+    "  • Are quantities and orderings correct? (first 3 vs latest 3 vs "
+    "most popular 3 are different things — re-read the task wording.)\n"
+    "  • Are you on the right page/section? Does the page actually "
+    "support the answer you're about to give, or are you guessing from "
+    "memory of an earlier page?\n"
+    "  • Are names, numbers, dates spelled / formatted exactly as they "
+    "appear on the page?\n"
+)
+
+_VALIDATION_PROMPT_TEXT = (
+    "[VALIDATION_CHECK] You are about to finalize your answer.\n"
+    + _VALIDATION_CHECKLIST
+    + "If anything is wrong or incomplete: call the tools you need to "
+    "fix it (scroll, get_text, navigate). If everything is correct: "
+    "repeat your answer in plain text to confirm — that turn will be "
+    "your final."
+)
+
+_VALIDATION_PROMPT_DONE = (
+    "[VALIDATION_CHECK] You are about to finalize your structured "
+    "answer.\n"
+    + _VALIDATION_CHECKLIST
+    + "If anything is wrong or incomplete: call the tools you need to "
+    "fix it (scroll, get_text, navigate), THEN call `done` again with "
+    "corrected `data`. If everything is correct: call `done` again "
+    "with the same `data` to confirm — that done call will be your "
+    "final. Do NOT respond in plain text — the final answer must come "
+    "through the `done` tool."
+)
+
 
 StepStartCallback = Callable[
     [BrowserStateSummary, AgentOutput, int], Any
@@ -128,6 +175,13 @@ class Agent:
         # one stuck call can consume the eval framework's whole stage
         # timeout and kill the run with a bare TimeoutError.
         tool_timeout: float = 30.0,
+        # Self-validation: when True (default), inject a one-shot
+        # "re-check before finalizing" prompt the first time the LLM
+        # tries to finish. Adds ~1 LLM call per task; closes the
+        # self-report ↔ judge-score gap on tasks where the agent
+        # extracts something close-but-wrong. Set False to disable
+        # for latency-sensitive consumers.
+        self_validate: bool = True,
         use_vision: bool = True,
         sensitive_data: dict[str, str] | None = None,
         system_prompt: str | None = None,
@@ -168,6 +222,7 @@ class Agent:
         self.max_steps = max_steps
         self.max_consecutive_errors = max_consecutive_errors
         self.tool_timeout = tool_timeout
+        self.self_validate = self_validate
         self.use_vision = use_vision
         self.sensitive_data: dict[str, str] = sensitive_data or {}
         if override_system_message is not None:
@@ -225,6 +280,15 @@ class Agent:
         self._recent_tool_names: list[tuple[str, ...]] = []
         # One-shot budget warning at step == max_steps - 5.
         self._budget_warning_fired = False
+        # Self-validation: when the LLM is about to finalize an answer
+        # (no tool calls in text-mode, or first done() call in
+        # output-model mode), we let it through ONCE with a "re-check
+        # before committing" prompt injected. This addresses the
+        # observed self-report ↔ judge-score gap (eval data showed
+        # ~30pp delta where the agent confidently submitted answers
+        # the judge marked wrong — wrong sort order, wrong section,
+        # missing required parts).
+        self._validation_step_used = False
         # Compat: `agent.message_manager.last_input_messages` mirrors
         # browser_use's API. Consumer code (evaluations-internal) reads
         # this for diagnostics; we just expose the live message buffer.
@@ -396,6 +460,45 @@ class Agent:
             # ActionResult so consumers can read final_result() / is_done().
             if not completion.tool_calls:
                 done_text = completion.text or ""
+
+                # Self-validation intercept: on the FIRST proposed
+                # answer, append the validation prompt and let the LLM
+                # respond once more. The second answer (or revision) is
+                # what we commit. See _VALIDATION_PROMPT for the
+                # rationale and prompt text.
+                if (
+                    self.self_validate
+                    and not self._validation_step_used
+                    and done_text
+                    and step_n < max_steps  # don't validate on the very last step
+                ):
+                    logger.info(
+                        "agent: VALIDATION_CHECK injected before "
+                        "finalizing answer (step %d, answer_len=%d)",
+                        step_n, len(done_text),
+                    )
+                    self._validation_step_used = True
+                    # Echo the proposed answer so the LLM sees what it
+                    # said, then ask it to re-check.
+                    self._messages.append(
+                        AssistantMessage(text=done_text, tool_calls=[])
+                    )
+                    self._messages.append(
+                        UserMessage(content=_VALIDATION_PROMPT_TEXT)
+                    )
+                    # Record this step in history so the budget is
+                    # accurate (the validation prompt cost a turn).
+                    self._append_history(
+                        state_summary,
+                        AgentOutput(text=done_text, tool_calls=[]),
+                        [ActionResult(extracted_content=done_text, is_done=False)],
+                        t0,
+                        step_n,
+                    )
+                    if on_step_end is not None:
+                        await _maybe_await(on_step_end())
+                    continue
+
                 results = [
                     ActionResult(
                         extracted_content=done_text,
@@ -493,6 +596,32 @@ class Agent:
                 await _maybe_await(on_step_end())
 
             if done_result is not None:
+                # Self-validation intercept for the structured-output
+                # done() path. On the FIRST done() call, append the
+                # validation prompt as a UserMessage and continue the
+                # loop. The done tool's result has already been
+                # appended as a ToolResultMessage; the LLM's next turn
+                # can either re-call done with corrections or call
+                # other tools to gather missing data, then re-call
+                # done. The second done call commits.
+                if (
+                    self.self_validate
+                    and not self._validation_step_used
+                    and step_n < max_steps
+                ):
+                    logger.info(
+                        "agent: VALIDATION_CHECK injected before "
+                        "finalizing structured-output answer "
+                        "(step %d, payload_len=%d)",
+                        step_n, len(done_result.extracted_content or ""),
+                    )
+                    self._validation_step_used = True
+                    self._messages.append(
+                        UserMessage(content=_VALIDATION_PROMPT_DONE)
+                    )
+                    # Don't return — continue the loop so the LLM can
+                    # respond to the validation prompt.
+                    continue
                 return
 
             self._maybe_inject_loop_nudge(
