@@ -1,0 +1,322 @@
+[
+  {
+    "id": "ex_headline",
+    "task": "Go to https://example.com and tell me the page headline. One sentence.",
+    "ours": {
+      "system": "ours",
+      "task": "Go to https://example.com and tell me the page headline. One sentence.",
+      "completed": true,
+      "answer": "The headline of the page at example.com is \"Example Domain\".",
+      "elapsed_s": 4.22,
+      "steps": 4,
+      "in_tokens": 8952,
+      "out_tokens": 59,
+      "cache_read_tokens": 3852,
+      "cost_usd": 0.00312,
+      "wall_s": 4.9,
+      "id": "ex_headline"
+    },
+    "theirs": {
+      "system": "theirs",
+      "task": "Go to https://example.com and tell me the page headline. One sentence.",
+      "completed": true,
+      "answer": "The headline of the page is Example Domain.",
+      "elapsed_s": 14.13,
+      "steps": 2,
+      "in_tokens": 9609,
+      "out_tokens": 425,
+      "cache_read_tokens": 4817,
+      "cost_usd": 0.00431,
+      "wall_s": 15.66,
+      "id": "ex_headline"
+    }
+  },
+  {
+    "id": "ex_link",
+    "task": "Go to https://example.com and tell me the destination URL of the 'More information...' link.",
+    "ours": {
+      "system": "ours",
+      "task": "Go to https://example.com and tell me the destination URL of the 'More information...' link.",
+      "completed": true,
+      "answer": "The destination URL of the link on example.com (which currently reads \"Learn more\", formerly \"More information...\") is https://www.iana.org/domains/example.",
+      "elapsed_s": 8.0,
+      "steps": 6,
+      "in_tokens": 15325,
+      "out_tokens": 92,
+      "cache_read_tokens": 11601,
+      "cost_usd": 0.0057,
+      "wall_s": 8.5,
+      "id": "ex_link"
+    },
+    "theirs": {
+      "system": "theirs",
+      "task": "Go to https://example.com and tell me the destination URL of the 'More information...' link.",
+      "completed": true,
+      "answer": "The destination URL of the 'More information...' link on https://example.com is https://www.iana.org/help/example-domains.",
+      "elapsed_s": 52.6,
+      "steps": 6,
+      "in_tokens": 44235,
+      "out_tokens": 5354,
+      "cache_read_tokens": 24535,
+      "cost_usd": 0.0285,
+      "wall_s": 54.45,
+      "id": "ex_link"
+    }
+  },
+  {
+    "id": "exorg_headline",
+    "task": "Go to https://example.org and tell me the page headline. One sentence.",
+    "ours": {
+      "system": "ours",
+      "task": "Go to https://example.org and tell me the page headline. One sentence.",
+      "completed": true,
+      "answer": "The headline of the page is \"Example Domain\".",
+      "elapsed_s": 4.17,
+      "steps": 4,
+      "in_tokens": 8966,
+      "out_tokens": 48,
+      "cache_read_tokens": 7720,
+      "cost_usd": 0.00339,
+      "wall_s": 4.7,
+      "id": "exorg_headline"
+    },
+    "theirs": {
+      "system": "theirs",
+      "task": "Go to https://example.org and tell me the page headline. One sentence.",
+      "completed": true,
+      "answer": "The headline of the page is Example Domain.",
+      "elapsed_s": 15.08,
+      "steps": 2,
+      "in_tokens": 9613,
+      "out_tokens": 431,
+      "cache_read_tokens": 4818,
+      "cost_usd": 0.00432,
+      "wall_s": 16.73,
+      "id": "exorg_headline"
+    }
+  },
+  {
+    "id": "hn_top_title",
+    "task": "Go to https://news.ycombinator.com and tell me the title of the top story. One sentence.",
+    "ours": {
+      "system": "ours",
+      "task": "Go to https://news.ycombinator.com and tell me the title of the top story. One sentence.",
+      "completed": true,
+      "answer": "The title of the top story on Hacker News is \"Ghostty is leaving GitHub.\"",
+      "elapsed_s": 3.6,
+      "steps": 3,
+      "in_tokens": 11797,
+      "out_tokens": 49,
+      "cache_read_tokens": 5877,
+      "cost_usd": 0.0041,
+      "wall_s": 4.12,
+      "id": "hn_top_title"
+    },
+    "theirs": {
+      "system": "theirs",
+      "task": "Go to https://news.ycombinator.com and tell me the title of the top story. One sentence.",
+      "completed": true,
+      "answer": "The title of the top story on Hacker News is \"Ghostty is leaving GitHub\".",
+      "elapsed_s": 9.38,
+      "steps": 2,
+      "in_tokens": 17121,
+      "out_tokens": 602,
+      "cache_read_tokens": 6112,
+      "cost_usd": 0.0071,
+      "wall_s": 11.3,
+      "id": "hn_top_title"
+    }
+  },
+  {
+    "id": "hn_top_with_points",
+    "task": "Go to https://news.ycombinator.com and tell me the title and current points of the top story. One sentence.",
+    "ours": {
+      "system": "ours",
+      "task": "Go to https://news.ycombinator.com and tell me the title and current points of the top story. One sentence.",
+      "completed": true,
+      "answer": "The top story on Hacker News is \"Ghostty is leaving GitHub\" and it currently has 1,553 points.",
+      "elapsed_s": 5.47,
+      "steps": 4,
+      "in_tokens": 20964,
+      "out_tokens": 68,
+      "cache_read_tokens": 5878,
+      "cost_usd": 0.0069,
+      "wall_s": 5.98,
+      "id": "hn_top_with_points"
+    },
+    "theirs": {
+      "system": "theirs",
+      "task": "Go to https://news.ycombinator.com and tell me the title and current points of the top story. One sentence.",
+      "completed": true,
+      "answer": "The top story on Hacker News is \"Ghostty is leaving GitHub\" with 1553 points.",
+      "elapsed_s": 17.22,
+      "steps": 2,
+      "in_tokens": 17142,
+      "out_tokens": 632,
+      "cache_read_tokens": 6113,
+      "cost_usd": 0.00718,
+      "wall_s": 18.76,
+      "id": "hn_top_with_points"
+    }
+  },
+  {
+    "id": "hn_third_story",
+    "task": "Go to https://news.ycombinator.com and tell me the title of the third story.",
+    "ours": {
+      "system": "ours",
+      "task": "Go to https://news.ycombinator.com and tell me the title of the third story.",
+      "completed": true,
+      "answer": "The title of the third story on Hacker News is \"Before GitHub\".",
+      "elapsed_s": 3.9,
+      "steps": 3,
+      "in_tokens": 11761,
+      "out_tokens": 46,
+      "cache_read_tokens": 5876,
+      "cost_usd": 0.00408,
+      "wall_s": 4.43,
+      "id": "hn_third_story"
+    },
+    "theirs": {
+      "system": "theirs",
+      "task": "Go to https://news.ycombinator.com and tell me the title of the third story.",
+      "completed": true,
+      "answer": "The title of the third story on Hacker News is \"Before GitHub\".",
+      "elapsed_s": 8.35,
+      "steps": 2,
+      "in_tokens": 17104,
+      "out_tokens": 620,
+      "cache_read_tokens": 6112,
+      "cost_usd": 0.00714,
+      "wall_s": 10.12,
+      "id": "hn_third_story"
+    }
+  },
+  {
+    "id": "wiki_first_sentence",
+    "task": "Go to https://en.wikipedia.org/wiki/Web_browser and give me the first sentence of the article.",
+    "ours": {
+      "system": "ours",
+      "task": "Go to https://en.wikipedia.org/wiki/Web_browser and give me the first sentence of the article.",
+      "completed": true,
+      "answer": "A web browser, often abbreviated as browser, is an application for accessing websites.",
+      "elapsed_s": 3.41,
+      "steps": 3,
+      "in_tokens": 6865,
+      "out_tokens": 61,
+      "cache_read_tokens": 5806,
+      "cost_usd": 0.00265,
+      "wall_s": 3.92,
+      "id": "wiki_first_sentence"
+    },
+    "theirs": {
+      "system": "theirs",
+      "task": "Go to https://en.wikipedia.org/wiki/Web_browser and give me the first sentence of the article.",
+      "completed": true,
+      "answer": "The first sentence of the Wikipedia article for 'Web browser' is: \"A web browser, often abbreviated as browser, is an application for accessing websites.\"",
+      "elapsed_s": 17.34,
+      "steps": 2,
+      "in_tokens": 15041,
+      "out_tokens": 630,
+      "cache_read_tokens": 5857,
+      "cost_usd": 0.00653,
+      "wall_s": 19.15,
+      "id": "wiki_first_sentence"
+    }
+  },
+  {
+    "id": "httpbin_form",
+    "task": "Go to https://httpbin.org/forms/post, fill the customer name field with 'Bench', click submit, then tell me the URL of the resulting page.",
+    "ours": {
+      "system": "ours",
+      "task": "Go to https://httpbin.org/forms/post, fill the customer name field with 'Bench', click submit, then tell me the URL of the resulting page.",
+      "completed": true,
+      "answer": "The URL of the resulting page is https://httpbin.org/post.",
+      "elapsed_s": 7.07,
+      "steps": 7,
+      "in_tokens": 18140,
+      "out_tokens": 102,
+      "cache_read_tokens": 13540,
+      "cost_usd": 0.00671,
+      "wall_s": 7.59,
+      "id": "httpbin_form"
+    },
+    "theirs": {
+      "system": "theirs",
+      "task": "Go to https://httpbin.org/forms/post, fill the customer name field with 'Bench', click submit, then tell me the URL of the resulting page.",
+      "completed": true,
+      "answer": "The URL of the resulting page after submitting the form is https://httpbin.org/post.",
+      "elapsed_s": 16.23,
+      "steps": 3,
+      "in_tokens": 19088,
+      "out_tokens": 1282,
+      "cache_read_tokens": 9955,
+      "cost_usd": 0.00968,
+      "wall_s": 17.71,
+      "id": "httpbin_form"
+    }
+  },
+  {
+    "id": "httpbin_html_title",
+    "task": "Go to https://httpbin.org/html and tell me the title of the article on the page.",
+    "ours": {
+      "system": "ours",
+      "task": "Go to https://httpbin.org/html and tell me the title of the article on the page.",
+      "completed": true,
+      "answer": "The title of the article on the page is \"Herman Melville - Moby-Dick\".",
+      "elapsed_s": 4.9,
+      "steps": 5,
+      "in_tokens": 12974,
+      "out_tokens": 77,
+      "cache_read_tokens": 9697,
+      "cost_usd": 0.00481,
+      "wall_s": 5.41,
+      "id": "httpbin_html_title"
+    },
+    "theirs": {
+      "system": "theirs",
+      "task": "Go to https://httpbin.org/html and tell me the title of the article on the page.",
+      "completed": true,
+      "answer": "The title of the article on the page is 'Herman Melville - Moby-Dick'.",
+      "elapsed_s": 8.86,
+      "steps": 2,
+      "in_tokens": 10452,
+      "out_tokens": 615,
+      "cache_read_tokens": 5028,
+      "cost_usd": 0.00505,
+      "wall_s": 10.66,
+      "id": "httpbin_html_title"
+    }
+  },
+  {
+    "id": "multitab",
+    "task": "Open https://example.com in one tab and https://example.org in another. Tell me the headlines of both pages, separated by ' | '.",
+    "ours": {
+      "system": "ours",
+      "task": "Open https://example.com in one tab and https://example.org in another. Tell me the headlines of both pages, separated by ' | '.",
+      "completed": true,
+      "answer": "Example Domain | Example Domain",
+      "elapsed_s": 6.94,
+      "steps": 7,
+      "in_tokens": 17542,
+      "out_tokens": 111,
+      "cache_read_tokens": 13515,
+      "cost_usd": 0.00655,
+      "wall_s": 7.45,
+      "id": "multitab"
+    },
+    "theirs": {
+      "system": "theirs",
+      "task": "Open https://example.com in one tab and https://example.org in another. Tell me the headlines of both pages, separated by ' | '.",
+      "completed": true,
+      "answer": "Example Domain | Example Domain",
+      "elapsed_s": 17.66,
+      "steps": 3,
+      "in_tokens": 24105,
+      "out_tokens": 1794,
+      "cache_read_tokens": 14202,
+      "cost_usd": 0.01278,
+      "wall_s": 19.16,
+      "id": "multitab"
+    }
+  }
+]
