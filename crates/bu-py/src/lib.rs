@@ -151,7 +151,7 @@ struct BrowserSession {
 #[pymethods]
 impl BrowserSession {
     #[new]
-    #[pyo3(signature = (headless=true, viewport=Some((1280, 900)), chrome_path=None, extra_chrome_args=None, cdp_url=None, allowed_domains=None, prohibited_domains=None, stealth=false))]
+    #[pyo3(signature = (headless=true, viewport=Some((1280, 900)), chrome_path=None, extra_chrome_args=None, cdp_url=None, allowed_domains=None, prohibited_domains=None, stealth=false, user_data_dir=None))]
     fn new(
         headless: bool,
         viewport: Option<(u32, u32)>,
@@ -161,11 +161,12 @@ impl BrowserSession {
         allowed_domains: Option<Vec<String>>,
         prohibited_domains: Option<Vec<String>>,
         stealth: bool,
+        user_data_dir: Option<String>,
     ) -> Self {
         let opts = bu_browser::LaunchOptions {
             headless,
             chrome_path: chrome_path.map(std::path::PathBuf::from),
-            user_data_dir: None,
+            user_data_dir: user_data_dir.map(std::path::PathBuf::from),
             extra_args: extra_chrome_args.unwrap_or_default(),
             viewport,
             cdp_url,
