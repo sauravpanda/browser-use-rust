@@ -73,6 +73,26 @@ Strategy:
   elements in the snapshot.
 - When the task is complete, respond with a final answer in plain text. Do
   NOT call any further tools — your text turn is the answer.
+
+Overlays: many sites open with a cookie consent / age gate / region
+selector / newsletter / "log in to continue" / "this site uses cookies"
+modal that covers the actual content. If the page snapshot is dominated
+by such an overlay, your FIRST action must be to dismiss it before
+extracting anything. Look for buttons matching: Accept, Agree, Continue,
+OK, Got it, I agree, Allow all, Allow, Dismiss, Close, Skip, Maybe
+later, No thanks, X (close icons). Do NOT conclude "task impossible" on
+your first turn — the real content is almost always one click away.
+
+Stamina: keep going until the task is fully solved. Do NOT end your
+turn with plain text describing what you would do — ACTUALLY make the
+tool call. A turn with no tool calls is treated as your FINAL ANSWER;
+only end your turn that way when you've genuinely completed the task
+or hit a hard blocker. When unsure, prefer one more concrete action
+(scroll, read, click) over giving up.
+
+When calling tools: never invent values for required arguments. If the
+snapshot doesn't show what you need (no [N] for the element, no text
+to read), scroll, navigate, or extract first to get real values.
 """
 
 # Tag prefix that identifies auto-injected per-step page-state messages.
@@ -102,6 +122,12 @@ class Agent:
         browser_session: BrowserSession | None = None,
         max_steps: int = 30,
         max_consecutive_errors: int = 5,
+        # Per-tool-call timeout in seconds. Caps how long a single CDP
+        # operation (click / scroll / navigate / dom_snapshot) can hang
+        # before we surface it as a tool error to the LLM. Without this,
+        # one stuck call can consume the eval framework's whole stage
+        # timeout and kill the run with a bare TimeoutError.
+        tool_timeout: float = 30.0,
         use_vision: bool = True,
         sensitive_data: dict[str, str] | None = None,
         system_prompt: str | None = None,
@@ -141,6 +167,7 @@ class Agent:
         self.session = browser_session or BrowserSession()
         self.max_steps = max_steps
         self.max_consecutive_errors = max_consecutive_errors
+        self.tool_timeout = tool_timeout
         self.use_vision = use_vision
         self.sensitive_data: dict[str, str] = sensitive_data or {}
         if override_system_message is not None:
@@ -937,7 +964,34 @@ class Agent:
 
         real_args = _expand_secrets(tc.args, self.sensitive_data)
         try:
-            raw = await tool.func(self.session, **real_args)
+            # Per-tool timeout. Without it, a single hung CDP op (e.g.
+            # `scroll` against a page stuck on a network request) can
+            # consume the eval framework's entire stage budget and kill
+            # the run with a bare TimeoutError. Returning the timeout as
+            # an ActionResult error lets the LLM react and try a
+            # different tool / element on the next turn.
+            raw = await asyncio.wait_for(
+                tool.func(self.session, **real_args),
+                timeout=self.tool_timeout,
+            )
+        except asyncio.TimeoutError:
+            err = (
+                f"tool timed out after {self.tool_timeout:.0f}s "
+                f"(call: {tc.name}({tc.args})). The page may be stuck "
+                f"loading or the element unresponsive. Try a different "
+                f"approach next turn — wait_for_navigation, switch tabs, "
+                f"or pick a different element."
+            )
+            logger.info(
+                "agent: tool timeout %s(%s) after %.0fs",
+                tc.name, tc.args, self.tool_timeout,
+            )
+            return (
+                ActionResult(error=err),
+                ToolResultMessage(
+                    tool_call_id=tc.id, name=tc.name, content=err, is_error=True
+                ),
+            )
         except Exception as e:
             err = f"tool error: {type(e).__name__}: {e}"
             err = _redact_secrets(err, self.sensitive_data)
