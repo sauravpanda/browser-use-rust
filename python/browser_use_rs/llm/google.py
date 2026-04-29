@@ -164,12 +164,15 @@ class ChatGoogle(BaseChatModel):
         temperature: float | None = None,
         max_output_tokens: int | None = None,
         thinking_level: str | None = None,
+        thinking_budget: int | None = None,
         client: genai.Client | None = None,
+        **_compat_kwargs: Any,
     ):
         self.model = model
         self.temperature = temperature
         self.max_output_tokens = max_output_tokens
         self.thinking_level = thinking_level
+        self.thinking_budget = thinking_budget
         self.client = client or genai.Client(
             api_key=api_key
             or os.getenv("GEMINI_API_KEY")
@@ -200,10 +203,13 @@ class ChatGoogle(BaseChatModel):
             config_kwargs["temperature"] = self.temperature
         if self.max_output_tokens is not None:
             config_kwargs["max_output_tokens"] = self.max_output_tokens
-        if self.thinking_level is not None:
-            config_kwargs["thinking_config"] = gtypes.ThinkingConfig(
-                thinking_level=self.thinking_level
-            )
+        if self.thinking_level is not None or self.thinking_budget is not None:
+            tc_kwargs: dict[str, Any] = {}
+            if self.thinking_level is not None:
+                tc_kwargs["thinking_level"] = self.thinking_level
+            if self.thinking_budget is not None:
+                tc_kwargs["thinking_budget"] = self.thinking_budget
+            config_kwargs["thinking_config"] = gtypes.ThinkingConfig(**tc_kwargs)
         config = gtypes.GenerateContentConfig(**config_kwargs)
 
         contents = _to_contents(messages)

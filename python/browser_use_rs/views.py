@@ -49,6 +49,16 @@ class StepMetadata:
         d["duration_seconds"] = self.duration_seconds
         return d
 
+    # browser_use's StepMetadata is dict-subscriptable in places (eval
+    # consumers do `metadata['input_tokens']`). Forward to attribute access.
+    def __getitem__(self, key: str) -> Any:
+        if hasattr(self, key):
+            return getattr(self, key)
+        raise KeyError(key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return getattr(self, key, default)
+
 
 @dataclass
 class AgentOutput:
@@ -74,6 +84,10 @@ class BrowserStateSummary:
     url: str = ""
     title: str = ""
     screenshot: str | None = None
+    # browser_use writes screenshots to disk and exposes the path; we keep
+    # the base64 in-memory and don't write a file by default. Consumers
+    # that need a path can write `screenshot` themselves.
+    screenshot_path: str | None = None
     elements_text: str = ""
 
     def get_screenshot(self) -> str | None:
@@ -93,10 +107,16 @@ class AgentHistory:
     result: list[ActionResult]
     metadata: StepMetadata | None = None
 
+    @property
+    def model_output(self) -> AgentOutput:
+        """Alias for `output` — browser_use names this `model_output`."""
+        return self.output
+
     def model_dump(self) -> dict[str, Any]:
         return {
             "state": self.state.model_dump(),
             "output": self.output.model_dump(),
+            "model_output": self.output.model_dump(),
             "result": [r.model_dump() for r in self.result],
             "metadata": self.metadata.model_dump() if self.metadata else None,
         }

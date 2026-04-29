@@ -32,6 +32,19 @@ class ChatInvokeUsage:
             cache_creation=self.cache_creation + other.cache_creation,
         )
 
+    def model_dump(self) -> dict[str, int]:
+        # Names mirror browser_use's ChatInvokeUsage so consumer code that
+        # reads total_prompt_tokens / total_completion_tokens still works.
+        return {
+            "input": self.input,
+            "output": self.output,
+            "cache_read": self.cache_read,
+            "cache_creation": self.cache_creation,
+            "total_prompt_tokens": self.input,
+            "total_completion_tokens": self.output,
+            "total_prompt_cached_tokens": self.cache_read,
+        }
+
 
 @dataclass
 class ToolCall:

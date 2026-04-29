@@ -25,12 +25,18 @@ class ChatGroq(ChatOpenAI):
         temperature: float | None = None,
         max_tokens: int | None = None,
         timeout: float | None = None,
+        # Accepted for parity with browser_use's ChatGroq; not currently
+        # forwarded to the OpenAI-compatible endpoint (Groq routes by
+        # default).
+        service_tier: str | None = None,
         client: AsyncOpenAI | None = None,
+        **_compat_kwargs: Any,
     ):
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.timeout = timeout
+        self.service_tier = service_tier
         if client is not None:
             self.client = client
         else:

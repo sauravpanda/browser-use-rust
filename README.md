@@ -3,9 +3,14 @@
 A lean Rust runtime for [browser-use](https://github.com/browser-use/browser-use), with Python bindings.
 
 The browser, CDP, and DOM layers are written in Rust. The agent loop, LLM
-providers, and tool registry stay in Python. The result is **3.4× faster
-and 48% cheaper than Python `browser-use` on the same tasks with the same
-LLM** — see [bench/](bench/) for the suite and the raw numbers.
+providers, and tool registry stay in Python. The result is **3.7× faster
+and 56% cheaper than Python `browser-use` on the same tasks with the same
+LLM**, with **23× fewer output tokens per step** — see [bench/](bench/)
+for the suite and the raw numbers.
+
+The Python surface is API-compatible with `browser_use` for the eval-runner
+path: pure import swaps, no call-site or history-read changes. See [Drop-in
+for `browser_use`](#drop-in-for-browser_use) below.
 
 ## Why
 
@@ -22,14 +27,14 @@ This project takes a different bet:
   cheap to run at scale.
 - **Python for the parts that need iteration** — agent loop, LLM
   providers, prompts, tool registry. The Python ecosystem owns this.
-- **Native tool calling** — Anthropic `tool_use` and Gemini
-  `function_call`, not JSON-mode unions. The model emits a structured
-  call directly; no preamble. This is where most of the speed and cost
-  win comes from.
+- **Native tool calling** — Anthropic `tool_use`, Gemini
+  `function_call`, OpenAI `function`. Not JSON-mode unions. The model
+  emits a structured call directly; no preamble. This is where most of
+  the speed and cost win comes from.
 
-Two providers (Anthropic + Gemini) instead of thirteen. No daemon, no
-tunnel, no sandbox, no telemetry. ~5,500 lines of code total vs
-~64,000.
+Five providers (Anthropic, Google, OpenAI, Azure OpenAI, Groq) — lazy
+imports, install only what you use. No daemon, no tunnel, no sandbox,
+no telemetry.
 
 ## Install
 
@@ -41,7 +46,8 @@ git clone https://github.com/sauravpanda/browser-use-rust.git
 cd browser-use-rust
 
 python3 -m venv .venv
-.venv/bin/pip install --upgrade pip maturin anthropic 'google-genai>=1.0'
+.venv/bin/pip install --upgrade pip maturin anthropic 'google-genai>=1.0' \
+    'openai>=1.50' pydantic
 .venv/bin/maturin develop
 ```
 
@@ -67,27 +73,69 @@ async def main():
 asyncio.run(main())
 ```
 
-## Hello, agent (Gemini)
+## Hello, agent
 
 ```python
 import asyncio
-from browser_use_rs._browser_tools import BROWSER_TOOLS
-from browser_use_rs.agent_gemini import GeminiAgent
+from browser_use_rs import Agent
+from browser_use_rs.llm import ChatGoogle  # or ChatAnthropic, ChatOpenAI, ...
 
 async def main():
-    agent = GeminiAgent(
+    agent = Agent(
         task="Go to https://news.ycombinator.com and tell me the top story.",
-        tools=BROWSER_TOOLS,
+        llm=ChatGoogle(model="gemini-2.5-flash"),
         max_steps=8,
     )
-    print(await agent.run())
+    history = await agent.run()
+    print(history.final_result())
 
 asyncio.run(main())
 ```
 
-`export GEMINI_API_KEY=...` first. The same shape works with `Agent`
-(Anthropic) — see `python/examples/agent_demo.py` and
-`python/examples/agent_demo_gemini.py`.
+`export GEMINI_API_KEY=...` first (or `ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, `GROQ_API_KEY`, `AZURE_OPENAI_API_KEY`). See
+`python/examples/agent_demo.py` (Anthropic) and
+`python/examples/agent_demo_gemini.py` (Gemini).
+
+## Drop-in for `browser_use`
+
+The Python surface mirrors `browser_use.Agent` so the eval-runner path
+swaps in with import changes only — no call-site rewrites:
+
+```python
+# Before
+from browser_use import Agent, BrowserSession, BrowserProfile, Controller
+from browser_use.agent.views import AgentHistoryList
+from browser_use.llm.anthropic.chat import ChatAnthropic
+from browser_use.llm.google.chat import ChatGoogle
+
+# After
+from browser_use_rs import Agent, BrowserSession, BrowserProfile, Controller
+from browser_use_rs.agent.views import AgentHistoryList
+from browser_use_rs.llm import ChatAnthropic, ChatGoogle
+```
+
+What works as-is: `Agent(task=, llm=, browser_session=, controller=,
+use_vision=, max_actions_per_step=, use_thinking=, flash_mode=,
+sensitive_data=, source=, override_system_message=, initial_actions=,
+register_new_step_callback=, register_done_callback=,
+register_should_stop_callback=, injected_agent_state=)`,
+`agent.run(max_steps=, on_step_start=, on_step_end=)`,
+`agent.add_new_task(...)`, `agent.message_manager.last_input_messages`,
+`history.final_result()`, `history.is_done()`,
+`history.history[i].state.get_screenshot()`,
+`history.history[i].result[j].extracted_content/.is_done/.success/.error`,
+`history.history[i].metadata['input_tokens']`,
+`history.history[i].model_output.model_dump()`,
+`history.usage.model_dump()`, `BrowserSession(cdp_url=...)` for
+Anchor/Browserbase/Daytona/BrightData, `BrowserProfile(headless=,
+window_size=, ...)`, `Controller()` with
+`@controller.registry.action(description, param_model=PydanticModel)`.
+
+Compat-only kwargs (`use_thinking`, `flash_mode`, `images_per_step`,
+`use_judge`, `judge_llm`, `ground_truth`, `calculate_cost`, `stealth`,
+`highlight_elements`, `keep_alive`, `allowed_domains`, ...) are accepted
+silently — they don't change behavior yet, but importing code doesn't break.
 
 ## Architecture
 
@@ -99,19 +147,29 @@ crates/
   bu-py/        PyO3 + pyo3-async-runtimes bindings (the only crate Python knows about)
 
 python/browser_use_rs/
-  agent.py        Agent loop driving Anthropic Claude (default: opus-4-7)
-  agent_gemini.py Agent loop driving Google Gemini (default: 2.5-flash / 3-flash)
-  tools.py        @tool decorator that derives JSON Schema from type hints
+  agent/__init__.py  Provider-agnostic Agent loop (returns AgentHistoryList)
+  agent/views.py     Compat re-exports for browser_use.agent.views path
+  views.py           AgentHistoryList, AgentHistory, ActionResult, AgentState, ...
+  browser.py         BrowserSession + BrowserProfile Python wrappers
+  controller.py      Controller + @registry.action decorator
+  llm/base.py        BaseChatModel + ChatInvokeCompletion/Usage + Message types
+  llm/anthropic.py   ChatAnthropic (tool_use, adaptive thinking, prompt caching)
+  llm/google.py      ChatGoogle (function_call, thought_signature replay)
+  llm/openai.py      ChatOpenAI (function tool calling)
+  llm/azure.py       ChatAzureOpenAI (Azure deployment routing)
+  llm/groq.py        ChatGroq (OpenAI-compat over Groq endpoint)
+  llm/messages.py    Compat re-exports for browser_use.llm.messages path
+  tools.py           @tool decorator that derives JSON Schema from type hints
   _browser_tools.py  25 built-in tools wrapping the Rust BrowserSession
+  agent_gemini.py    Deprecated thin wrapper — kept for back-compat
 ```
 
-The agent loop is the **manual variant of Anthropic's tool-use loop**, not
-the SDK's `tool_runner`. We need the manual loop so `screenshot` can return
-image content blocks the model literally sees as part of the
-`tool_result` — the runner only surfaces strings. Same trick is harder
-to get right with Gemini (its `function_response` doesn't allow image
-content), so the Gemini path attaches the PNG as a separate user-message
-`Part` right after the function response.
+The agent loop is a **manual native-tool-call loop**: each provider's
+`ainvoke` returns structured `tool_calls`; the agent executes them in
+parallel via `asyncio.gather`, sends results back as `tool_result` /
+`function_response` / `tool` messages. Image-in-tool-result works
+natively for Anthropic; for Gemini and OpenAI the screenshot is split
+into the next user-message `Part` automatically inside their providers.
 
 ## Tools available to the agent
 
@@ -134,16 +192,19 @@ for both with correct answers.
 
 | | browser-use-rs | Python browser-use | ratio |
 |---|---:|---:|---:|
-| Total wall time | 57.0 s | 193.7 s | **3.4× faster** |
-| Total cost | $0.048 | $0.093 | **48% cheaper** |
-| Total steps | 46 | 26 | theirs fewer |
-| Total input tokens | 133k | 184k | ours 27% lighter |
-| Total output tokens | 713 | 12,385 | **17× lighter** |
+| Total wall time | 59.2 s | 219.7 s | **3.7× faster** |
+| Total cost | $0.051 | $0.116 | **56% cheaper** |
+| Total steps | 48 | 30 | theirs fewer |
+| Total input tokens | 143k | 218k | ours 35% lighter |
+| Total output tokens | 730 | 17,053 | **23× lighter** |
 
-The output-token gap is the explanation. Theirs averages **476 output
-tokens per step**; ours averages **15.5**. Native function calling skips
+The output-token gap is the explanation. Theirs averages **~568 output
+tokens per step**; ours averages **~15**. Native function calling skips
 the prose preamble that JSON-mode unions force. Each of their steps takes
-~7.5s vs our ~1.2s.
+~7.3s vs our ~1.2s.
+
+The hardest task in the suite (`multitab` — open two pages, return both
+headlines) is **3.7× faster** for us at $0.006 vs theirs $0.020.
 
 Reproduce with:
 
@@ -156,9 +217,9 @@ Raw results: [bench/results.json](bench/results.json).
 
 ## What's deliberately not in scope
 
-- **More LLM providers beyond Anthropic + Gemini.** Direct adapters land
-  when there's user demand, not preemptively. OpenAI is the next likely
-  one. No LiteLLM-style provider abstraction.
+- **A LiteLLM-style provider abstraction.** Five direct adapters cover
+  the providers eval/cloud consumers actually use; new ones land when
+  asked for, not preemptively.
 - **CLI / daemon / cloudflare tunnel.** That's a separate product surface.
 - **Sandbox / Skills system.** Niche features that drove most of the
   bloat in the source project.
@@ -168,19 +229,25 @@ Raw results: [bench/results.json](bench/results.json).
 
 ## Honest gaps vs. Python `browser-use`
 
+- **`allowed_domains` / `prohibited_domains` enforcement** — the kwargs
+  are accepted (so importing code doesn't break) but not yet wired
+  through to a navigation guard.
+- **`file_system_path` / `available_file_paths`** — eval consumers pass
+  these; currently swallowed.
+- **`observe()` / `observe_debug()` Laminar tracing** — kept as no-ops in
+  consumer code; no spans emitted from inside our agent loop.
 - **Shadow DOM traversal** — our snapshot doesn't walk shadow DOM trees.
   Many modern web apps (Salesforce, custom-elements UIs) hide content
   there.
 - **Streaming agent events** — the agent returns at end, not per-step.
-  Needed for any UI integration.
-- **Full AgentHistory persistence** — we record `usage_log` and
-  `error_log`; theirs records full screenshots + action + result per step
-  for replay.
+  Needed for any UI integration. Step callbacks already fire per-step
+  in-process.
 - **Built-in `search` action** — we let the model construct search URLs.
-- **OpenAI provider** — planned.
+  Cloud consumers register their own DDG-Lite action via Controller.
 - **Anti-bot launch flags** — DDG and Google detect headless Chrome and
   serve degraded pages. Worth adding `--disable-blink-features=
   AutomationControlled` etc. as a flag.
+- **`generate_gif`** — no per-step screenshot stitching.
 
 See `python/examples/agent_demo*.py` for what works today.
 
@@ -197,11 +264,15 @@ See `python/examples/agent_demo*.py` for what works today.
 │   └── bu-py/              PyO3 bindings
 ├── python/
 │   ├── browser_use_rs/
-│   │   ├── _native.pyi     type stubs for the Rust extension
-│   │   ├── agent.py        Anthropic agent loop
-│   │   ├── agent_gemini.py Gemini agent loop
-│   │   ├── tools.py        @tool decorator
-│   │   └── _browser_tools.py  built-in tool set
+│   │   ├── _native.pyi       type stubs for the Rust extension
+│   │   ├── agent/            unified Agent loop + agent.views compat path
+│   │   ├── llm/              base + 5 provider adapters + messages compat path
+│   │   ├── views.py          AgentHistoryList / AgentHistory / ActionResult / ...
+│   │   ├── browser.py        BrowserSession + BrowserProfile wrappers
+│   │   ├── controller.py     Controller + @registry.action decorator
+│   │   ├── tools.py          @tool decorator
+│   │   ├── _browser_tools.py built-in tool set
+│   │   └── agent_gemini.py   deprecated back-compat shim
 │   └── examples/
 │       ├── browser.py
 │       ├── click.py

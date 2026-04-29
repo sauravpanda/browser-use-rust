@@ -73,6 +73,9 @@ class BrowserSession:
         self,
         *,
         browser_profile: BrowserProfile | None = None,
+        # browser_use's call sites use `profile=` (not `browser_profile=`).
+        # Accept both; `browser_profile` wins if both are passed.
+        profile: BrowserProfile | None = None,
         cdp_url: str | None = None,
         is_local: bool = True,  # accepted for compat; ignored locally
         downloads_path: str | None = None,
@@ -81,10 +84,13 @@ class BrowserSession:
         viewport: tuple[int, int] | None = (1280, 900),
         chrome_path: str | None = None,
         extra_chrome_args: list[str] | None = None,
-        # Compat-only kwargs we silently swallow (keep_alive,
-        # cross_origin_iframes, allowed_domains, ...):
+        # Compat-only kwargs we silently swallow:
+        # stealth, highlight_elements, keep_alive, cross_origin_iframes,
+        # allowed_domains, prohibited_domains, ...
         **_compat_kwargs: Any,
     ):
+        if browser_profile is None and profile is not None:
+            browser_profile = profile
         if browser_profile is not None:
             kwargs = browser_profile.to_native_kwargs()
             if downloads_path is None:
