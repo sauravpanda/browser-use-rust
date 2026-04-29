@@ -53,6 +53,10 @@ pub enum BrowserError {
     UnknownTab(String),
     #[error("cannot close last tab — call stop() to end the session")]
     LastTab,
+    #[error(
+        "navigation to {url} blocked: hostname not permitted by allowed_domains / prohibited_domains policy"
+    )]
+    NavigationBlocked { url: String },
 }
 
 pub type Result<T> = std::result::Result<T, BrowserError>;
@@ -73,6 +77,25 @@ pub struct LaunchOptions {
     /// Daytona, BrightData). When attached, `stop()` detaches but does
     /// NOT call Browser.close — the remote owner manages the browser.
     pub cdp_url: Option<String>,
+    /// If non-empty, navigation is restricted to URLs whose hostname
+    /// matches one of these patterns. Empty = no restriction.
+    /// Patterns: bare hostname (`example.com`), subdomain wildcard
+    /// (`*.example.com` matches both root and subdomains), prefix
+    /// wildcard (`*google.com` matches `agoogle.com`, `www.google.com`),
+    /// or scheme-qualified (`http*://example.com`, `chrome-extension://*`).
+    /// Default scheme is `https` if not specified. Multiple wildcards or
+    /// wildcard TLDs (`example.*`) are rejected as unsafe.
+    pub allowed_domains: Vec<String>,
+    /// If non-empty, navigation to URLs matching any of these patterns
+    /// is blocked even if `allowed_domains` would otherwise permit them.
+    /// Same pattern syntax as `allowed_domains`.
+    pub prohibited_domains: Vec<String>,
+    /// Add Chrome flags that reduce headless-detection signals
+    /// (`--disable-blink-features=AutomationControlled`, etc.). Helpful
+    /// for sites that serve degraded pages to detected automation
+    /// (Google, DuckDuckGo). Off by default — these flags can also
+    /// trigger different bugs on a small number of sites.
+    pub stealth: bool,
 }
 
 impl Default for LaunchOptions {
@@ -84,6 +107,9 @@ impl Default for LaunchOptions {
             extra_args: Vec::new(),
             viewport: None,
             cdp_url: None,
+            allowed_domains: Vec::new(),
+            prohibited_domains: Vec::new(),
+            stealth: false,
         }
     }
 }
@@ -143,6 +169,10 @@ pub struct BrowserSession {
     conn: Connection,
     user_data_dir: Option<PathBuf>,
     viewport: Option<(u32, u32)>,
+    /// Navigation policy. Empty allowed_domains means no restriction.
+    /// Both lists use the same domain-pattern syntax as browser_use.
+    allowed_domains: Vec<String>,
+    prohibited_domains: Vec<String>,
     /// True when we attached to an existing CDP endpoint (cdp_url=...).
     /// stop() must NOT call Browser.close for remote-owned browsers — the
     /// cloud provider manages the lifecycle and would error or leak state.
@@ -208,6 +238,13 @@ impl BrowserSession {
         }
         if let Some((w, h)) = opts.viewport {
             cmd.arg(format!("--window-size={w},{h}"));
+        }
+        if opts.stealth {
+            // Reduce headless-detection signals. Doesn't make automation
+            // undetectable, but flips the most-checked CDP flags.
+            cmd.arg("--disable-blink-features=AutomationControlled")
+                .arg("--exclude-switches=enable-automation")
+                .arg("--disable-features=IsolateOrigins,site-per-process,AutomationControlled");
         }
         for a in &opts.extra_args {
             cmd.arg(a);
@@ -279,6 +316,8 @@ impl BrowserSession {
             conn,
             user_data_dir: Some(user_data_dir),
             viewport: opts.viewport,
+            allowed_domains: opts.allowed_domains.clone(),
+            prohibited_domains: opts.prohibited_domains.clone(),
             attached_only: false,
             active: Mutex::new(ActiveTab {
                 target_id,
@@ -384,6 +423,8 @@ impl BrowserSession {
             conn,
             user_data_dir: None,
             viewport: opts.viewport,
+            allowed_domains: opts.allowed_domains.clone(),
+            prohibited_domains: opts.prohibited_domains.clone(),
             attached_only: true,
             active: Mutex::new(ActiveTab {
                 target_id,
@@ -591,6 +632,37 @@ impl BrowserSession {
         self.active.lock().await.target_id.clone()
     }
 
+    /// Enforce the navigation policy for a candidate URL.
+    ///
+    /// - `prohibited_domains` always blocks (checked first).
+    /// - If `allowed_domains` is non-empty, the URL must match one of them.
+    /// - Empty allowed_domains = no allow-list restriction.
+    /// - `about:blank` and other new-tab URLs are always permitted.
+    fn check_navigation_allowed(&self, url: &str) -> Result<()> {
+        if is_new_tab_url(url) {
+            return Ok(());
+        }
+        for pattern in &self.prohibited_domains {
+            if match_url_with_domain_pattern(url, pattern) {
+                return Err(BrowserError::NavigationBlocked {
+                    url: url.to_string(),
+                });
+            }
+        }
+        if !self.allowed_domains.is_empty() {
+            let allowed = self
+                .allowed_domains
+                .iter()
+                .any(|p| match_url_with_domain_pattern(url, p));
+            if !allowed {
+                return Err(BrowserError::NavigationBlocked {
+                    url: url.to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+
     // ---------- tab management ----------
 
     /// List all attachable browseable targets — pages (tabs/windows) and
@@ -729,6 +801,10 @@ impl BrowserSession {
     /// as `navigate`, so `current_url` reflects the requested URL on
     /// return rather than `about:blank`.
     pub async fn new_tab(&self, url: &str) -> Result<TabInfo> {
+        // Enforce navigation policy BEFORE we burn a tab on a blocked URL.
+        if !url.is_empty() {
+            self.check_navigation_allowed(url)?;
+        }
         let (target_id, session_id) =
             Self::create_and_attach(&self.conn, "about:blank", self.viewport).await?;
         self.attached
@@ -797,7 +873,12 @@ impl BrowserSession {
     /// tab's session. Subscribes before sending Page.navigate to avoid a
     /// race. Returns Ok on the 30s timeout too — pages that legitimately
     /// never fire load (infinite SPAs) are still usable.
+    ///
+    /// Enforces the navigation policy (allowed_domains / prohibited_domains)
+    /// configured on this session — returns NavigationBlocked without
+    /// touching the browser if the URL isn't permitted.
     pub async fn navigate(&self, url: &str) -> Result<()> {
+        self.check_navigation_allowed(url)?;
         let mut events = self.conn.events();
         let sid = self.session_id().await;
 
@@ -1452,6 +1533,183 @@ async fn track_browser_events(
             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
             Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
         }
+    }
+}
+
+/// True for URLs that should always be navigable regardless of policy
+/// (new-tab placeholders, browser-internal pages used during startup).
+fn is_new_tab_url(url: &str) -> bool {
+    let u = url.trim().to_ascii_lowercase();
+    u.is_empty()
+        || u == "about:blank"
+        || u.starts_with("chrome://new-tab-page")
+        || u.starts_with("chrome://newtab")
+}
+
+/// Match a URL against a `browser_use`-style domain pattern. Mirrors
+/// `browser_use.utils.match_url_with_domain_pattern` semantics:
+///
+/// - Bare hostname (`example.com`): exact hostname match, default `https`.
+/// - `*.example.com`: matches `example.com` AND any subdomain.
+/// - `*google.com`: prefix glob — matches `google.com`, `agoogle.com`,
+///   `www.google.com`.
+/// - `chrome-extension://*`: scheme + any host.
+/// - `http*://example.com`: scheme glob (matches `http`, `https`, etc.).
+///
+/// Rejects unsafe patterns: multiple wildcards, wildcard TLDs (`example.*`),
+/// or wildcards in non-leading positions other than `*.`-prefix.
+fn match_url_with_domain_pattern(url: &str, pattern: &str) -> bool {
+    if is_new_tab_url(url) {
+        return false;
+    }
+    let parsed = match url::Url::parse(url) {
+        Ok(u) => u,
+        Err(_) => return false,
+    };
+    let scheme = parsed.scheme().to_ascii_lowercase();
+    let host = match parsed.host_str() {
+        Some(h) => h.to_ascii_lowercase(),
+        None => return false,
+    };
+    if scheme.is_empty() {
+        return false;
+    }
+
+    let lower = pattern.to_ascii_lowercase();
+    let (pattern_scheme, mut pattern_domain) = match lower.split_once("://") {
+        Some((s, d)) => (s.to_string(), d.to_string()),
+        None => ("https".to_string(), lower.clone()),
+    };
+    // Strip any port from pattern domain.
+    if let Some(idx) = pattern_domain.find(':') {
+        if idx > 0 {
+            pattern_domain.truncate(idx);
+        }
+    }
+
+    if !glob_match(&pattern_scheme, &scheme) {
+        return false;
+    }
+
+    // Exact match or full wildcard.
+    if pattern_domain == "*" || pattern_domain == host {
+        return true;
+    }
+
+    if !pattern_domain.contains('*') {
+        return false;
+    }
+
+    // Reject unsafe globs.
+    let star_dot_count = pattern_domain.matches("*.").count();
+    let dot_star_count = pattern_domain.matches(".*").count();
+    if star_dot_count > 1 || dot_star_count > 1 {
+        return false;
+    }
+    if pattern_domain.ends_with(".*") {
+        return false; // wildcard TLD
+    }
+    let bare = pattern_domain.replace("*.", "");
+    if bare.contains('*') && !pattern_domain.starts_with('*') {
+        return false; // embedded wildcard outside leading position
+    }
+
+    if let Some(rest) = pattern_domain.strip_prefix("*.") {
+        // *.example.com matches example.com (root) AND *.example.com (subs).
+        return host == rest || host.ends_with(&format!(".{rest}"));
+    }
+    glob_match(&pattern_domain, &host)
+}
+
+/// Tiny glob matcher supporting `*` (any sequence). Used for domain patterns
+/// like `*google.com` and scheme patterns like `http*`.
+fn glob_match(pattern: &str, value: &str) -> bool {
+    if !pattern.contains('*') {
+        return pattern == value;
+    }
+    let parts: Vec<&str> = pattern.split('*').collect();
+    let mut idx = 0usize;
+    // Anchor first part if pattern doesn't start with *.
+    if let Some(first) = parts.first() {
+        if !first.is_empty() {
+            if !value[idx..].starts_with(first) {
+                return false;
+            }
+            idx += first.len();
+        }
+    }
+    // Middle parts: each must appear in order.
+    let last_idx = parts.len() - 1;
+    for part in parts.iter().take(last_idx).skip(1) {
+        if part.is_empty() {
+            continue;
+        }
+        match value[idx..].find(part) {
+            Some(p) => idx += p + part.len(),
+            None => return false,
+        }
+    }
+    // Anchor last part if pattern doesn't end with *.
+    if let Some(last) = parts.last() {
+        if !last.is_empty() {
+            return value[idx..].ends_with(last);
+        }
+    }
+    true
+}
+
+#[cfg(test)]
+mod url_match_tests {
+    use super::*;
+
+    #[test]
+    fn exact_hostname_https_only() {
+        assert!(match_url_with_domain_pattern("https://example.com/", "example.com"));
+        // Bare pattern defaults to https — http should NOT match.
+        assert!(!match_url_with_domain_pattern("http://example.com/", "example.com"));
+    }
+
+    #[test]
+    fn star_dot_matches_root_and_subs() {
+        assert!(match_url_with_domain_pattern("https://example.com/", "*.example.com"));
+        assert!(match_url_with_domain_pattern("https://sub.example.com/", "*.example.com"));
+        assert!(!match_url_with_domain_pattern("https://evil.com/", "*.example.com"));
+        assert!(!match_url_with_domain_pattern("https://exampleXcom/", "*.example.com"));
+    }
+
+    #[test]
+    fn prefix_star() {
+        assert!(match_url_with_domain_pattern("https://google.com/", "*google.com"));
+        assert!(match_url_with_domain_pattern("https://www.google.com/", "*google.com"));
+        assert!(match_url_with_domain_pattern("https://agoogle.com/", "*google.com"));
+        assert!(!match_url_with_domain_pattern("https://googleX.com/", "*google.com"));
+    }
+
+    #[test]
+    fn scheme_glob() {
+        assert!(match_url_with_domain_pattern("http://example.com/", "http*://example.com"));
+        assert!(match_url_with_domain_pattern("https://example.com/", "http*://example.com"));
+    }
+
+    #[test]
+    fn extension_wildcard() {
+        assert!(match_url_with_domain_pattern("chrome-extension://abc/", "chrome-extension://*"));
+        assert!(!match_url_with_domain_pattern("https://abc/", "chrome-extension://*"));
+    }
+
+    #[test]
+    fn rejects_wildcard_tld() {
+        assert!(!match_url_with_domain_pattern("https://example.com/", "example.*"));
+    }
+
+    #[test]
+    fn rejects_multiple_wildcards() {
+        assert!(!match_url_with_domain_pattern("https://a.b.example.com/", "*.*.example.com"));
+    }
+
+    #[test]
+    fn new_tab_never_matches() {
+        assert!(!match_url_with_domain_pattern("about:blank", "*"));
     }
 }
 

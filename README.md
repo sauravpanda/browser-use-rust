@@ -229,25 +229,35 @@ Raw results: [bench/results.json](bench/results.json).
 
 ## Honest gaps vs. Python `browser-use`
 
-- **`allowed_domains` / `prohibited_domains` enforcement** — the kwargs
-  are accepted (so importing code doesn't break) but not yet wired
-  through to a navigation guard.
 - **`file_system_path` / `available_file_paths`** — eval consumers pass
   these; currently swallowed.
-- **`observe()` / `observe_debug()` Laminar tracing** — kept as no-ops in
-  consumer code; no spans emitted from inside our agent loop.
 - **Shadow DOM traversal** — our snapshot doesn't walk shadow DOM trees.
   Many modern web apps (Salesforce, custom-elements UIs) hide content
   there.
 - **Streaming agent events** — the agent returns at end, not per-step.
   Needed for any UI integration. Step callbacks already fire per-step
   in-process.
+- **Link-click navigation guard** — `allowed_domains` / `prohibited_domains`
+  enforcement runs on `navigate()` and `new_tab()` (where the model
+  explicitly chooses a URL). Navigation triggered by clicking a link
+  isn't intercepted at the CDP level yet — needs `Network.setRequestInterception`
+  or `Fetch.enable` to catch all forms.
 - **Built-in `search` action** — we let the model construct search URLs.
   Cloud consumers register their own DDG-Lite action via Controller.
-- **Anti-bot launch flags** — DDG and Google detect headless Chrome and
-  serve degraded pages. Worth adding `--disable-blink-features=
-  AutomationControlled` etc. as a flag.
 - **`generate_gif`** — no per-step screenshot stitching.
+
+## Recently landed
+
+- **`allowed_domains` / `prohibited_domains` enforcement** — full
+  `browser_use` pattern syntax (`*.example.com`, `*google.com`,
+  `chrome-extension://*`, `http*://example.com`). Enforced on
+  `navigate()` + `new_tab()`. 0.4.4.
+- **Stealth Chrome flags** — `BrowserSession(stealth=True)` adds
+  `--disable-blink-features=AutomationControlled` etc. Helps against
+  Google/DDG headless detection. 0.4.4.
+- **`observe()` / `observe_debug()` no-op stubs** at
+  `browser_use_rs.observability` — drops in for consumers that import
+  these from `browser_use.observability`. 0.4.4.
 
 See `python/examples/agent_demo*.py` for what works today.
 

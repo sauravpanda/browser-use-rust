@@ -41,6 +41,9 @@ class BrowserSession:
         chrome_path: str | None = None,
         extra_chrome_args: list[str] | None = None,
         cdp_url: str | None = None,
+        allowed_domains: list[str] | None = None,
+        prohibited_domains: list[str] | None = None,
+        stealth: bool = False,
     ) -> None: ...
     async def start(self) -> None: ...
     async def navigate(self, url: str) -> None: ...

@@ -32,12 +32,19 @@ class BrowserProfile:
     viewport: tuple[int, int] | None = (1280, 900)
     chrome_path: str | None = None
     extra_args: list[str] = field(default_factory=list)
-    # The following fields are accepted for parity with browser_use but
-    # are NOT yet wired through to the Rust browser layer:
-    keep_alive: bool = False
-    highlight_elements: bool = True
+    # Navigation policy — enforced in Rust on navigate() and new_tab().
+    # See match_url_with_domain_pattern for pattern semantics.
     allowed_domains: list[str] | None = None
     prohibited_domains: list[str] | None = None
+    # Anti-bot Chrome flags. Off by default — flips
+    # --disable-blink-features=AutomationControlled and friends. Helpful
+    # against headless-detection on Google/DDG, may break a small set of
+    # other sites.
+    stealth: bool = False
+    # Following fields are accepted for parity with browser_use but
+    # NOT yet wired through to the Rust browser layer:
+    keep_alive: bool = False
+    highlight_elements: bool = True
     block_ip_addresses: bool = False
     cookies: list[dict[str, Any]] | None = None
     local_storage: dict[str, Any] | None = None
@@ -56,6 +63,13 @@ class BrowserProfile:
             "viewport": viewport,
             "chrome_path": self.chrome_path,
             "extra_chrome_args": list(self.extra_args) if self.extra_args else None,
+            "allowed_domains": (
+                list(self.allowed_domains) if self.allowed_domains else None
+            ),
+            "prohibited_domains": (
+                list(self.prohibited_domains) if self.prohibited_domains else None
+            ),
+            "stealth": self.stealth,
         }
 
 
@@ -84,9 +98,14 @@ class BrowserSession:
         viewport: tuple[int, int] | None = (1280, 900),
         chrome_path: str | None = None,
         extra_chrome_args: list[str] | None = None,
+        # Navigation policy + stealth — also accepted directly so
+        # consumers don't have to construct a BrowserProfile just for
+        # these. browser_profile fields win if both are set.
+        allowed_domains: list[str] | None = None,
+        prohibited_domains: list[str] | None = None,
+        stealth: bool = False,
         # Compat-only kwargs we silently swallow:
-        # stealth, highlight_elements, keep_alive, cross_origin_iframes,
-        # allowed_domains, prohibited_domains, ...
+        # highlight_elements, keep_alive, cross_origin_iframes, ...
         **_compat_kwargs: Any,
     ):
         if browser_profile is None and profile is not None:
@@ -101,6 +120,11 @@ class BrowserSession:
                 "viewport": viewport,
                 "chrome_path": chrome_path,
                 "extra_chrome_args": extra_chrome_args,
+                "allowed_domains": list(allowed_domains) if allowed_domains else None,
+                "prohibited_domains": (
+                    list(prohibited_domains) if prohibited_domains else None
+                ),
+                "stealth": stealth,
             }
         if cdp_url is not None:
             kwargs["cdp_url"] = cdp_url
