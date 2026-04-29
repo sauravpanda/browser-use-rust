@@ -50,12 +50,24 @@ You receive a fresh page snapshot (URL + numbered interactive elements) at
 the start of every turn — do NOT call a snapshot tool yourself. Reference
 elements by their `[N]` index from the most recent snapshot.
 
+Multi-action turns: emit MULTIPLE tool calls in a single turn when the
+next steps don't depend on each other's output (e.g. `[scroll(800),
+get_text("h1.title")]`, or a sequence of scrolls to reveal a list).
+Calls execute sequentially in the order you provide. The batch STOPS
+automatically if any action navigates to a new URL — subsequent calls
+are skipped because their `[N]` indices were valid only for the page
+you saw at the start of the turn. This means you can plan 2-4 actions
+ahead and have them run without spending an extra LLM turn each.
+
 Strategy:
 - Read the page snapshot, then act. After clicks/navigates the next turn's
   snapshot reflects the new page; indices are not stable across turns.
 - Prefer clicking visible links over navigating to known URLs — that
   verifies the page is in the expected state.
 - When the page is unfamiliar or text is ambiguous, take a screenshot.
+- Extract content with `get_text` / `page_text` / `get_links` rather than
+  relying solely on the snapshot — long pages render only above-the-fold
+  elements in the snapshot.
 - When the task is complete, respond with a final answer in plain text. Do
   NOT call any further tools — your text turn is the answer.
 """
@@ -171,12 +183,18 @@ class Agent:
         # can append a continuation without losing browser/page context.
         self._messages: list[Message] = []
         self._consecutive_error_turns = 0
-        # Loop-detection state: rolling window of recent action signatures
+        # Loop-detection state: rolling windows of recent activity
         # + cooldown so a single nudge doesn't fire on consecutive steps.
-        # See _maybe_inject_loop_nudge for the heuristic.
+        # See _maybe_inject_loop_nudge for the heuristics.
         self._recent_action_sigs: list[str] = []
         self._loop_nudge_cooldown = 0
         self._recent_urls: list[str] = []
+        # Tool names emitted per turn (tuple per turn). Drives the
+        # "no extract" nudge: many turns with zero read-tool calls
+        # signals the agent is exploring without reading content.
+        self._recent_tool_names: list[tuple[str, ...]] = []
+        # One-shot budget warning at step == max_steps - 5.
+        self._budget_warning_fired = False
         # Compat: `agent.message_manager.last_input_messages` mirrors
         # browser_use's API. Consumer code (evaluations-internal) reads
         # this for diagnostics; we just expose the live message buffer.
@@ -365,11 +383,23 @@ class Agent:
                 AssistantMessage(text=completion.text, tool_calls=output.tool_calls)
             )
 
-            # Run all tool calls concurrently — providers that emit parallel
-            # calls (Anthropic) deserve the speedup. Tools serialize
-            # internally if they touch shared state.
-            results_and_msgs = await asyncio.gather(
-                *(self._run_tool(tc) for tc in completion.tool_calls)
+            # Run tool calls SEQUENTIALLY in the order the LLM emitted
+            # them, with a page-change guard between each. Mirrors
+            # upstream browser_use's `multi_act` semantics: the LLM may
+            # plan a batch like `[scroll(800), get_text("h1")]` and we
+            # execute them one after the other. If any action causes the
+            # URL to change, we abort the rest of the batch — subsequent
+            # tool calls were addressed using `[N]` indices from the OLD
+            # page snapshot and would land on the wrong elements.
+            #
+            # This replaces the prior asyncio.gather; parallelism was a
+            # mirage because consecutive actions almost always depend on
+            # each other's effects (click → snapshot → click), and the
+            # gather order was undefined which made the second click in
+            # a 2-call turn unsafe. Sequential is both faster (no
+            # round-trip per action) and safer.
+            results_and_msgs = await self._run_tools_sequentially(
+                completion.tool_calls
             )
             tool_results: list[ActionResult] = []
             done_result: ActionResult | None = None
@@ -423,7 +453,9 @@ class Agent:
             if done_result is not None:
                 return
 
-            self._maybe_inject_loop_nudge(state_summary, completion.tool_calls)
+            self._maybe_inject_loop_nudge(
+                state_summary, completion.tool_calls, step_n, max_steps
+            )
 
             # All-error streak guard. Model can self-correct from one bad
             # turn; multiple in a row means it's stuck.
@@ -456,28 +488,54 @@ class Agent:
                 )
             )
 
-    def _maybe_inject_loop_nudge(
-        self, state: BrowserStateSummary, tool_calls: list[ToolCall]
-    ) -> None:
-        """Detect repeated actions / stuck-on-same-URL and inject a nudge.
+    # Tool name groups used by the loop-detection heuristics.
+    _EXTRACT_TOOLS: frozenset[str] = frozenset({
+        "get_text",
+        "page_text",
+        "get_links",
+        "list_tabs",
+        "list_downloads",
+        "get_cookies",
+        "save_pdf",
+        "done",
+    })
 
-        Mirrors browser_use's loop_detector + replan_nudge in spirit
-        (much simpler heuristic): if the same canonical action signature
-        appears 3+ times in the last 5 LLM turns AND the URL hasn't
-        advanced, the agent is stuck. Inject a one-shot UserMessage
-        prompting it to break the pattern, then enter a 3-step cooldown
-        so we don't spam.
+    def _maybe_inject_loop_nudge(
+        self,
+        state: BrowserStateSummary,
+        tool_calls: list[ToolCall],
+        step_n: int,
+        max_steps: int,
+    ) -> None:
+        """Detect three classes of stall and inject a one-shot nudge.
+
+        1. **Tight loop** — same canonical (name+args) signature emitted
+           3+ times in the last 5 turns AND no URL change. Catches
+           literal "click [6], click [6], click [6]" repetition.
+        2. **No extract** — many turns with zero read-tool calls
+           (`get_text`, `page_text`, `get_links`, `done`) and the agent
+           has already used >1/3 of its step budget. Catches the
+           dominant failure mode in eval: agent navigates / scrolls /
+           clicks endlessly without ever reading the content the task
+           is asking for. Search-engine bouncing falls under this.
+        3. **Budget warning** — at `step == max_steps - 5`, fire a
+           one-shot "wrap up now" reminder so the agent commits to a
+           best-effort answer instead of silently maxing out.
+
+        Each nudge engages a 3-step cooldown so we don't spam, but the
+        budget warning is a separate one-shot independent of cooldown.
         """
-        WINDOW = 5
+        WINDOW = 6
         REPEAT_THRESHOLD = 3
         COOLDOWN_STEPS = 3
+        BUDGET_WARNING_REMAINING = 5
 
         if self._loop_nudge_cooldown > 0:
             self._loop_nudge_cooldown -= 1
 
-        # Build a stable signature for the *set* of tool calls in this
-        # turn — order doesn't matter, name+args do. JSON-sorted for
-        # determinism across providers.
+        # Bookkeeping: build a stable signature for the *set* of tool
+        # calls in this turn (name+args, JSON-sorted), and track the
+        # tool names emitted per turn for the no-extract heuristic.
         try:
             import json as _json
 
@@ -487,39 +545,118 @@ class Agent:
             )
             sig = _json.dumps(sig_payload)
         except Exception:
-            # Args weren't JSON-serializable — fall back to name-only.
             sig = "|".join(sorted(tc.name for tc in tool_calls))
 
         self._recent_action_sigs.append(sig)
         self._recent_action_sigs = self._recent_action_sigs[-WINDOW:]
         self._recent_urls.append(state.url or "")
         self._recent_urls = self._recent_urls[-WINDOW:]
+        self._recent_tool_names.append(tuple(tc.name for tc in tool_calls))
+        self._recent_tool_names = self._recent_tool_names[-WINDOW:]
+
+        # ---- 3. Budget warning (independent of cooldown, fires once) ----
+        # max_steps == 0 means "no cap" — skip the warning in that case.
+        if (
+            not self._budget_warning_fired
+            and max_steps > 0
+            and step_n >= max_steps - BUDGET_WARNING_REMAINING
+            and step_n < max_steps
+        ):
+            remaining = max_steps - step_n
+            self._messages.append(
+                UserMessage(
+                    content=(
+                        f"[BUDGET_WARNING] You have ~{remaining} turn(s) "
+                        f"left before the run ends. Stop exploring — read "
+                        f"whatever content is on the current page and "
+                        f"finish with the best answer you have. A partial "
+                        f"answer is better than no answer."
+                    )
+                )
+            )
+            self._budget_warning_fired = True
+            # Don't return — a budget warning and a loop nudge can coexist.
 
         if self._loop_nudge_cooldown > 0:
             return
         if len(self._recent_action_sigs) < REPEAT_THRESHOLD:
             return
 
+        # ---- 1. Tight-loop check ----
         repeat_count = self._recent_action_sigs.count(sig)
-        if repeat_count < REPEAT_THRESHOLD:
-            return
-
-        # Only nudge when the URL is also stuck — repeating click(5) across
-        # different pages is fine (e.g. clicking "Next" through a feed).
         unique_urls = {u for u in self._recent_urls if u}
-        if len(unique_urls) > 1:
+        if repeat_count >= REPEAT_THRESHOLD and len(unique_urls) <= 1:
+            self._messages.append(
+                UserMessage(
+                    content=(
+                        f"[LOOP_DETECTED] You have called the same action "
+                        f"{repeat_count} times in your last {WINDOW} turns "
+                        f"and the URL has not changed. The current approach "
+                        f"is not working. Try a different one: click a "
+                        f"different element, scroll, switch tabs, or finish "
+                        f"with `done` if you have enough information. Do "
+                        f"NOT repeat the previous action."
+                    )
+                )
+            )
+            self._loop_nudge_cooldown = COOLDOWN_STEPS
             return
 
-        nudge = (
-            "[LOOP_DETECTED] You have called the same action "
-            f"{repeat_count} times in your last {WINDOW} turns and the URL "
-            "has not changed. The current approach is not working. Try a "
-            "different one: click a different element, scroll, switch "
-            "tabs, or finish the task with `done` if you have enough "
-            "information. Do NOT repeat the previous action."
-        )
-        self._messages.append(UserMessage(content=nudge))
-        self._loop_nudge_cooldown = COOLDOWN_STEPS
+        # ---- 2. No-extract check ----
+        # Wait until the agent has used >1/3 of the budget — no point
+        # nudging on early exploration where reading isn't the goal yet.
+        budget_used = step_n / max_steps if max_steps > 0 else 0
+        if (
+            len(self._recent_tool_names) >= WINDOW
+            and budget_used > 1 / 3
+        ):
+            extract_turns = sum(
+                1
+                for names in self._recent_tool_names
+                if any(n in self._EXTRACT_TOOLS for n in names)
+            )
+            if extract_turns == 0:
+                domains = {
+                    self._domain_of(u) for u in self._recent_urls if u
+                }
+                self._messages.append(
+                    UserMessage(
+                        content=(
+                            f"[STUCK_NO_EXTRACT] You have spent "
+                            f"{len(self._recent_tool_names)} turns "
+                            f"navigating/clicking/scrolling across "
+                            f"{len(domains)} domain(s) without calling any "
+                            f"content-read tool (get_text, page_text, "
+                            f"get_links). The data you need is on the page "
+                            f"already — call page_text or get_text now to "
+                            f"read it, or call done with the best answer "
+                            f"you have. More navigation is unlikely to help."
+                        )
+                    )
+                )
+                self._loop_nudge_cooldown = COOLDOWN_STEPS
+
+    @staticmethod
+    def _domain_of(url: str) -> str:
+        """Crude eTLD+1 extractor — `https://www.foo.bar.com/x` → `bar.com`.
+
+        Doesn't bother with the public-suffix list because the loop
+        nudge only needs a stable bucket per site, not RFC-correctness.
+        """
+        if not url:
+            return ""
+        try:
+            from urllib.parse import urlparse
+
+            host = (urlparse(url).hostname or "").lower()
+            if not host:
+                return ""
+            parts = host.split(".")
+            if len(parts) >= 2:
+                return ".".join(parts[-2:])
+            return host
+        except Exception:
+            return url
 
     async def _capture_state(self) -> BrowserStateSummary:
         """Pre-step snapshot stored in history for the judge / callbacks.
@@ -612,6 +749,87 @@ class Agent:
             )
         else:
             self._messages.append(UserMessage(content=body))
+
+    async def _run_tools_sequentially(
+        self, tool_calls: list[ToolCall]
+    ) -> list[tuple[ActionResult, ToolResultMessage]]:
+        """Execute tool calls in order with a page-change guard.
+
+        Mirrors upstream `multi_act`: after each call, we check whether
+        the active URL changed. If it did and there are more calls
+        queued, we mark each remaining call as skipped (with a clear
+        error explaining why) instead of running it against indices
+        that were valid for the previous page. The skipped tool
+        messages MUST still be emitted because the LLM provider expects
+        a result for every tool call it issued — omitting them produces
+        a "no result for tool_use_id" error on the next turn.
+        """
+        if not tool_calls:
+            return []
+
+        async def _current_url() -> str:
+            try:
+                return await self.session.current_url()
+            except Exception:
+                return ""
+
+        # Tools that read state without changing the page — safe to keep
+        # running even after a navigation in the same batch since they
+        # don't depend on the pre-batch DOM indices.
+        READ_ONLY_TOOLS = {
+            "screenshot",
+            "page_text",
+            "get_text",
+            "get_links",
+            "list_tabs",
+            "list_downloads",
+            "get_cookies",
+            "save_pdf",
+            "done",
+        }
+
+        start_url = await _current_url()
+        results: list[tuple[ActionResult, ToolResultMessage]] = []
+
+        for i, tc in enumerate(tool_calls):
+            pair = await self._run_tool(tc)
+            results.append(pair)
+
+            if i + 1 >= len(tool_calls):
+                break
+
+            cur_url = await _current_url()
+            if cur_url == start_url:
+                continue
+
+            # Page changed. Skip remaining calls UNLESS they're read-only
+            # (those don't rely on stale `[N]` indices).
+            for skipped in tool_calls[i + 1 :]:
+                if skipped.name in READ_ONLY_TOOLS:
+                    pair = await self._run_tool(skipped)
+                    results.append(pair)
+                else:
+                    err = (
+                        f"skipped: page navigated mid-batch "
+                        f"({start_url!r} → {cur_url!r}). The `[N]` indices "
+                        f"in your tool calls were from the old page; "
+                        f"re-plan on the next turn using the fresh "
+                        f"snapshot."
+                    )
+                    results.append(
+                        (
+                            ActionResult(error=err),
+                            ToolResultMessage(
+                                tool_call_id=skipped.id,
+                                name=skipped.name,
+                                content=err,
+                                is_error=True,
+                            ),
+                        )
+                    )
+            break
+
+        return results
 
     async def _run_tool(
         self, tc: ToolCall
