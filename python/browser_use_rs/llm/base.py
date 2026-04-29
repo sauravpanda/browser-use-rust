@@ -23,19 +23,30 @@ class ChatInvokeUsage:
     output: int = 0
     cache_read: int = 0
     cache_creation: int = 0
+    # Set by Agent at construction so model_dump() can attach cost fields.
+    # The eval-platform aggregator at temporaryUpload.ts reads
+    # `usage.total_cost` to roll up `totalCost` / `avgPrice`; without these
+    # fields it silently treats every task's cost as 0.
+    model: str | None = field(default=None, repr=False)
 
     def __add__(self, other: "ChatInvokeUsage") -> "ChatInvokeUsage":
+        # Preserve `model` across additions — propagation matters because
+        # the agent loop sums per-step usages into history.usage and
+        # consumers call model_dump() on the accumulated total.
         return ChatInvokeUsage(
             input=self.input + other.input,
             output=self.output + other.output,
             cache_read=self.cache_read + other.cache_read,
             cache_creation=self.cache_creation + other.cache_creation,
+            model=self.model or other.model,
         )
 
-    def model_dump(self) -> dict[str, int]:
+    def model_dump(self) -> dict[str, float]:
+        from browser_use_rs.pricing import cost_for
+
         # Names mirror browser_use's ChatInvokeUsage so consumer code that
         # reads total_prompt_tokens / total_completion_tokens still works.
-        return {
+        out: dict[str, float] = {
             "input": self.input,
             "output": self.output,
             "cache_read": self.cache_read,
@@ -43,7 +54,12 @@ class ChatInvokeUsage:
             "total_prompt_tokens": self.input,
             "total_completion_tokens": self.output,
             "total_prompt_cached_tokens": self.cache_read,
+            "total_tokens": self.input + self.output,
         }
+        if self.model:
+            out["model"] = self.model
+        out.update(cost_for(self.model, self))
+        return out
 
 
 @dataclass

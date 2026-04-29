@@ -132,6 +132,10 @@ class Agent:
 
         # Resumable state. Conversation history is built on the fly each run.
         self.state: AgentState = injected_agent_state or AgentState()
+        # Tag the accumulator with the model so usage.model_dump() can
+        # compute per-cost fields (eval aggregator reads `total_cost`).
+        if self.state.history.usage.model is None:
+            self.state.history.usage.model = getattr(llm, "model", None)
         # Compat: agents that tracked usage_log on the old Anthropic Agent
         # can keep reading it. Each entry: {step, input, output, cache_read}.
         self.usage_log: list[dict[str, Any]] = []
