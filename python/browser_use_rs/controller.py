@@ -16,23 +16,35 @@
 The Agent uses controller.tools as its tool registry. Custom actions can
 return either a plain string (legacy `@tool` style) or an ActionResult
 (browser_use style) — Controller normalizes both.
+
+When the caller passes `output_model=PydanticModel`, a `done` tool is
+registered whose schema mirrors upstream's `StructuredOutputAction`:
+`{success: bool, data: <PydanticModel>}`. The Agent loop recognizes the
+done call, JSON-serializes `data` into `extracted_content`, and stops —
+matching the eval-consumer contract `final_result()` returns JSON.
 """
 
 from __future__ import annotations
 
 import inspect
+import json
 from typing import Any, Callable
 
 from browser_use_rs.tools import Tool, tool
+
+
+# Sentinel name the Agent loop watches for to know a structured-output
+# done was called. Kept as a constant so callers (and tests) can reference
+# it without hardcoding the string in two places.
+DONE_TOOL_NAME = "done"
 
 
 class Controller:
     """Aggregates browser tools + custom registered actions for an Agent.
 
     Accepts the same constructor kwargs as `browser_use.Controller` so eval
-    consumers can drop in. Most upstream kwargs (`output_model`,
-    `display_files_in_done_text`, ...) are accepted but not enforced —
-    they're stashed as attributes for read-back compatibility.
+    consumers can drop in. Unknown upstream kwargs are stashed as attributes
+    for read-back compatibility.
     """
 
     def __init__(
@@ -40,12 +52,10 @@ class Controller:
         *,
         exclude_actions: list[str] | None = None,
         include_default_actions: bool = True,
-        # browser_use's Controller accepts a Pydantic model used to
-        # constrain the agent's `done` action output. We don't enforce it
-        # yet; stash it so consumer code that reads back
-        # `controller.output_model` works.
+        # When set, registers a `done` tool with the model's JSON schema.
+        # Eval consumers depend on `final_result()` returning JSON of
+        # this shape — see _build_done_tool below.
         output_model: Any = None,
-        # Accepted for parity, currently no-op:
         display_files_in_done_text: bool = True,
         **extra_kwargs: Any,
     ):
@@ -63,6 +73,9 @@ class Controller:
         for k, v in extra_kwargs.items():
             if not hasattr(self, k):
                 setattr(self, k, v)
+
+        if output_model is not None and DONE_TOOL_NAME not in excluded:
+            self._tools.append(_build_done_tool(output_model))
 
     @property
     def tools(self) -> list[Tool]:
@@ -142,6 +155,89 @@ class _Registry:
 
         base.func = passthrough_wrapper
         return base
+
+
+def _build_done_tool(output_model: Any) -> Tool:
+    """Build a `done` tool whose schema is `{success: bool, data: <output_model>}`.
+
+    Mirrors upstream browser_use's `StructuredOutputAction[T]`:
+    https://github.com/browser-use/browser-use/blob/main/browser_use/tools/views.py
+    The model dumps `data` to JSON and returns it as the tool's text
+    payload. The Agent loop recognizes the tool by name and uses that
+    payload as the run's `final_result()` (an `ActionResult` with
+    `is_done=True, success=<from args>`).
+    """
+    if not hasattr(output_model, "model_json_schema"):
+        raise TypeError(
+            "Controller(output_model=...) must be a Pydantic BaseModel "
+            f"subclass; got {type(output_model).__name__}"
+        )
+
+    data_schema = output_model.model_json_schema()
+    # Strip metadata that confuses provider tool-schema validators (Anthropic
+    # rejects $defs at the top of an input_schema; OpenAI tolerates but the
+    # model wastes tokens on it).
+    data_schema.pop("title", None)
+    nested_defs = data_schema.pop("$defs", None)
+
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "success": {
+                "type": "boolean",
+                "description": (
+                    "True if the user's task completed successfully, "
+                    "False if you're giving up or the task is impossible."
+                ),
+                "default": True,
+            },
+            "data": {
+                **data_schema,
+                "description": (
+                    "The structured answer to the user's task. "
+                    "Fields must match the schema exactly."
+                ),
+            },
+        },
+        "required": ["data"],
+        "additionalProperties": False,
+    }
+    if nested_defs:
+        # Preserve nested model definitions referenced via $ref.
+        schema["$defs"] = nested_defs
+
+    description = (
+        "Signal task completion with a structured answer. Fill `data` with "
+        "fields matching the requested schema and set `success` based on "
+        "whether you actually accomplished the task. Calling this tool ENDS "
+        "the run — do not call any further tools."
+    )
+
+    async def done_func(session: Any, **kwargs: Any) -> str:  # noqa: ARG001
+        success = bool(kwargs.get("success", True))
+        data = kwargs.get("data") or {}
+        # Validate the data against the user's model so malformed outputs
+        # surface as a tool error the LLM can correct from, instead of
+        # us silently writing garbage JSON to extracted_content.
+        try:
+            validated = output_model(**data) if isinstance(data, dict) else output_model.model_validate(data)
+        except Exception as e:
+            raise RuntimeError(
+                f"done(data=...) failed schema validation: {type(e).__name__}: {e}. "
+                "Fix the fields and call done again."
+            ) from e
+        payload = validated.model_dump_json()
+        # The Agent loop reads __DONE__:<json> as a marker to mark the run
+        # complete. Returning the JSON alone would be ambiguous with a
+        # regular tool that happens to return JSON-looking text.
+        return f"__DONE__:{int(success)}:{payload}"
+
+    return Tool(
+        name=DONE_TOOL_NAME,
+        description=description,
+        input_schema=schema,
+        func=done_func,
+    )
 
 
 def _coerce_action_result(raw: Any) -> Any:

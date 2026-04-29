@@ -136,6 +136,20 @@ class Agent:
                 self.system_prompt = (
                     self.system_prompt.rstrip() + "\n\n" + extend_system_message
                 )
+            # Switch the completion contract when the controller declared a
+            # structured output: the LLM must call done(...) with fields
+            # matching the schema instead of emitting plain text.
+            if (
+                controller is not None
+                and getattr(controller, "output_model", None) is not None
+                and any(t.name == "done" for t in tools)
+            ):
+                self.system_prompt = self.system_prompt.rstrip() + (
+                    "\n\nIMPORTANT: To finish this task you MUST call the "
+                    "`done` tool with `data` filled to match the requested "
+                    "schema. Do NOT answer in plain text — a plain-text turn "
+                    "will be treated as 'still working' and waste a step."
+                )
         self.initial_actions = initial_actions or []
         self.register_new_step_callback = register_new_step_callback
         self.register_done_callback = register_done_callback
@@ -157,6 +171,12 @@ class Agent:
         # can append a continuation without losing browser/page context.
         self._messages: list[Message] = []
         self._consecutive_error_turns = 0
+        # Loop-detection state: rolling window of recent action signatures
+        # + cooldown so a single nudge doesn't fire on consecutive steps.
+        # See _maybe_inject_loop_nudge for the heuristic.
+        self._recent_action_sigs: list[str] = []
+        self._loop_nudge_cooldown = 0
+        self._recent_urls: list[str] = []
         # Compat: `agent.message_manager.last_input_messages` mirrors
         # browser_use's API. Consumer code (evaluations-internal) reads
         # this for diagnostics; we just expose the live message buffer.
@@ -352,14 +372,58 @@ class Agent:
                 *(self._run_tool(tc) for tc in completion.tool_calls)
             )
             tool_results: list[ActionResult] = []
+            done_result: ActionResult | None = None
             for action_result, tool_message in results_and_msgs:
                 tool_results.append(action_result)
                 self._messages.append(tool_message)
+                # The structured-output `done` tool encodes its payload as
+                # `__DONE__:<0|1>:<json>` in extracted_content (see
+                # controller._build_done_tool). Parse it back into a final
+                # ActionResult so eval consumers see is_done=True and
+                # final_result() returns the JSON.
+                if (
+                    action_result.extracted_content
+                    and isinstance(action_result.extracted_content, str)
+                    and action_result.extracted_content.startswith("__DONE__:")
+                ):
+                    try:
+                        _, success_flag, payload = action_result.extracted_content.split(":", 2)
+                        done_result = ActionResult(
+                            extracted_content=payload,
+                            is_done=True,
+                            success=bool(int(success_flag)),
+                        )
+                    except (ValueError, IndexError):
+                        # Marker malformed — fall back to treating the raw
+                        # text as the final answer rather than crashing.
+                        done_result = ActionResult(
+                            extracted_content=action_result.extracted_content,
+                            is_done=True,
+                            success=True,
+                        )
+
+            if done_result is not None:
+                # Replace the parsed-out tool result with the done flag set
+                # so history.is_done() / final_result() see it directly,
+                # then exit the loop. Other tool results from the same turn
+                # are kept (they ran and may have side effects).
+                tool_results = [
+                    done_result if r.extracted_content
+                    and isinstance(r.extracted_content, str)
+                    and r.extracted_content.startswith("__DONE__:")
+                    else r
+                    for r in tool_results
+                ]
 
             self._append_history(state_summary, output, tool_results, t0, step_n)
 
             if on_step_end is not None:
                 await _maybe_await(on_step_end())
+
+            if done_result is not None:
+                return
+
+            self._maybe_inject_loop_nudge(state_summary, completion.tool_calls)
 
             # All-error streak guard. Model can self-correct from one bad
             # turn; multiple in a row means it's stuck.
@@ -391,6 +455,71 @@ class Agent:
                     success=False,
                 )
             )
+
+    def _maybe_inject_loop_nudge(
+        self, state: BrowserStateSummary, tool_calls: list[ToolCall]
+    ) -> None:
+        """Detect repeated actions / stuck-on-same-URL and inject a nudge.
+
+        Mirrors browser_use's loop_detector + replan_nudge in spirit
+        (much simpler heuristic): if the same canonical action signature
+        appears 3+ times in the last 5 LLM turns AND the URL hasn't
+        advanced, the agent is stuck. Inject a one-shot UserMessage
+        prompting it to break the pattern, then enter a 3-step cooldown
+        so we don't spam.
+        """
+        WINDOW = 5
+        REPEAT_THRESHOLD = 3
+        COOLDOWN_STEPS = 3
+
+        if self._loop_nudge_cooldown > 0:
+            self._loop_nudge_cooldown -= 1
+
+        # Build a stable signature for the *set* of tool calls in this
+        # turn — order doesn't matter, name+args do. JSON-sorted for
+        # determinism across providers.
+        try:
+            import json as _json
+
+            sig_payload = sorted(
+                (tc.name, _json.dumps(tc.args, sort_keys=True, default=str))
+                for tc in tool_calls
+            )
+            sig = _json.dumps(sig_payload)
+        except Exception:
+            # Args weren't JSON-serializable — fall back to name-only.
+            sig = "|".join(sorted(tc.name for tc in tool_calls))
+
+        self._recent_action_sigs.append(sig)
+        self._recent_action_sigs = self._recent_action_sigs[-WINDOW:]
+        self._recent_urls.append(state.url or "")
+        self._recent_urls = self._recent_urls[-WINDOW:]
+
+        if self._loop_nudge_cooldown > 0:
+            return
+        if len(self._recent_action_sigs) < REPEAT_THRESHOLD:
+            return
+
+        repeat_count = self._recent_action_sigs.count(sig)
+        if repeat_count < REPEAT_THRESHOLD:
+            return
+
+        # Only nudge when the URL is also stuck — repeating click(5) across
+        # different pages is fine (e.g. clicking "Next" through a feed).
+        unique_urls = {u for u in self._recent_urls if u}
+        if len(unique_urls) > 1:
+            return
+
+        nudge = (
+            "[LOOP_DETECTED] You have called the same action "
+            f"{repeat_count} times in your last {WINDOW} turns and the URL "
+            "has not changed. The current approach is not working. Try a "
+            "different one: click a different element, scroll, switch "
+            "tabs, or finish the task with `done` if you have enough "
+            "information. Do NOT repeat the previous action."
+        )
+        self._messages.append(UserMessage(content=nudge))
+        self._loop_nudge_cooldown = COOLDOWN_STEPS
 
     async def _capture_state(self) -> BrowserStateSummary:
         """Pre-step snapshot stored in history for the judge / callbacks.
