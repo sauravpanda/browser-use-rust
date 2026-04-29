@@ -37,7 +37,7 @@ class BrowserSession:
     def __init__(
         self,
         headless: bool = True,
-        viewport: tuple[int, int] | None = None,
+        viewport: tuple[int, int] | None = (1280, 900),
         chrome_path: str | None = None,
         extra_chrome_args: list[str] | None = None,
     ) -> None: ...

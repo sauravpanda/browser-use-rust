@@ -143,10 +143,16 @@ pub struct BrowserSession {
     /// guid -> latest state, populated by a background event task.
     downloads: Arc<Mutex<HashMap<String, DownloadState>>>,
     download_dir: PathBuf,
+    /// Timestamp of the most recent main-frame navigation (Page.frameNavigated
+    /// or loadEventFired). wait_for_navigation uses this to detect "a
+    /// navigation just happened" without depending on a known prior URL —
+    /// click() returns after the navigation has already started, so URL
+    /// polling alone misses these.
+    last_navigation: Arc<Mutex<Option<tokio::time::Instant>>>,
     /// Owned only to keep the event task alive; not joined explicitly —
     /// the task exits when the broadcast channel closes (i.e. Connection
     /// is dropped).
-    _download_task: tokio::task::JoinHandle<()>,
+    _event_task: tokio::task::JoinHandle<()>,
 }
 
 impl BrowserSession {
@@ -228,9 +234,13 @@ impl BrowserSession {
         std::fs::create_dir_all(&download_dir)?;
         let downloads: Arc<Mutex<HashMap<String, DownloadState>>> =
             Arc::new(Mutex::new(HashMap::new()));
+        let last_navigation: Arc<Mutex<Option<tokio::time::Instant>>> =
+            Arc::new(Mutex::new(None));
         let task_events = conn.events();
         let task_downloads = downloads.clone();
-        let download_task = tokio::spawn(track_downloads(task_events, task_downloads));
+        let task_last_nav = last_navigation.clone();
+        let event_task =
+            tokio::spawn(track_browser_events(task_events, task_downloads, task_last_nav));
 
         conn.send(
             "Browser.setDownloadBehavior",
@@ -263,7 +273,8 @@ impl BrowserSession {
             last_snapshot: Mutex::new(None),
             downloads,
             download_dir,
-            _download_task: download_task,
+            last_navigation,
+            _event_task: event_task,
         })
     }
 
@@ -1059,34 +1070,30 @@ impl BrowserSession {
         Ok(())
     }
 
-    /// Block until the active tab's next `Page.loadEventFired`. Use after a
-    /// click that triggers full navigation (vs. SPA route changes — for
-    /// those, use wait_for_selector). Returns false on timeout, true if
-    /// the event fired before then.
+    /// Returns true if a main-frame navigation happened recently (within
+    /// 1.5s before this call) or fires before the timeout. The recency
+    /// window handles the click-completes-then-navigates race: by the time
+    /// the agent calls wait_for_navigation, the URL has often already
+    /// changed, so naive polling-from-now misses it. We rely on the
+    /// background event task to stamp Page.frameNavigated / loadEventFired
+    /// times.
     pub async fn wait_for_navigation(&self, timeout_ms: u64) -> Result<bool> {
-        let mut events = self.conn.events();
-        let sid = self.session_id().await;
-        let wait = async move {
-            loop {
-                match events.recv().await {
-                    Ok(event) => {
-                        if event.method == "Page.loadEventFired"
-                            && event.session_id.as_deref() == Some(&sid)
-                        {
-                            return Ok::<bool, BrowserError>(true);
-                        }
-                    }
-                    Err(RecvError::Lagged(_)) => continue,
-                    Err(RecvError::Closed) => {
-                        return Err(BrowserError::Cdp(CdpError::Closed));
-                    }
+        let call_time = tokio::time::Instant::now();
+        let recent = Duration::from_millis(1500);
+        let deadline = call_time + Duration::from_millis(timeout_ms);
+        loop {
+            if let Some(ts) = *self.last_navigation.lock().await {
+                // Navigation either happened just before the call (the
+                // race) or fired since the call (the wait).
+                if ts + recent >= call_time {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    return Ok(true);
                 }
             }
-        };
-        match tokio::time::timeout(Duration::from_millis(timeout_ms), wait).await {
-            Ok(Ok(b)) => Ok(b),
-            Ok(Err(e)) => Err(e),
-            Err(_) => Ok(false),
+            if tokio::time::Instant::now() >= deadline {
+                return Ok(false);
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
 
@@ -1193,30 +1200,48 @@ fn parse_cookie(v: Value) -> Option<Cookie> {
     })
 }
 
-/// Background task: subscribe to CDP events and update the downloads map
-/// when Browser.downloadWillBegin / downloadProgress fire. Exits when the
-/// broadcast channel closes (i.e. Connection is dropped).
-async fn track_downloads(
+/// Background task: subscribe to CDP events and update both the downloads
+/// map and the last-navigation timestamp. Exits when the broadcast channel
+/// closes (i.e. Connection is dropped).
+async fn track_browser_events(
     mut events: tokio::sync::broadcast::Receiver<bu_cdp::CdpEvent>,
     downloads: Arc<Mutex<HashMap<String, DownloadState>>>,
+    last_navigation: Arc<Mutex<Option<tokio::time::Instant>>>,
 ) {
     loop {
         match events.recv().await {
             Ok(event) => {
-                let params = match event.params.as_object() {
-                    Some(p) => p,
-                    None => continue,
-                };
-                let guid = params
-                    .get("guid")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string();
-                if guid.is_empty() {
+                let Some(params) = event.params.as_object() else {
                     continue;
-                }
+                };
+
                 match event.method.as_str() {
+                    // Navigation events: stamp the timestamp on main-frame
+                    // navigations only. frameNavigated wraps a `frame` object
+                    // whose `parentId` is absent when it's the top frame.
+                    "Page.frameNavigated" => {
+                        let is_main = params
+                            .get("frame")
+                            .and_then(|f| f.get("parentId"))
+                            .is_none();
+                        if is_main {
+                            *last_navigation.lock().await = Some(tokio::time::Instant::now());
+                        }
+                    }
+                    "Page.loadEventFired" => {
+                        *last_navigation.lock().await = Some(tokio::time::Instant::now());
+                    }
+
+                    // Download events
                     "Browser.downloadWillBegin" | "Page.downloadWillBegin" => {
+                        let guid = params
+                            .get("guid")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string();
+                        if guid.is_empty() {
+                            continue;
+                        }
                         let mut map = downloads.lock().await;
                         let entry = map.entry(guid).or_default();
                         entry.suggested_filename = params
@@ -1234,6 +1259,14 @@ async fn track_downloads(
                         }
                     }
                     "Browser.downloadProgress" | "Page.downloadProgress" => {
+                        let guid = params
+                            .get("guid")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string();
+                        if guid.is_empty() {
+                            continue;
+                        }
                         let mut map = downloads.lock().await;
                         let entry = map.entry(guid).or_default();
                         if let Some(s) = params.get("state").and_then(Value::as_str) {

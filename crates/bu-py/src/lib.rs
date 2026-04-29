@@ -151,7 +151,7 @@ struct BrowserSession {
 #[pymethods]
 impl BrowserSession {
     #[new]
-    #[pyo3(signature = (headless=true, viewport=None, chrome_path=None, extra_chrome_args=None))]
+    #[pyo3(signature = (headless=true, viewport=Some((1280, 900)), chrome_path=None, extra_chrome_args=None))]
     fn new(
         headless: bool,
         viewport: Option<(u32, u32)>,
