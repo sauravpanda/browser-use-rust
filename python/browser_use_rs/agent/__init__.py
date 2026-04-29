@@ -15,8 +15,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import inspect
+import logging
 import time
 from typing import Any, Awaitable, Callable
+
+logger = logging.getLogger(__name__)
 
 from browser_use_rs._native import BrowserSession
 from browser_use_rs.llm.base import (
@@ -398,6 +401,18 @@ class Agent:
             # gather order was undefined which made the second click in
             # a 2-call turn unsafe. Sequential is both faster (no
             # round-trip per action) and safer.
+            # Visibility for eval audits: how big is each batch? Stable
+            # 1's mean multi_act isn't helping; consistent 3-4's mean the
+            # LLM is using the budget.
+            batch_size = len(completion.tool_calls)
+            if batch_size > 1:
+                logger.info(
+                    "agent: step %d batch=%d tools=%s",
+                    step_n,
+                    batch_size,
+                    [tc.name for tc in completion.tool_calls],
+                )
+
             results_and_msgs = await self._run_tools_sequentially(
                 completion.tool_calls
             )
@@ -457,6 +472,17 @@ class Agent:
                 state_summary, completion.tool_calls, step_n, max_steps
             )
 
+            # Single-action fallback: if a multi-action turn produced a
+            # majority of errors AND no extract, the agent is batching
+            # dead-end actions. Hint to back off to one action per turn
+            # so each result can inform the next, instead of compounding
+            # failures. The hint is a one-shot UserMessage; we don't
+            # mechanically enforce single-action — that would silently
+            # break legitimate batches the LLM recovers with.
+            self._maybe_inject_single_action_hint(
+                completion.tool_calls, tool_results
+            )
+
             # All-error streak guard. Model can self-correct from one bad
             # turn; multiple in a row means it's stuck.
             if all(r.error for r in tool_results):
@@ -510,25 +536,33 @@ class Agent:
         """Detect three classes of stall and inject a one-shot nudge.
 
         1. **Tight loop** — same canonical (name+args) signature emitted
-           3+ times in the last 5 turns AND no URL change. Catches
-           literal "click [6], click [6], click [6]" repetition.
-        2. **No extract** — many turns with zero read-tool calls
-           (`get_text`, `page_text`, `get_links`, `done`) and the agent
-           has already used >1/3 of its step budget. Catches the
-           dominant failure mode in eval: agent navigates / scrolls /
-           clicks endlessly without ever reading the content the task
-           is asking for. Search-engine bouncing falls under this.
+           3+ times in the last 6 turns. The URL guard from earlier
+           versions was dropped (v0.4.13) because the dominant eval
+           failure was search-bouncing where the URL changes every
+           turn but the same `[type, click, click]` cycle repeats. We
+           now match OpenCode's doom-loop semantics: identical args
+           three times wins regardless of URL.
+        2. **No extract** — fewer than 25% of recent turns called a
+           read tool (`get_text`, `page_text`, `get_links`, `done`)
+           AND the agent has used >1/3 of its step budget. Catches
+           agents that nav/click/scroll endlessly with only token
+           extracts. Was "zero extracts" — too lenient.
         3. **Budget warning** — at `step == max_steps - 5`, fire a
            one-shot "wrap up now" reminder so the agent commits to a
            best-effort answer instead of silently maxing out.
 
         Each nudge engages a 3-step cooldown so we don't spam, but the
         budget warning is a separate one-shot independent of cooldown.
+        Each nudge is also logged at INFO level so eval consumers can
+        audit nudge trigger rates from the eval workflow logs.
         """
         WINDOW = 6
         REPEAT_THRESHOLD = 3
         COOLDOWN_STEPS = 3
         BUDGET_WARNING_REMAINING = 5
+        # Fire no-extract when read-tool turns / window <= this ratio.
+        # 1/4 of 6 = 1.5 → fires when ≤1 read turn in 6.
+        NO_EXTRACT_RATIO = 0.25
 
         if self._loop_nudge_cooldown > 0:
             self._loop_nudge_cooldown -= 1
@@ -563,16 +597,17 @@ class Agent:
             and step_n < max_steps
         ):
             remaining = max_steps - step_n
-            self._messages.append(
-                UserMessage(
-                    content=(
-                        f"[BUDGET_WARNING] You have ~{remaining} turn(s) "
-                        f"left before the run ends. Stop exploring — read "
-                        f"whatever content is on the current page and "
-                        f"finish with the best answer you have. A partial "
-                        f"answer is better than no answer."
-                    )
-                )
+            nudge = (
+                f"[BUDGET_WARNING] You have ~{remaining} turn(s) left "
+                f"before the run ends. Stop exploring — read whatever "
+                f"content is on the current page and finish with the "
+                f"best answer you have. A partial answer is better than "
+                f"no answer."
+            )
+            self._messages.append(UserMessage(content=nudge))
+            logger.info(
+                "agent: BUDGET_WARNING fired at step %d/%d (remaining=%d)",
+                step_n, max_steps, remaining,
             )
             self._budget_warning_fired = True
             # Don't return — a budget warning and a loop nudge can coexist.
@@ -582,27 +617,28 @@ class Agent:
         if len(self._recent_action_sigs) < REPEAT_THRESHOLD:
             return
 
-        # ---- 1. Tight-loop check ----
+        # ---- 1. Tight-loop check (no URL guard since v0.4.13) ----
         repeat_count = self._recent_action_sigs.count(sig)
-        unique_urls = {u for u in self._recent_urls if u}
-        if repeat_count >= REPEAT_THRESHOLD and len(unique_urls) <= 1:
-            self._messages.append(
-                UserMessage(
-                    content=(
-                        f"[LOOP_DETECTED] You have called the same action "
-                        f"{repeat_count} times in your last {WINDOW} turns "
-                        f"and the URL has not changed. The current approach "
-                        f"is not working. Try a different one: click a "
-                        f"different element, scroll, switch tabs, or finish "
-                        f"with `done` if you have enough information. Do "
-                        f"NOT repeat the previous action."
-                    )
-                )
+        if repeat_count >= REPEAT_THRESHOLD:
+            nudge = (
+                f"[LOOP_DETECTED] You have called the EXACT same action "
+                f"sequence {repeat_count} times in your last {WINDOW} "
+                f"turns. Repeating it again will not work. Try a "
+                f"materially different approach: pick different elements, "
+                f"reformulate the search query, scroll to a different "
+                f"region, switch tabs, or finish with `done` if you have "
+                f"enough information. Do NOT issue the same tool calls "
+                f"again."
+            )
+            self._messages.append(UserMessage(content=nudge))
+            logger.info(
+                "agent: LOOP_DETECTED fired at step %d (sig repeats %d/%d)",
+                step_n, repeat_count, WINDOW,
             )
             self._loop_nudge_cooldown = COOLDOWN_STEPS
             return
 
-        # ---- 2. No-extract check ----
+        # ---- 2. No-extract check (≤25% of last 6 turns called a read) ----
         # Wait until the agent has used >1/3 of the budget — no point
         # nudging on early exploration where reading isn't the goal yet.
         budget_used = step_n / max_steps if max_steps > 0 else 0
@@ -615,26 +651,72 @@ class Agent:
                 for names in self._recent_tool_names
                 if any(n in self._EXTRACT_TOOLS for n in names)
             )
-            if extract_turns == 0:
+            if extract_turns / len(self._recent_tool_names) <= NO_EXTRACT_RATIO:
                 domains = {
                     self._domain_of(u) for u in self._recent_urls if u
                 }
-                self._messages.append(
-                    UserMessage(
-                        content=(
-                            f"[STUCK_NO_EXTRACT] You have spent "
-                            f"{len(self._recent_tool_names)} turns "
-                            f"navigating/clicking/scrolling across "
-                            f"{len(domains)} domain(s) without calling any "
-                            f"content-read tool (get_text, page_text, "
-                            f"get_links). The data you need is on the page "
-                            f"already — call page_text or get_text now to "
-                            f"read it, or call done with the best answer "
-                            f"you have. More navigation is unlikely to help."
-                        )
-                    )
+                nudge = (
+                    f"[STUCK_NO_EXTRACT] In your last "
+                    f"{len(self._recent_tool_names)} turns you have only "
+                    f"called a content-read tool {extract_turns} time(s) "
+                    f"(target: every other turn). You've been navigating/"
+                    f"clicking across {len(domains)} domain(s) without "
+                    f"reading much. The data you need is on the page "
+                    f"already — call page_text or get_text NOW to read "
+                    f"it, or call done with the best answer you have. "
+                    f"More navigation is unlikely to help."
+                )
+                self._messages.append(UserMessage(content=nudge))
+                logger.info(
+                    "agent: STUCK_NO_EXTRACT fired at step %d "
+                    "(extracts=%d/%d, domains=%d)",
+                    step_n, extract_turns, len(self._recent_tool_names),
+                    len(domains),
                 )
                 self._loop_nudge_cooldown = COOLDOWN_STEPS
+
+    def _maybe_inject_single_action_hint(
+        self,
+        tool_calls: list[ToolCall],
+        results: list[ActionResult],
+    ) -> None:
+        """If a multi-action turn went badly (>50% errors AND no extract),
+        hint the LLM to drop back to one action per turn next time.
+
+        Rationale from v0.4.12 eval data: when the LLM batches 3-4
+        actions and the first one errors (e.g. clicked a stale index
+        because the page changed), the rest of the batch usually errors
+        too because they share the same assumption about page state.
+        Having the LLM pause for the next turn's snapshot before acting
+        again breaks the cascade.
+        """
+        # Single-action turns can't be the problem — they're already
+        # what the hint would recommend.
+        if len(tool_calls) <= 1:
+            return
+
+        error_count = sum(1 for r in results if r.error)
+        had_extract = any(
+            tc.name in self._EXTRACT_TOOLS for tc in tool_calls
+        )
+        if had_extract or error_count <= len(tool_calls) // 2:
+            return
+
+        nudge = (
+            f"[BATCH_FAILED] {error_count} of {len(tool_calls)} actions "
+            f"in your last turn errored. Multi-action turns work when "
+            f"the actions are independent or pre-planned; when one fails "
+            f"the rest usually fail too because they assumed the page "
+            f"state would advance. For the NEXT turn, emit ONE tool "
+            f"call only so its result can inform the next decision. "
+            f"Resume batching only after you confirm the page is in the "
+            f"expected state."
+        )
+        self._messages.append(UserMessage(content=nudge))
+        logger.info(
+            "agent: BATCH_FAILED hint fired (errors=%d/%d, batch=%s)",
+            error_count, len(tool_calls), [tc.name for tc in tool_calls],
+        )
 
     @staticmethod
     def _domain_of(url: str) -> str:
@@ -672,29 +754,38 @@ class Agent:
         `_inject_page_state` can prepend it to the next LLM call without
         a second snapshot round trip.
         """
-        url = ""
-        try:
-            url = await self.session.current_url()
-        except Exception:
-            pass
+        # All three CDP roundtrips run in parallel — they don't depend on
+        # each other. Sequentially they were ~150-300ms of fixed overhead
+        # per step (current_url + screenshot + dom_snapshot); together
+        # they finish in roughly the slowest single call's time. On a
+        # 35-turn run that's 30+ saved seconds per task.
+        async def _safe_url() -> str:
+            try:
+                return await self.session.current_url()
+            except Exception:
+                return ""
 
-        screenshot_b64: str | None = None
-        try:
-            png = await self.session.screenshot()
-            screenshot_b64 = base64.b64encode(png).decode("ascii")
-        except Exception:
-            screenshot_b64 = None
+        async def _safe_screenshot() -> str | None:
+            try:
+                png = await self.session.screenshot()
+                return base64.b64encode(png).decode("ascii")
+            except Exception:
+                return None
 
-        dom_text = ""
-        try:
-            snap = await self.session.dom_snapshot()
-            dom_text = snap.to_llm_string()
-        except Exception:
-            # No active page yet (very first step before initial_actions
-            # navigate, or a frame transition mid-step). Skip — the LLM
-            # gets a "(no page state available)" placeholder instead of
-            # crashing the run.
-            dom_text = ""
+        async def _safe_dom() -> str:
+            try:
+                snap = await self.session.dom_snapshot()
+                return snap.to_llm_string()
+            except Exception:
+                # No active page yet (very first step before
+                # initial_actions navigate, or a frame transition
+                # mid-step). Skip — the LLM gets a "(no page state
+                # available)" placeholder instead of crashing the run.
+                return ""
+
+        url, screenshot_b64, dom_text = await asyncio.gather(
+            _safe_url(), _safe_screenshot(), _safe_dom()
+        )
 
         return BrowserStateSummary(
             url=url,
