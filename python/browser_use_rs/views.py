@@ -174,10 +174,29 @@ class AgentHistoryList:
         }
 
 
-@dataclass
 class AgentState:
-    """Injected into Agent for resumable runs (matches browser_use's shape)."""
+    """Injected into Agent for resumable runs (matches browser_use's shape).
 
-    n_steps: int = 0
-    history: AgentHistoryList = field(default_factory=AgentHistoryList)
-    last_plan: str | None = None
+    Permissive constructor — eval consumers pass upstream kwargs we don't
+    enumerate (`message_history_token_count`, `paused`, `stopped`, ...);
+    those are stashed as attributes for read-back compatibility.
+    """
+
+    n_steps: int
+    history: AgentHistoryList
+    last_plan: str | None
+
+    def __init__(
+        self,
+        *,
+        n_steps: int = 0,
+        history: AgentHistoryList | None = None,
+        last_plan: str | None = None,
+        **extra_kwargs: Any,
+    ):
+        self.n_steps = n_steps
+        self.history = history if history is not None else AgentHistoryList()
+        self.last_plan = last_plan
+        for k, v in extra_kwargs.items():
+            if not hasattr(self, k):
+                setattr(self, k, v)

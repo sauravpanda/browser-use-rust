@@ -27,13 +27,27 @@ from browser_use_rs.tools import Tool, tool
 
 
 class Controller:
-    """Aggregates browser tools + custom registered actions for an Agent."""
+    """Aggregates browser tools + custom registered actions for an Agent.
+
+    Accepts the same constructor kwargs as `browser_use.Controller` so eval
+    consumers can drop in. Most upstream kwargs (`output_model`,
+    `display_files_in_done_text`, ...) are accepted but not enforced —
+    they're stashed as attributes for read-back compatibility.
+    """
 
     def __init__(
         self,
         *,
         exclude_actions: list[str] | None = None,
         include_default_actions: bool = True,
+        # browser_use's Controller accepts a Pydantic model used to
+        # constrain the agent's `done` action output. We don't enforce it
+        # yet; stash it so consumer code that reads back
+        # `controller.output_model` works.
+        output_model: Any = None,
+        # Accepted for parity, currently no-op:
+        display_files_in_done_text: bool = True,
+        **extra_kwargs: Any,
     ):
         excluded = set(exclude_actions or [])
         self._tools: list[Tool] = []
@@ -42,6 +56,13 @@ class Controller:
 
             self._tools = [t for t in BROWSER_TOOLS if t.name not in excluded]
         self.registry = _Registry(self)
+        self.output_model = output_model
+        self.display_files_in_done_text = display_files_in_done_text
+        # Stash unknown kwargs as attributes so consumer code can read
+        # them back without us breaking on every new upstream field.
+        for k, v in extra_kwargs.items():
+            if not hasattr(self, k):
+                setattr(self, k, v)
 
     @property
     def tools(self) -> list[Tool]:
