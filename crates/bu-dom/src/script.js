@@ -12,11 +12,17 @@
     // upstream browser_use's serializer which emits text nodes
     // interleaved with interactive elements (see
     // browser_use/dom/serializer/serializer.py:1049+). v0.5.7.
+    //
+    // v0.5.8: narrowed by dropping span/div/label. v0.5.7 included
+    // span+div as catch-all and judge dropped 53% -> 50% — the agent
+    // got noise from <span class="meta">/nav/footer chrome instead of
+    // useful content, then confidently extracted from the wrong block.
+    // Sticking to genuinely-content tags: headings, paragraphs, list
+    // items, table cells, time, blockquote, figcaption.
     const STATIC_TEXT_TAGS = new Set([
         'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
         'p', 'li', 'td', 'th', 'dt', 'dd',
-        'blockquote', 'figcaption', 'time', 'label',
-        'span', 'div',  // catch-all for sites that put content in generic containers
+        'blockquote', 'figcaption', 'time',
     ]);
 
     // Don't bloat the snapshot with the big block-level containers
