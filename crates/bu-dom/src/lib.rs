@@ -58,6 +58,16 @@ pub struct DomElement {
     pub text: String,
     #[serde(default)]
     pub attrs: BTreeMap<String, String>,
+    /// Stable, human-readable selector — `#id`, `button "Sign In"`,
+    /// `[data-testid='x']`, etc. Computed by the JS walker (see
+    /// `elementSelector` in script.js) so it's based on the live DOM
+    /// state, not Rust-side string surgery. Intended for cross-turn
+    /// references in agent_history rendering — when the LLM looks back
+    /// at "what did I click on step 5", we want a description that
+    /// still resolves on a re-rendered page, not a `[N]` index gone
+    /// stale.
+    #[serde(default)]
+    pub selector: String,
     pub bbox: Bbox,
 }
 

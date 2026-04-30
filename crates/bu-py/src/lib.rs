@@ -82,6 +82,10 @@ impl DomElement {
             inner: self.inner.bbox.clone(),
         }
     }
+    #[getter]
+    fn selector(&self) -> String {
+        self.inner.selector.clone()
+    }
     fn __repr__(&self) -> String {
         let mut s = format!("[{}]<{}", self.inner.index, self.inner.tag);
         for (k, v) in &self.inner.attrs {

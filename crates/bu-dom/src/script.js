@@ -113,6 +113,38 @@
     };
     clearStale(document);
 
+    // Build a stable, human-readable selector for cross-turn references.
+    // Format priorities (most stable → least):
+    //   1. id          → `#hero-search`
+    //   2. data-testid → `[data-testid='login-btn']`
+    //   3. role + name → `button "Sign In"`  (aria-label or visible text)
+    //   4. tag + name  → `a "More information..."`  (visible text)
+    //   5. tag + nth   → `button:nth-of-type(3)`  (last resort)
+    // Result is a short string the LLM can read in history without
+    // re-snapshotting. The same element on a re-rendered page should
+    // hash to the same selector even if its `[N]` index has shifted.
+    const elementSelector = (el, text) => {
+        const id = el.getAttribute('id');
+        if (id && /^[a-zA-Z][\w-]{0,32}$/.test(id)) return `#${id}`;
+
+        const testid = el.getAttribute('data-testid');
+        if (testid) return `[data-testid='${testid}']`;
+
+        const role = el.getAttribute('role') || el.tagName.toLowerCase();
+        const aria = el.getAttribute('aria-label');
+        const name = aria || (text ? text.trim().slice(0, 40) : '');
+        if (name) return `${role} "${name.replace(/"/g, '\\"')}"`;
+
+        // Same-tag siblings. nth is brittle but better than nothing.
+        const parent = el.parentElement;
+        if (parent) {
+            const sib = Array.from(parent.children).filter(c => c.tagName === el.tagName);
+            const n = sib.indexOf(el) + 1;
+            if (sib.length > 1) return `${el.tagName.toLowerCase()}:nth-of-type(${n})`;
+        }
+        return el.tagName.toLowerCase();
+    };
+
     const elements = [];
     let idx = 1;
 
@@ -148,6 +180,7 @@
                 tag: el.tagName.toLowerCase(),
                 text: text,
                 attrs: attrs,
+                selector: elementSelector(el, text),
                 bbox: { x: r.x + offsetX, y: r.y + offsetY, w: r.width, h: r.height }
             });
             idx++;

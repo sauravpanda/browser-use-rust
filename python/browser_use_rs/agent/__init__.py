@@ -215,6 +215,14 @@ class Agent:
         scratchpad_enabled: bool = True,
         scratchpad_max_bytes: int = 32 * 1024,
         scratchpad_max_lines: int = 1000,
+        # Sliding-window agent history (v0.5.0). When the live message
+        # list grows past `history_window_steps` of native tool-call/
+        # tool-result pairs, the oldest pairs get collapsed into a
+        # single `[AGENT_HISTORY]` UserMessage with one-line summaries
+        # per step. Reduces context bloat on long runs while preserving
+        # native tool-calling for recent turns. Set to 0 to disable
+        # (always keep full native history).
+        history_window_steps: int = 3,
         use_vision: bool = True,
         sensitive_data: dict[str, str] | None = None,
         system_prompt: str | None = None,
@@ -260,6 +268,7 @@ class Agent:
         self.scratchpad_enabled = scratchpad_enabled
         self.scratchpad_max_bytes = scratchpad_max_bytes
         self.scratchpad_max_lines = scratchpad_max_lines
+        self.history_window_steps = history_window_steps
         # Per-agent UUID stamped on scratchpad files so simultaneous
         # eval runs don't clobber each other.
         from browser_use_rs._scratchpad import new_agent_id
@@ -328,6 +337,22 @@ class Agent:
         # can't be used against a changed DOM. v0.4.18 fix.
         self._valid_indices: set[int] = set()
         self._indices_invalidated = False
+        # Map [N] → stable selector (e.g. `button "Sign In"`) from the
+        # most recent snapshot. Used to render action history lines
+        # with selectors instead of bare indices, so cross-turn
+        # references remain meaningful after DOM mutation. v0.5.0.
+        self._index_to_selector: dict[int, str] = {}
+        # Running collapsed history of older steps. Each entry: a
+        # one-line "<step N> <action> → <result-summary>" string.
+        self._collapsed_history: list[str] = []
+        # Track the last K turns' (step_n, tool_calls, results) so
+        # _collapse_old_history can render them when popping. We need
+        # this because by the time we pop a turn from self._messages,
+        # we've lost the structured tool-call args (the messages
+        # carried only the wire format).
+        self._recent_turn_records: list[
+            tuple[int, list[ToolCall], list[ActionResult]]
+        ] = []
         # Self-validation: when the LLM is about to finalize an answer
         # (no tool calls in text-mode, or first done() call in
         # output-model mode), we let it through ONCE with a "re-check
@@ -486,6 +511,13 @@ class Agent:
             step_n = self.state.n_steps
 
             t0 = time.monotonic()
+
+            # Collapse old native (AssistantMessage, ToolResultMessage*)
+            # pairs into the agent_history string before fetching the
+            # next state. Keeps the conversation bounded as runs grow
+            # past 20+ turns. v0.5.0.
+            self._collapse_old_history()
+
             state_summary = await self._capture_state()
             self._inject_page_state(state_summary)
 
@@ -640,6 +672,14 @@ class Agent:
                 ]
 
             self._append_history(state_summary, output, tool_results, t0, step_n)
+
+            # Record this turn for later sliding-window collapse. We
+            # snapshot the structured tool calls + results because by
+            # the time _collapse_old_history runs, we've only got the
+            # wire-format messages left in self._messages.
+            self._recent_turn_records.append(
+                (step_n, list(completion.tool_calls), list(tool_results))
+            )
 
             if on_step_end is not None:
                 await _maybe_await(on_step_end())
@@ -949,6 +989,98 @@ class Agent:
             error_count, len(tool_calls), [tc.name for tc in tool_calls],
         )
 
+    def _format_action_line(
+        self, step_n: int, tc: ToolCall, result: ActionResult
+    ) -> str:
+        """Render one tool call + result as a human-readable history line.
+
+        Used by the sliding-window collapse: when we drop a native
+        AssistantMessage+ToolResultMessage pair from the live message
+        list, we leave behind a single line in the agent_history block
+        that captures what happened. Format is intentionally short and
+        narrative — the LLM should be able to read 30+ such lines as
+        easily as it'd skim its own past reasoning.
+
+        For indexed tools (click, type_text, scroll_to, upload_file),
+        we substitute the [N] index with the selector that was valid
+        at the time of the action — the selector is stable across DOM
+        mutations, so `Clicked button "Sign In"` keeps meaning even
+        after the page has re-rendered. v0.5.0.
+        """
+        name = tc.name
+        args = tc.args or {}
+        idx = args.get("index")
+        # Map [N] → selector (look it up from the snapshot that was
+        # active when this action ran; we cache it on the result via
+        # `_selector_used` set in _run_tool).
+        sel = getattr(result, "_selector_used", None)
+        if sel is None and isinstance(idx, int):
+            sel = self._index_to_selector.get(idx)
+        target = sel if sel else (f"[{idx}]" if idx is not None else "")
+
+        if name == "navigate":
+            action = f"Navigated to {args.get('url', '?')}"
+        elif name == "click":
+            action = f"Clicked {target}"
+        elif name == "type_text":
+            text = args.get("text", "")
+            action = f"Typed {text!r} into {target}"
+        elif name == "upload_file":
+            action = f"Uploaded {args.get('path', '?')} to {target}"
+        elif name == "scroll":
+            dy = args.get("dy", 0)
+            action = f"Scrolled {'down' if dy > 0 else 'up'} {abs(int(dy))}px"
+        elif name == "scroll_to":
+            action = f"Scrolled {target} into view"
+        elif name == "scroll_to_top":
+            action = "Scrolled to top"
+        elif name == "scroll_to_bottom":
+            action = "Scrolled to bottom"
+        elif name == "page_text":
+            action = "Read page_text"
+        elif name == "get_text":
+            action = f"Read get_text({args.get('selector', '?')!r})"
+        elif name == "get_links":
+            action = "Read links list"
+        elif name == "screenshot":
+            action = "Took screenshot"
+        elif name == "wait_for":
+            action = f"Waited for selector {args.get('selector', '?')!r}"
+        elif name == "wait_for_navigation":
+            action = "Waited for navigation"
+        elif name == "sleep":
+            action = f"Slept {args.get('seconds', 0)}s"
+        elif name == "list_tabs":
+            action = "Listed tabs"
+        elif name == "switch_tab":
+            action = f"Switched to tab {args.get('target_id', '?')}"
+        elif name == "new_tab":
+            action = f"Opened new tab {args.get('url', '?')}"
+        elif name == "close_tab":
+            action = f"Closed tab {args.get('target_id', '?')}"
+        elif name == "done":
+            action = "Marked done"
+        else:
+            action = f"{name}({args})"
+
+        if result.error:
+            outcome = f"ERROR: {result.error[:120]}"
+        elif result.is_done:
+            outcome = "→ done"
+        else:
+            ec = result.extracted_content or ""
+            if ec.startswith("[SCRATCHPAD]") or "[SCRATCHPAD]" in ec[:200]:
+                outcome = "→ ok (long output spilled to scratchpad)"
+            elif ec:
+                # Trim long extracts; the LLM doesn't need the full
+                # blob in history — it has the most recent results
+                # natively in context.
+                outcome = f"→ {ec[:120].replace(chr(10), ' ')}"
+            else:
+                outcome = "→ ok"
+
+        return f"<step {step_n}> {action} {outcome}"
+
     @staticmethod
     def _domain_of(url: str) -> str:
         """Crude eTLD+1 extractor — `https://www.foo.bar.com/x` → `bar.com`.
@@ -1003,20 +1135,29 @@ class Agent:
             except Exception:
                 return None
 
-        async def _safe_dom() -> str:
+        # Capture both the rendered text AND the index→selector map
+        # in a single CDP roundtrip. The selector map drives
+        # agent_history rendering: when we collapse step N's tool_call
+        # `click(index=5)` into a history line, we look up element 5's
+        # selector here so the rendered line reads
+        # `Clicked button "Sign In"` instead of `clicked [5]` —
+        # cross-turn references stay stable through DOM mutation.
+        async def _safe_dom() -> tuple[str, dict[int, str]]:
             try:
                 snap = await self.session.dom_snapshot()
-                return snap.to_llm_string()
+                idx_to_sel = {e.index: e.selector for e in snap.elements}
+                return snap.to_llm_string(), idx_to_sel
             except Exception:
                 # No active page yet (very first step before
                 # initial_actions navigate, or a frame transition
                 # mid-step). Skip — the LLM gets a "(no page state
                 # available)" placeholder instead of crashing the run.
-                return ""
+                return "", {}
 
-        url, screenshot_b64, dom_text = await asyncio.gather(
+        url, screenshot_b64, dom_pair = await asyncio.gather(
             _safe_url(), _safe_screenshot(), _safe_dom()
         )
+        dom_text, self._index_to_selector = dom_pair
 
         # Stash the set of [N] indices the LLM is about to see, so
         # _run_tool can validate `index=N` arguments against what was
@@ -1039,6 +1180,101 @@ class Agent:
             screenshot=screenshot_b64,
             elements_text=dom_text,
         )
+
+    def _collapse_old_history(self) -> None:
+        """Collapse old (AssistantMessage, ToolResultMessage*) pairs
+        into the agent_history block once the live native window
+        exceeds `history_window_steps`.
+
+        Pairs are popped together to preserve provider tool_use_id
+        bookkeeping (Anthropic and OpenAI both validate that every
+        tool_use has a matching tool_result; dropping one half breaks
+        the next request). For each popped pair, we render a one-line
+        `<step N> Action → outcome` summary using the selector that
+        was valid at action time (see _format_action_line).
+
+        Operates in-place on self._messages. v0.5.0.
+        """
+        if self.history_window_steps <= 0:
+            return
+        # `_recent_turn_records` is per-turn; the live message list
+        # holds 1 AssistantMessage + N ToolResultMessage(s) per turn.
+        # We collapse turn records older than the window; messages
+        # are removed positionally based on each turn's batch size.
+        excess = len(self._recent_turn_records) - self.history_window_steps
+        if excess <= 0:
+            return
+
+        for record in self._recent_turn_records[:excess]:
+            step_n, tool_calls, results = record
+            # Render one history line per (call, result) pair. If the
+            # batch had only one call, this is a single line; for
+            # multi_act batches we list each.
+            for tc, res in zip(tool_calls, results):
+                self._collapsed_history.append(
+                    self._format_action_line(step_n, tc, res)
+                )
+            # Pop the matching messages from self._messages: 1
+            # AssistantMessage followed by len(tool_calls) ToolResultMessages.
+            # Walk forward looking for the next AssistantMessage that
+            # matches; once found, drop it + the next N ToolResultMessages.
+            pop_idx = None
+            for i, msg in enumerate(self._messages):
+                if isinstance(msg, AssistantMessage):
+                    msg_call_ids = [tc.id for tc in msg.tool_calls]
+                    record_call_ids = [tc.id for tc in tool_calls]
+                    if msg_call_ids == record_call_ids:
+                        pop_idx = i
+                        break
+            if pop_idx is None:
+                # Couldn't find the matching native pair (e.g. it was
+                # already popped, or messages were re-shuffled by a
+                # nudge inject). Skip the prune for this turn — better
+                # to keep the message than risk corrupting the order.
+                continue
+            # Drop the AssistantMessage and the immediately-following
+            # ToolResultMessages whose tool_call_id matches one in
+            # this batch. Stop at the first non-matching message.
+            wanted_ids = {tc.id for tc in tool_calls}
+            del self._messages[pop_idx]
+            while pop_idx < len(self._messages) and isinstance(
+                self._messages[pop_idx], ToolResultMessage
+            ) and self._messages[pop_idx].tool_call_id in wanted_ids:
+                del self._messages[pop_idx]
+
+        self._recent_turn_records = self._recent_turn_records[excess:]
+
+        if self._collapsed_history:
+            logger.info(
+                "agent: collapsed %d old turns (%d history lines now)",
+                excess, len(self._collapsed_history),
+            )
+
+        # Inject (or refresh) the [AGENT_HISTORY] message at the FRONT
+        # of self._messages, right after the initial user task. This
+        # keeps the rendering consistent across LLM calls.
+        history_body = (
+            "[AGENT_HISTORY] Earlier turns (collapsed; native message "
+            "history is preserved for the most recent "
+            f"{self.history_window_steps} turn(s) below):\n"
+            + "\n".join(self._collapsed_history)
+        )
+        # Find an existing AGENT_HISTORY message and update it; else
+        # insert at index 1 (right after the initial task UserMessage).
+        for msg in self._messages:
+            if (
+                isinstance(msg, UserMessage)
+                and isinstance(msg.content, str)
+                and msg.content.startswith("[AGENT_HISTORY]")
+            ):
+                msg.content = history_body
+                return
+        # Insert after the initial task message (index 0). If
+        # self._messages is empty — shouldn't happen here — append.
+        if self._messages:
+            self._messages.insert(1, UserMessage(content=history_body))
+        else:
+            self._messages.append(UserMessage(content=history_body))
 
     def _inject_page_state(self, state: BrowserStateSummary) -> None:
         """Append a UserMessage with the current page state so the LLM sees
@@ -1388,8 +1624,19 @@ class Agent:
                 content_parts = [TextPart(text=spilled.preview)]
                 summary_text = spilled.preview
 
+        # Stamp the selector that was valid at action time onto the
+        # ActionResult so _format_action_line can render the history
+        # entry with selector text instead of a stale [N] index. We
+        # stash it as an attribute (ActionResult is a frozen dataclass,
+        # so we don't make this part of the public schema). v0.5.0.
+        ar = ActionResult(extracted_content=summary_text)
+        if isinstance(real_args, dict) and isinstance(real_args.get("index"), int):
+            ar._selector_used = self._index_to_selector.get(  # type: ignore[attr-defined]
+                real_args["index"]
+            )
+
         return (
-            ActionResult(extracted_content=summary_text),
+            ar,
             ToolResultMessage(
                 tool_call_id=tc.id, name=tc.name, content=content_parts
             ),
