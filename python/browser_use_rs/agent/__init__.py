@@ -1025,19 +1025,62 @@ class Agent:
         else:
             self._messages.append(UserMessage(content=body))
 
+    # Tools that read state without changing the page — safe to keep
+    # running even after a mutating action in the same batch since they
+    # don't depend on the pre-batch DOM indices.
+    _READ_ONLY_TOOLS: frozenset[str] = frozenset({
+        "screenshot",
+        "page_text",
+        "get_text",
+        "get_links",
+        "list_tabs",
+        "list_downloads",
+        "get_cookies",
+        "save_pdf",
+        "done",
+        "grep_scratchpad",
+        "read_scratchpad",
+    })
+
+    # Tools that target an element by `[N]` index from the most recent
+    # DOM snapshot. These become unsafe the moment ANY mutating action
+    # runs in the same batch — the snapshot the LLM planned against is
+    # stale. v0.4.17 fix: dominant v0.4.15 failure was [type_text, click]
+    # batches where typing triggered autocomplete/validation that shifted
+    # the click target's index.
+    _INDEXED_TOOLS: frozenset[str] = frozenset({
+        "click",
+        "type_text",
+        "upload_file",
+        "scroll_to",
+    })
+
     async def _run_tools_sequentially(
         self, tool_calls: list[ToolCall]
     ) -> list[tuple[ActionResult, ToolResultMessage]]:
-        """Execute tool calls in order with a page-change guard.
+        """Execute tool calls in order with two staleness guards.
 
-        Mirrors upstream `multi_act`: after each call, we check whether
-        the active URL changed. If it did and there are more calls
-        queued, we mark each remaining call as skipped (with a clear
-        error explaining why) instead of running it against indices
-        that were valid for the previous page. The skipped tool
-        messages MUST still be emitted because the LLM provider expects
-        a result for every tool call it issued — omitting them produces
-        a "no result for tool_use_id" error on the next turn.
+        Mirrors upstream `multi_act` semantics + a fix for the v0.4.15
+        eval failure mode (87 stale-index errors, 11 BATCH_FAILED
+        instances, 9 of them shaped `[type_text, click]`):
+
+        1. URL-change guard. After each call we check the active URL;
+           if it changed and there are more queued calls, we skip the
+           non-readonly remainder (they were planned against the old
+           page).
+        2. **Indexed-after-mutation guard (v0.4.17).** After running any
+           non-read tool, subsequent `[N]`-using calls (click, type_text,
+           upload_file, scroll_to) are skipped with a clear error
+           explaining that typing/clicking/scrolling can mutate the DOM
+           in ways that invalidate the LLM's pre-batch snapshot.
+           Read-only and index-free tools (page_text, get_text, scroll
+           by amount, etc.) are unaffected — `[scroll, scroll, page_text]`
+           batches still work.
+
+        Skipped tool_messages MUST still be emitted because the LLM
+        provider expects a result for every tool call it issued —
+        omitting them produces a "no result for tool_use_id" error on
+        the next turn.
         """
         if not tool_calls:
             return []
@@ -1048,60 +1091,89 @@ class Agent:
             except Exception:
                 return ""
 
-        # Tools that read state without changing the page — safe to keep
-        # running even after a navigation in the same batch since they
-        # don't depend on the pre-batch DOM indices.
-        READ_ONLY_TOOLS = {
-            "screenshot",
-            "page_text",
-            "get_text",
-            "get_links",
-            "list_tabs",
-            "list_downloads",
-            "get_cookies",
-            "save_pdf",
-            "done",
-        }
-
         start_url = await _current_url()
         results: list[tuple[ActionResult, ToolResultMessage]] = []
+        # True once any non-read tool has run; gates subsequent indexed
+        # tools regardless of URL change.
+        indices_invalidated = False
 
         for i, tc in enumerate(tool_calls):
             pair = await self._run_tool(tc)
             results.append(pair)
 
+            if tc.name not in self._READ_ONLY_TOOLS:
+                indices_invalidated = True
+
             if i + 1 >= len(tool_calls):
                 break
 
             cur_url = await _current_url()
-            if cur_url == start_url:
+            url_changed = cur_url != start_url
+
+            # Fast path: nothing changed AND no indexed-tool risk.
+            if not url_changed and not indices_invalidated:
                 continue
 
-            # Page changed. Skip remaining calls UNLESS they're read-only
-            # (those don't rely on stale `[N]` indices).
+            # Need to filter the remaining calls. Read-only always runs;
+            # indexed runs only if neither URL nor DOM-index assumption
+            # was invalidated (which here means: not at all, since we're
+            # in this branch precisely because something was).
             for skipped in tool_calls[i + 1 :]:
-                if skipped.name in READ_ONLY_TOOLS:
+                if skipped.name in self._READ_ONLY_TOOLS:
                     pair = await self._run_tool(skipped)
                     results.append(pair)
-                else:
+                    continue
+
+                # Non-read tool. URL change kills everything; index
+                # invalidation kills indexed tools specifically.
+                if url_changed:
                     err = (
                         f"skipped: page navigated mid-batch "
-                        f"({start_url!r} → {cur_url!r}). The `[N]` indices "
-                        f"in your tool calls were from the old page; "
-                        f"re-plan on the next turn using the fresh "
-                        f"snapshot."
+                        f"({start_url!r} → {cur_url!r}). The `[N]` "
+                        f"indices in your tool calls were from the old "
+                        f"page; re-plan on the next turn using the "
+                        f"fresh snapshot."
                     )
-                    results.append(
-                        (
-                            ActionResult(error=err),
-                            ToolResultMessage(
-                                tool_call_id=skipped.id,
-                                name=skipped.name,
-                                content=err,
-                                is_error=True,
-                            ),
-                        )
+                    is_error = True
+                elif skipped.name in self._INDEXED_TOOLS:
+                    err = (
+                        f"skipped: an earlier action in this batch "
+                        f"mutated the DOM, so the `[N]` index in this "
+                        f"call may now point to a different element "
+                        f"(or no element at all). Wait for the next "
+                        f"turn's fresh snapshot before clicking / "
+                        f"typing / scrolling-to indexed elements. "
+                        f"Tip: chaining `[type_text, click]` rarely "
+                        f"works because typing triggers autocomplete "
+                        f"and form validation — split them across "
+                        f"turns."
                     )
+                    is_error = True
+                    logger.info(
+                        "agent: skipped %s in batch (indices invalidated by "
+                        "earlier mutating action)",
+                        skipped.name,
+                    )
+                else:
+                    # Index-free non-read (e.g. another scroll, navigate,
+                    # sleep). URL didn't change, so we let it run.
+                    pair = await self._run_tool(skipped)
+                    results.append(pair)
+                    if skipped.name not in self._READ_ONLY_TOOLS:
+                        indices_invalidated = True
+                    continue
+
+                results.append(
+                    (
+                        ActionResult(error=err),
+                        ToolResultMessage(
+                            tool_call_id=skipped.id,
+                            name=skipped.name,
+                            content=err,
+                            is_error=is_error,
+                        ),
+                    )
+                )
             break
 
         return results
