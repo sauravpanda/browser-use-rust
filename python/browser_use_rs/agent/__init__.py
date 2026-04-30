@@ -1542,6 +1542,31 @@ class Agent:
 
         real_args = _expand_secrets(tc.args, self.sensitive_data)
 
+        # Pre-flight: index [0] is always a hallucination — our DOM
+        # snapshot uses 1-based indices (see crates/bu-dom/src/script.js
+        # `let idx = 1`). Reject up front with a clear hint, mirroring
+        # upstream browser-use's `assert params.index != 0` guard. The
+        # v0.4.16 trace shows the LLM repeatedly picking [0] when the
+        # snapshot was empty/missing, then exhausting the retry budget.
+        if (
+            tc.name in self._INDEXED_TOOLS
+            and isinstance(real_args, dict)
+            and real_args.get("index") == 0
+        ):
+            msg = (
+                "index [0] is not a real element — the page snapshot "
+                "uses 1-based indices, so [0] never exists. If you "
+                "haven't taken a dom_snapshot yet, take one now. If you "
+                "have, pick an index that actually appears in the latest "
+                "PAGE_STATE."
+            )
+            return (
+                ActionResult(extracted_content=msg),
+                ToolResultMessage(
+                    tool_call_id=tc.id, name=tc.name, content=msg,
+                ),
+            )
+
         # Pre-flight index validation. The v0.4.17 batch logged 43
         # `unknown element index N` errors — the LLM picking indices
         # that were never in the snapshot we showed it. We can catch
@@ -1574,11 +1599,17 @@ class Agent:
                     "(valid range: [%d..%d], %d total)",
                     requested, tc.name, lo, hi, len(self._valid_indices),
                 )
+                # Returned as extracted_content (not error) so the
+                # all-error-turn streak counter doesn't tick. Same
+                # rationale as the post-call stale-element handler:
+                # picking a bogus index is recoverable on the next turn
+                # via a fresh snapshot. Mirrors upstream browser-use,
+                # which returns the "Element index N not available" hint
+                # as a non-error message.
                 return (
-                    ActionResult(error=err),
+                    ActionResult(extracted_content=err),
                     ToolResultMessage(
-                        tool_call_id=tc.id, name=tc.name,
-                        content=err, is_error=True,
+                        tool_call_id=tc.id, name=tc.name, content=err,
                     ),
                 )
 
@@ -1612,6 +1643,45 @@ class Agent:
                 ),
             )
         except Exception as e:
+            err_str = str(e)
+            # Stale-element / unknown-index errors are EXPECTED on a busy
+            # page — the LLM picked an index that was valid at snapshot
+            # time but the DOM has since changed. Treat them as
+            # recoverable: return the message as `extracted_content`
+            # (not `error`) so the all-error-turn streak counter doesn't
+            # tick. This mirrors upstream browser-use, which returns
+            # "Element index N not available - page may have changed.
+            # Try refreshing browser state." as a non-error result.
+            #
+            # Trace-driven motivation: 81% of v0.4.14's action errors and
+            # 71% of v0.5.1's are these two patterns; on regressed tasks
+            # they consistently fire ~5 times in a row, exhausting the
+            # max_consecutive_errors budget and aborting the task before
+            # the agent has a chance to re-snapshot.
+            stale_index_msg = "unknown element index"
+            stale_element_msg = "no longer present in the DOM"
+            if (
+                tc.name in self._INDEXED_TOOLS
+                and (stale_index_msg in err_str or stale_element_msg in err_str)
+            ):
+                idx_repr = real_args.get("index", "?") if isinstance(real_args, dict) else "?"
+                friendly = (
+                    f"index [{idx_repr}] is not available now — the page "
+                    f"state has changed since the last dom_snapshot. "
+                    f"Re-take a dom_snapshot and pick a fresh index from "
+                    f"the new PAGE_STATE."
+                )
+                ar = ActionResult(extracted_content=friendly)
+                if isinstance(real_args, dict) and isinstance(real_args.get("index"), int):
+                    ar._selector_used = self._index_to_selector.get(  # type: ignore[attr-defined]
+                        real_args["index"]
+                    )
+                return (
+                    ar,
+                    ToolResultMessage(
+                        tool_call_id=tc.id, name=tc.name, content=friendly,
+                    ),
+                )
             err = f"tool error: {type(e).__name__}: {e}"
             err = _redact_secrets(err, self.sensitive_data)
             return (
