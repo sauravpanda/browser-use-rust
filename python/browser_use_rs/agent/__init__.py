@@ -306,6 +306,13 @@ class Agent:
         self._recent_tool_names: list[tuple[str, ...]] = []
         # One-shot budget warning at step == max_steps - 5.
         self._budget_warning_fired = False
+        # Set of [N] indices visible in the most recent snapshot we
+        # showed the LLM. Populated by _capture_state, consulted by
+        # _run_tool to reject hallucinated indices BEFORE we burn a CDP
+        # roundtrip. Cleared after any mutating action so a stale set
+        # can't be used against a changed DOM. v0.4.18 fix.
+        self._valid_indices: set[int] = set()
+        self._indices_invalidated = False
         # Self-validation: when the LLM is about to finalize an answer
         # (no tool calls in text-mode, or first done() call in
         # output-model mode), we let it through ONCE with a "re-check
@@ -879,11 +886,36 @@ class Agent:
         if len(tool_calls) <= 1:
             return
 
-        error_count = sum(1 for r in results if r.error)
+        # Distinguish "real" errors (LLM did something wrong, page
+        # rejected the action) from "guard skips" (v0.4.17 indexed-skip
+        # / page-navigated-mid-batch errors we generated ourselves).
+        # The guard already gave the LLM actionable feedback; firing
+        # BATCH_FAILED on top is noisy and was confusing the agent in
+        # v0.4.17 logs (15 false-positive firings vs ~67 legitimate
+        # guard skips). Only count "real" errors toward the threshold.
+        def _is_guard_skip(err: str | None) -> bool:
+            if not err:
+                return False
+            return (
+                "indices invalidated" in err
+                or "page navigated mid-batch" in err
+                or err.startswith("skipped: ")
+            )
+
+        real_errors = [r for r in results if r.error and not _is_guard_skip(r.error)]
+        guard_skips = [r for r in results if r.error and _is_guard_skip(r.error)]
+        error_count = len(real_errors)
+
         had_extract = any(
             tc.name in self._EXTRACT_TOOLS for tc in tool_calls
         )
         if had_extract or error_count <= len(tool_calls) // 2:
+            if guard_skips and not real_errors:
+                logger.info(
+                    "agent: BATCH_FAILED suppressed (%d guard-skips, "
+                    "0 real errors — guard already advised the LLM)",
+                    len(guard_skips),
+                )
             return
 
         nudge = (
@@ -971,6 +1003,21 @@ class Agent:
             _safe_url(), _safe_screenshot(), _safe_dom()
         )
 
+        # Stash the set of [N] indices the LLM is about to see, so
+        # _run_tool can validate `index=N` arguments against what was
+        # actually shown — kills "unknown element index" errors that
+        # come from the model hallucinating numbers (43 instances in
+        # the v0.4.17 batch). Set is invalidated as soon as a mutating
+        # action runs in the batch (see _run_tools_sequentially).
+        # We also reset the staleness flag here because we just took a
+        # fresh snapshot — the indices we extract are by definition
+        # valid against what the LLM is about to see.
+        import re as _re
+        self._valid_indices = {
+            int(m.group(1)) for m in _re.finditer(r"^\[(\d+)\]", dom_text, _re.MULTILINE)
+        }
+        self._indices_invalidated = False
+
         return BrowserStateSummary(
             url=url,
             title="",
@@ -1011,7 +1058,22 @@ class Agent:
                 "(no DOM snapshot available — page not ready)"
             )
         else:
-            body = f"{_PAGE_STATE_TAG}\n{dom_text}"
+            # Prepend an explicit valid-index hint so the LLM has the
+            # range to bound its index choices. Pre-empts hallucinated
+            # numbers like `click(42)` when the snapshot only shows
+            # [0..30]. v0.4.18.
+            if self._valid_indices:
+                lo = min(self._valid_indices)
+                hi = max(self._valid_indices)
+                count = len(self._valid_indices)
+                hint = (
+                    f"Valid [N] indices on this page: {count} elements "
+                    f"in range [{lo}..{hi}]. Use ONLY indices listed "
+                    f"below; do not invent numbers."
+                )
+                body = f"{_PAGE_STATE_TAG}\n{hint}\n\n{dom_text}"
+            else:
+                body = f"{_PAGE_STATE_TAG}\n{dom_text}"
 
         if self.use_vision and state.screenshot:
             self._messages.append(
@@ -1103,6 +1165,10 @@ class Agent:
 
             if tc.name not in self._READ_ONLY_TOOLS:
                 indices_invalidated = True
+                # Mirror to instance flag so the next-turn validation in
+                # _run_tool also knows the snapshot is stale (covers
+                # single-action turns and any mid-batch _run_tool calls).
+                self._indices_invalidated = True
 
             if i + 1 >= len(tool_calls):
                 break
@@ -1161,6 +1227,7 @@ class Agent:
                     results.append(pair)
                     if skipped.name not in self._READ_ONLY_TOOLS:
                         indices_invalidated = True
+                        self._indices_invalidated = True
                     continue
 
                 results.append(
@@ -1192,6 +1259,47 @@ class Agent:
             )
 
         real_args = _expand_secrets(tc.args, self.sensitive_data)
+
+        # Pre-flight index validation. The v0.4.17 batch logged 43
+        # `unknown element index N` errors — the LLM picking indices
+        # that were never in the snapshot we showed it. We can catch
+        # those WITHOUT a CDP roundtrip by checking against the index
+        # set captured in _capture_state. Skip the check if the snapshot
+        # set is empty (very first step, or capture failed) to avoid
+        # blocking legitimate work.
+        if (
+            tc.name in self._INDEXED_TOOLS
+            and "index" in real_args
+            and self._valid_indices
+            and not self._indices_invalidated
+        ):
+            try:
+                requested = int(real_args["index"])
+            except (TypeError, ValueError):
+                requested = None
+            if requested is not None and requested not in self._valid_indices:
+                lo, hi = min(self._valid_indices), max(self._valid_indices)
+                err = (
+                    f"index [{requested}] is not in the current page "
+                    f"snapshot. Valid indices are in the range [{lo}..{hi}] "
+                    f"(some numbers in that range may also be missing — "
+                    f"only use [N] values you can see in the latest "
+                    f"PAGE_STATE message). Re-read the snapshot and try "
+                    f"again with a real index."
+                )
+                logger.info(
+                    "agent: rejected hallucinated index [%d] in %s "
+                    "(valid range: [%d..%d], %d total)",
+                    requested, tc.name, lo, hi, len(self._valid_indices),
+                )
+                return (
+                    ActionResult(error=err),
+                    ToolResultMessage(
+                        tool_call_id=tc.id, name=tc.name,
+                        content=err, is_error=True,
+                    ),
+                )
+
         try:
             # Per-tool timeout. Without it, a single hung CDP op (e.g.
             # `scroll` against a page stuck on a network request) can

@@ -158,3 +158,84 @@ class BaseChatModel(ABC):
         *,
         system: str | None = None,
     ) -> ChatInvokeCompletion: ...
+
+
+# ---------------------------------------------------------------------------
+# Transient-error retry helper, shared across providers.
+#
+# Eval traffic against Gemini routinely hits intermittent 503 UNAVAILABLE
+# / "Overloaded" / 429 rate-limit responses, and a single such error
+# kills the agent run because eval/service.py treats it as a stage
+# failure. Pattern lifted from OpenCode's session/retry.ts: exponential
+# backoff with a small cap, retrying ONLY on signals that look transient.
+# Honor a `Retry-After` style hint when the SDK exposes one.
+
+_RETRY_PHRASES = (
+    "503",
+    "unavailable",
+    "overloaded",
+    "rate limit",
+    "too many requests",
+    "exhausted",
+    "internal error",
+    "temporarily",
+    "deadline exceeded",
+)
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Return True if the exception's text contains a known transient
+    marker. We pattern-match on stringified exceptions because each
+    provider SDK raises its own typed exception, and they're all
+    convertible-to-string with the upstream HTTP status / message body."""
+    msg = str(exc).lower()
+    if any(p in msg for p in _RETRY_PHRASES):
+        return True
+    # Also catch Python stdlib timeout / connection wobbles.
+    return isinstance(
+        exc,
+        (TimeoutError, ConnectionError, OSError),
+    )
+
+
+async def with_retry(
+    factory,
+    *,
+    max_attempts: int = 3,
+    base_delay: float = 1.0,
+    max_delay: float = 8.0,
+    label: str = "llm",
+):
+    """Run `factory()` up to `max_attempts` times with exponential
+    backoff (1s, 2s, 4s) on transient errors. `factory` must be a
+    no-arg callable that returns a fresh coroutine each call — a plain
+    coroutine can only be awaited once.
+    """
+    import asyncio
+    import logging
+    import random
+
+    logger = logging.getLogger("browser_use_rs.llm.retry")
+
+    last_exc: BaseException | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return await factory()
+        except BaseException as exc:  # noqa: BLE001
+            if not _is_retryable(exc) or attempt >= max_attempts:
+                raise
+            # Exponential backoff with small jitter to avoid synchronized
+            # retries when many shards hit the same outage at once.
+            delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
+            delay += random.uniform(0, 0.25)
+            logger.info(
+                "%s: transient error on attempt %d/%d (%s: %s); "
+                "retrying in %.1fs",
+                label, attempt, max_attempts,
+                type(exc).__name__, str(exc)[:120],
+                delay,
+            )
+            last_exc = exc
+            await asyncio.sleep(delay)
+    # Unreachable — the loop either returns or re-raises.
+    raise last_exc  # type: ignore[misc]

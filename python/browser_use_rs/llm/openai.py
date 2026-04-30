@@ -195,7 +195,12 @@ class ChatOpenAI(BaseChatModel):
         if self.max_tokens is not None:
             kwargs["max_tokens"] = self.max_tokens
 
-        response = await self.client.chat.completions.create(**kwargs)
+        from browser_use_rs.llm.base import with_retry
+
+        async def _call():
+            return await self.client.chat.completions.create(**kwargs)
+
+        response = await with_retry(_call, label=f"openai({self.model})")
         choice = response.choices[0]
         msg = choice.message
 

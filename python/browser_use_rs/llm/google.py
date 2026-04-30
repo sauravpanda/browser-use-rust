@@ -213,11 +213,20 @@ class ChatGoogle(BaseChatModel):
         config = gtypes.GenerateContentConfig(**config_kwargs)
 
         contents = _to_contents(messages)
-        response = await self.client.aio.models.generate_content(
-            model=self.model,
-            contents=contents,
-            config=config,
-        )
+        # Wrap in transient-error retry. Gemini in particular hits
+        # 503 UNAVAILABLE / "Overloaded" routinely under eval load,
+        # and a single such error was killing whole agent runs prior
+        # to v0.4.18. See base.with_retry for the retry policy.
+        from browser_use_rs.llm.base import with_retry
+
+        async def _call():
+            return await self.client.aio.models.generate_content(
+                model=self.model,
+                contents=contents,
+                config=config,
+            )
+
+        response = await with_retry(_call, label=f"google({self.model})")
 
         candidate = response.candidates[0] if response.candidates else None
         parts = candidate.content.parts if candidate and candidate.content else []

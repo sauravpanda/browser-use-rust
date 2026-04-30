@@ -172,7 +172,12 @@ class ChatAnthropic(BaseChatModel):
         if self.temperature is not None:
             kwargs["temperature"] = self.temperature
 
-        response = await self.client.messages.create(**kwargs)
+        from browser_use_rs.llm.base import with_retry
+
+        async def _call():
+            return await self.client.messages.create(**kwargs)
+
+        response = await with_retry(_call, label=f"anthropic({self.model})")
 
         text_parts = [b.text for b in response.content if b.type == "text"]
         text = "\n".join(p for p in text_parts if p) or None
