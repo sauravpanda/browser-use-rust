@@ -524,6 +524,55 @@ class Agent:
             state_summary = await self._capture_state()
             self._inject_page_state(state_summary)
 
+            # Step-budget signals (v0.5.9), mirroring upstream browser_use's
+            # _inject_budget_warning + _force_done_after_last_step:
+            #
+            #  - At >=75% used and not last step: prominent warning so the
+            #    LLM has time to wrap up and submit a partial answer
+            #    rather than running the budget into the ground with
+            #    nothing saved.
+            #  - On the LAST step: hard "this is your final turn — answer
+            #    in plain text right now" message. Without this, agents
+            #    routinely call one more click on step max_steps and we
+            #    abort with no answer at all (counted as 'hit max_steps
+            #    without final answer' in trace).
+            steps_used = step_n
+            budget_ratio = steps_used / max_steps if max_steps else 0
+            is_last_step = step_n >= max_steps
+            if is_last_step:
+                self._messages.append(
+                    UserMessage(
+                        content=(
+                            "[FINAL TURN] You have reached max_steps and "
+                            "this is your last possible action. Do NOT "
+                            "call any more tools. Reply with your best "
+                            "final answer in plain text RIGHT NOW based "
+                            "on what you have seen so far. If you cannot "
+                            "fully answer, give your best partial answer "
+                            "and explicitly note what is unverified. A "
+                            "partial answer is far better than no answer."
+                        )
+                    )
+                )
+            elif budget_ratio >= 0.75:
+                steps_remaining = max_steps - steps_used
+                pct = int(budget_ratio * 100)
+                self._messages.append(
+                    UserMessage(
+                        content=(
+                            f"[BUDGET WARNING] You have used "
+                            f"{steps_used}/{max_steps} steps ({pct}%). "
+                            f"{steps_remaining} step(s) remaining. "
+                            f"If the task cannot finish in those steps, "
+                            f"prioritize: (1) consolidate what you have, "
+                            f"(2) end with your best plain-text answer "
+                            f"on the next turn. Partial results are far "
+                            f"more valuable than exhausting all steps "
+                            f"with nothing saved."
+                        )
+                    )
+                )
+
             completion = await self.llm.ainvoke(
                 self._messages,
                 self.tools,
@@ -739,29 +788,111 @@ class Agent:
                 for r in tool_results:
                     self.error_log.append((step_n, r.error or ""))
                 if self._consecutive_error_turns >= self.max_consecutive_errors:
-                    self.state.history.history[-1].result.append(
-                        ActionResult(
-                            error=(
-                                f"agent gave up after "
-                                f"{self._consecutive_error_turns} all-error turns"
-                            ),
-                            is_done=True,
-                            success=False,
-                        )
+                    # v0.5.9: instead of dying with no answer, do ONE
+                    # last LLM call asking for the best partial answer
+                    # based on what's been seen. Mirrors upstream's
+                    # _force_done_after_failure. Saves tasks where the
+                    # agent had read enough to answer but hit a wall on
+                    # subsequent confirming actions.
+                    await self._force_final_answer(
+                        state_summary, step_n,
+                        reason=f"{self._consecutive_error_turns} all-error turns",
                     )
                     return
             else:
                 self._consecutive_error_turns = 0
 
         # max_steps exhausted without explicit done.
-        if self.state.history.history:
-            self.state.history.history[-1].result.append(
-                ActionResult(
-                    error=f"hit max_steps={max_steps} without final answer",
-                    is_done=True,
-                    success=False,
-                )
+        # v0.5.9: instead of recording an error-only ActionResult and
+        # giving the judge nothing to evaluate, do one last LLM call
+        # for the best partial answer.
+        await self._force_final_answer(
+            None, max_steps, reason=f"max_steps={max_steps} reached",
+        )
+
+    async def _force_final_answer(
+        self,
+        last_state: BrowserStateSummary | None,
+        step_n: int,
+        reason: str,
+    ) -> None:
+        """Ask the LLM for its best plain-text answer right now.
+
+        Used when the agent would otherwise abort with no result —
+        either after the all-error-turn streak fires or after max_steps
+        is exhausted. Mirrors upstream browser_use's
+        `_force_done_after_failure` / `_force_done_after_last_step`
+        which constrain the agent to the `done` tool and tell it to
+        wrap up.
+
+        We don't have a `done` tool to constrain to (final answer is a
+        plain-text turn in our model), so we instruct the LLM to reply
+        in plain text and synthesize a done ActionResult from the
+        result. If the LLM still emits tool calls, we ignore them and
+        use the text content as the final answer.
+        """
+        try:
+            prompt = (
+                f"[FORCE FINAL ANSWER] The agent loop is terminating "
+                f"({reason}). Reply RIGHT NOW with your best plain-text "
+                f"answer to the original task based on everything you've "
+                f"seen so far. Do NOT call any tools — your text reply "
+                f"IS the final answer. If you don't know the full answer, "
+                f"give your best partial answer and explicitly note what "
+                f"is unverified or missing. A partial answer is far more "
+                f"valuable than no answer."
             )
+            self._messages.append(UserMessage(content=prompt))
+            completion = await asyncio.wait_for(
+                self.llm.ainvoke(
+                    self._messages, self.tools,
+                    system=self.system_prompt,
+                ),
+                timeout=self.tool_timeout,
+            )
+            self._record_usage(step_n, completion.usage)
+            answer = (completion.text or "").strip()
+            if not answer:
+                # LLM returned only tool calls — nothing to commit. Fall
+                # through to the original error result.
+                raise RuntimeError("force-final returned no text")
+            ar = ActionResult(
+                extracted_content=answer,
+                is_done=True,
+                success=False,  # forced answer, judge decides
+            )
+            if self.state.history.history:
+                self.state.history.history[-1].result.append(ar)
+            else:
+                # No history at all — synthesize a minimal entry so
+                # downstream consumers (eval format_data, judge) can
+                # still pull the answer text.
+                self._append_history(
+                    last_state or BrowserStateSummary(
+                        url="", title="", screenshot=None, elements_text=""
+                    ),
+                    AgentOutput(text=answer, tool_calls=[]),
+                    [ar],
+                    time.monotonic(),
+                    step_n,
+                )
+            logger.info(
+                "agent: force-final answer committed (%s, len=%d)",
+                reason, len(answer),
+            )
+        except Exception as e:
+            logger.info(
+                "agent: force-final fallback to error result (%s): %s",
+                reason, e,
+            )
+            if self.state.history.history:
+                self.state.history.history[-1].result.append(
+                    ActionResult(
+                        error=f"agent terminated: {reason}",
+                        is_done=True,
+                        success=False,
+                    )
+                )
 
     # Tool name groups used by the loop-detection heuristics.
     _EXTRACT_TOOLS: frozenset[str] = frozenset({
