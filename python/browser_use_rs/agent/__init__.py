@@ -1699,22 +1699,102 @@ class Agent:
             # the agent has a chance to re-snapshot.
             stale_index_msg = "unknown element index"
             stale_element_msg = "no longer present in the DOM"
-            if (
+            is_stale = (
                 tc.name in self._INDEXED_TOOLS
                 and (stale_index_msg in err_str or stale_element_msg in err_str)
-            ):
-                idx_repr = real_args.get("index", "?") if isinstance(real_args, dict) else "?"
-                friendly = (
-                    f"index [{idx_repr}] is not available now — the page "
-                    f"state has changed since the last dom_snapshot. "
-                    f"Re-take a dom_snapshot and pick a fresh index from "
-                    f"the new PAGE_STATE."
-                )
-                ar = ActionResult(extracted_content=friendly)
-                if isinstance(real_args, dict) and isinstance(real_args.get("index"), int):
-                    ar._selector_used = self._index_to_selector.get(  # type: ignore[attr-defined]
-                        real_args["index"]
+                and isinstance(real_args, dict)
+                and isinstance(real_args.get("index"), int)
+            )
+            if is_stale:
+                # Selector retargeting (v0.5.5).
+                # Look up the cached selector for the failed index, take
+                # a fresh DOM snapshot, find the element with the same
+                # selector in the new snapshot, and retry the tool call
+                # with that updated index. Transparent recovery — the
+                # LLM doesn't know the index changed; the action just
+                # works. Mirrors upstream browser-use's
+                # browser_session.get_element_by_index path which
+                # resolves through a selector_map of stable references.
+                #
+                # Falls back to the v0.5.2 'extracted_content hint'
+                # behavior if anything in the retargeting path fails:
+                # selector cache miss, snapshot fails, no matching
+                # element in the new DOM, or retry itself errors. So
+                # this only ever HELPS — worst case = same UX as v0.5.4.
+                stale_idx = real_args["index"]  # type: ignore[index]
+                cached_sel = self._index_to_selector.get(stale_idx)
+                retarget_attempted = False
+                if cached_sel:
+                    try:
+                        snap = await asyncio.wait_for(
+                            self.session.dom_snapshot(),
+                            timeout=min(self.tool_timeout, 30.0),
+                        )
+                        # Refresh the agent's view of valid indices and
+                        # selector map so subsequent calls in this batch
+                        # (and the next step) see the new DOM.
+                        self._index_to_selector = {
+                            e.index: e.selector for e in snap.elements
+                        }
+                        self._valid_indices = {e.index for e in snap.elements}
+                        self._indices_invalidated = False
+                        new_idx = next(
+                            (e.index for e in snap.elements if e.selector == cached_sel),
+                            None,
+                        )
+                        if new_idx is not None and new_idx != stale_idx:
+                            retarget_attempted = True
+                            new_args = {**real_args, "index": new_idx}
+                            try:
+                                raw = await asyncio.wait_for(
+                                    tool.func(self.session, **new_args),
+                                    timeout=self.tool_timeout,
+                                )
+                                logger.info(
+                                    "agent: selector-retargeted %s [%d] -> [%d] (selector=%r)",
+                                    tc.name, stale_idx, new_idx, cached_sel,
+                                )
+                                # Drop into the success path with the
+                                # post-retry result.
+                                content_parts, summary_text = _format_tool_return(
+                                    raw, self.sensitive_data
+                                )
+                                ar = ActionResult(extracted_content=summary_text)
+                                ar._selector_used = cached_sel  # type: ignore[attr-defined]
+                                return (
+                                    ar,
+                                    ToolResultMessage(
+                                        tool_call_id=tc.id, name=tc.name,
+                                        content=content_parts,
+                                    ),
+                                )
+                            except Exception as retry_e:
+                                logger.info(
+                                    "agent: selector retarget retry failed (%s [%d->%d]): %s",
+                                    tc.name, stale_idx, new_idx, retry_e,
+                                )
+                    except Exception as snap_e:
+                        logger.info(
+                            "agent: selector retarget snapshot failed: %s", snap_e,
+                        )
+
+                idx_repr = stale_idx
+                if retarget_attempted:
+                    friendly = (
+                        f"index [{idx_repr}] was stale and the cached "
+                        f"selector retargeting also failed. The page "
+                        f"likely shifted significantly. Re-take a "
+                        f"dom_snapshot and pick a fresh index."
                     )
+                else:
+                    friendly = (
+                        f"index [{idx_repr}] is not available now — the page "
+                        f"state has changed since the last dom_snapshot. "
+                        f"Re-take a dom_snapshot and pick a fresh index from "
+                        f"the new PAGE_STATE."
+                    )
+                ar = ActionResult(extracted_content=friendly)
+                ar._selector_used = cached_sel  # type: ignore[attr-defined]
                 return (
                     ar,
                     ToolResultMessage(
