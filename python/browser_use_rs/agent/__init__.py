@@ -220,9 +220,16 @@ class Agent:
         # tool-result pairs, the oldest pairs get collapsed into a
         # single `[AGENT_HISTORY]` UserMessage with one-line summaries
         # per step. Reduces context bloat on long runs while preserving
-        # native tool-calling for recent turns. Set to 0 to disable
-        # (always keep full native history).
-        history_window_steps: int = 3,
+        # native tool-calling for recent turns. Set to 0 to disable.
+        #
+        # v0.5.1: bumped from 3 to 6 after the v0.5.0 batch showed
+        # regressions on tasks 1814 (7→11 steps) and 2226 (40→50
+        # max-out). K=3 was too aggressive on multi-step tasks; K=6
+        # keeps more recent native context while still bounding long
+        # runs. Combined with read-tool exclusion (turns containing
+        # any read tool stay native indefinitely), the LLM keeps full
+        # access to content it already extracted.
+        history_window_steps: int = 6,
         use_vision: bool = True,
         sensitive_data: dict[str, str] | None = None,
         system_prompt: str | None = None,
@@ -1193,19 +1200,36 @@ class Agent:
         `<step N> Action → outcome` summary using the selector that
         was valid at action time (see _format_action_line).
 
-        Operates in-place on self._messages. v0.5.0.
+        v0.5.1: only ACTION-only turns are eligible for collapse.
+        Turns that contain any read tool (page_text, get_text, etc.)
+        stay native indefinitely so the LLM keeps full access to
+        content it already extracted. Without this exclusion, v0.5.0
+        regressed task 2226 from 40 steps (success) to 50 steps
+        (max-out, failure) — the LLM kept re-fetching content because
+        the collapsed summaries dropped the actual text.
+
+        Operates in-place on self._messages.
         """
         if self.history_window_steps <= 0:
             return
         # `_recent_turn_records` is per-turn; the live message list
         # holds 1 AssistantMessage + N ToolResultMessage(s) per turn.
-        # We collapse turn records older than the window; messages
-        # are removed positionally based on each turn's batch size.
-        excess = len(self._recent_turn_records) - self.history_window_steps
+        # Only count action-only turns toward the window (read-tool
+        # turns are exempt and stay native), so we skip ahead through
+        # records that contain reads.
+        action_only_indices = [
+            i
+            for i, (_, tcs, _) in enumerate(self._recent_turn_records)
+            if not any(tc.name in self._READ_ONLY_TOOLS for tc in tcs)
+        ]
+        excess = len(action_only_indices) - self.history_window_steps
         if excess <= 0:
             return
+        # Indices into _recent_turn_records that we'll actually collapse.
+        collapse_indices = action_only_indices[:excess]
+        records_to_collapse = [self._recent_turn_records[i] for i in collapse_indices]
 
-        for record in self._recent_turn_records[:excess]:
+        for record in records_to_collapse:
             step_n, tool_calls, results = record
             # Render one history line per (call, result) pair. If the
             # batch had only one call, this is a single line; for
@@ -1242,12 +1266,19 @@ class Agent:
             ) and self._messages[pop_idx].tool_call_id in wanted_ids:
                 del self._messages[pop_idx]
 
-        self._recent_turn_records = self._recent_turn_records[excess:]
+        # Drop the collapsed records (by index, since they may not be
+        # contiguous — read-tool turns are skipped over).
+        keep_set = set(range(len(self._recent_turn_records))) - set(collapse_indices)
+        self._recent_turn_records = [
+            self._recent_turn_records[i] for i in sorted(keep_set)
+        ]
 
         if self._collapsed_history:
             logger.info(
-                "agent: collapsed %d old turns (%d history lines now)",
+                "agent: collapsed %d old turns (%d history lines now, "
+                "%d native turns kept)",
                 excess, len(self._collapsed_history),
+                len(self._recent_turn_records),
             )
 
         # Inject (or refresh) the [AGENT_HISTORY] message at the FRONT
