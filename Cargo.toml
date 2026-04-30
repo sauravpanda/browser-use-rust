@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.5.9"
+version = "0.6.0"
 edition = "2021"
 license = "MIT"
 authors = ["browser-use <hello@browser-use.com>"]
@@ -24,9 +24,9 @@ base64 = "0.22"
 pyo3 = { version = "0.24", features = ["abi3-py310"] }
 pyo3-async-runtimes = { version = "0.24", features = ["tokio-runtime"] }
 
-bu-cdp = { path = "crates/bu-cdp", version = "0.5.9" }
-bu-browser = { path = "crates/bu-browser", version = "0.5.9" }
-bu-dom = { path = "crates/bu-dom", version = "0.5.9" }
+bu-cdp = { path = "crates/bu-cdp", version = "0.6.0" }
+bu-browser = { path = "crates/bu-browser", version = "0.6.0" }
+bu-dom = { path = "crates/bu-dom", version = "0.6.0" }
 
 [profile.release]
 lto = "thin"

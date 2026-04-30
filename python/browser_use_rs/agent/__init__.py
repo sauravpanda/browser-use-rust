@@ -257,8 +257,17 @@ class Agent:
         if tools is None:
             from browser_use_rs._browser_tools import BROWSER_TOOLS
 
-            tools = BROWSER_TOOLS
+            tools = list(BROWSER_TOOLS)
+        else:
+            tools = list(tools)
         self.controller = controller
+        # Append agent-aware tools (extract_structured_data, file system)
+        # that need a closure over `self` for LLM/sandbox access. v0.6.0.
+        from browser_use_rs._extra_tools import make_extra_tools
+        existing = {getattr(t, "name", None) for t in tools}
+        for t in make_extra_tools(self):
+            if getattr(t, "name", None) not in existing:
+                tools.append(t)
         self.tools = tools
         self.tools_by_name: dict[str, Tool] = {t.name: t for t in tools}
         self._owns_session = browser_session is None

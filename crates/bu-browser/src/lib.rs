@@ -1209,6 +1209,47 @@ impl BrowserSession {
             .to_string())
     }
 
+    /// Evaluate an arbitrary JavaScript expression in the page context.
+    /// Returns the JSON-stringified result (or "" if the result wasn't
+    /// representable). Used by Python-side tools (search_page,
+    /// find_elements, find_text, get_dropdown_options, send_keys, etc.)
+    /// to escape into the page DOM without needing per-tool Rust glue.
+    /// v0.6.0.
+    pub async fn evaluate(&self, expression: &str) -> Result<String> {
+        let sid = self.session_id().await;
+        let r = self
+            .conn
+            .send(
+                "Runtime.evaluate",
+                json!({
+                    "expression": expression,
+                    "returnByValue": true,
+                    "awaitPromise": true,
+                }),
+                Some(&sid),
+            )
+            .await?;
+        // Surface JS exceptions as errors instead of silently returning ""
+        if let Some(exc) = r.get("exceptionDetails") {
+            let msg = exc
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or("JS exception");
+            return Err(BrowserError::BadResponse {
+                method: "evaluate",
+                detail: format!("{msg}: {exc}"),
+            });
+        }
+        let result = r.get("result");
+        // value may be string, number, bool, array, object, or undefined
+        let v = result.and_then(|x| x.get("value"));
+        match v {
+            Some(Value::String(s)) => Ok(s.clone()),
+            Some(other) => Ok(other.to_string()),
+            None => Ok(String::new()),
+        }
+    }
+
     pub async fn get_links(&self) -> Result<Vec<(String, String)>> {
         let sid = self.session_id().await;
         let script = r#"(() => {

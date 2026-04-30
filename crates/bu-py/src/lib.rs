@@ -410,6 +410,25 @@ impl BrowserSession {
         })
     }
 
+    /// Run an arbitrary JavaScript expression in the page context and
+    /// return the JSON-stringified result. Used by Python-side tools
+    /// (search_page, find_elements, find_text, dropdown_options, etc.)
+    /// to query the DOM without needing per-tool Rust glue. v0.6.0.
+    fn evaluate<'py>(
+        &self,
+        py: Python<'py>,
+        expression: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let guard = inner.lock().await;
+            let s = guard
+                .as_ref()
+                .ok_or_else(|| map_err("session not started — call start() first"))?;
+            s.evaluate(&expression).await.map_err(map_err)
+        })
+    }
+
     #[pyo3(signature = (timeout_ms=10000))]
     fn wait_for_navigation<'py>(
         &self,

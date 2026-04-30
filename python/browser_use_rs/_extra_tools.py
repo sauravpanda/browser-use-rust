@@ -1,0 +1,514 @@
+"""Extended tool surface for the agent (v0.6.0). Mirrors several upstream
+browser_use tools we were missing:
+
+  - extract_structured_data : LLM-powered query extraction over the page
+  - read_file / write_file / replace_file_str : sandboxed file system
+  - search_page             : grep page text without an LLM call
+  - find_elements           : CSS-selector query, attribute extraction
+  - find_text               : scroll a visible substring into view
+  - get_dropdown_options    : list <select>/role=listbox options
+  - select_dropdown         : select an option by visible text or value
+  - send_keys               : keyboard events (Tab, Enter, etc.)
+  - go_back                 : history.back()
+  - evaluate_js             : escape hatch — run arbitrary JS
+
+Tools that need access to the agent's LLM or file-system root can't be
+plain @tool functions (which only get `session`). They're constructed
+in `make_extra_tools(agent)` so they capture `agent` as a closure.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import re
+import tempfile
+import uuid
+from typing import Any
+
+from browser_use_rs.tools import tool
+
+
+# ---------------------------------------------------------------------------
+# Stateless tools (don't need agent reference) — module-level @tool
+# ---------------------------------------------------------------------------
+
+@tool
+async def search_page(session, pattern: str, max_results: int = 10) -> str:
+    """Search the current page text for a regex pattern. Returns matching
+    lines with their character offsets. Zero LLM calls.
+
+    Use this for "is X on this page" / "find the section about Y" without
+    paying for a full page_text + reasoning round.
+
+    Args:
+        pattern: Regex (Python flavor). Use simple substrings if unsure.
+        max_results: Cap on returned matches. Default 10.
+    """
+    try:
+        rx = re.compile(pattern, re.IGNORECASE | re.MULTILINE)
+    except re.error as e:
+        return f"invalid regex: {e}"
+    text = await session.page_text(50000)
+    if not text:
+        return "(empty page)"
+    matches: list[str] = []
+    for m in rx.finditer(text):
+        if len(matches) >= max_results:
+            break
+        start = max(0, m.start() - 60)
+        end = min(len(text), m.end() + 60)
+        excerpt = text[start:end].replace("\n", " ")
+        matches.append(f"@{m.start()}: …{excerpt}…")
+    if not matches:
+        return f"(no matches for {pattern!r})"
+    return "\n".join(matches)
+
+
+@tool
+async def find_elements(
+    session, selector: str, attributes: str = "", limit: int = 20
+) -> str:
+    """Query the page by CSS selector. Returns matched elements as
+    `<tag attr1="v1" ...>text</tag>` lines.
+
+    Use to enumerate things the indexed snapshot doesn't show — e.g.
+    `find_elements("article h2")` for headlines, or
+    `find_elements(".price", "data-product-id")` for prices with their
+    product IDs.
+
+    Args:
+        selector: CSS selector string (`.price`, `article h2`, `[data-x]`).
+        attributes: Comma-separated attribute names to extract per
+            element (e.g. `"href,title"`). Empty = just text.
+        limit: Cap on results. Default 20.
+    """
+    attrs_list = [a.strip() for a in attributes.split(",") if a.strip()]
+    js = (
+        "(() => {"
+        f" const sel = {json.dumps(selector)};"
+        f" const attrs = {json.dumps(attrs_list)};"
+        f" const lim = {int(limit)};"
+        " const out = [];"
+        " try {"
+        "   const els = document.querySelectorAll(sel);"
+        "   for (let i = 0; i < els.length && out.length < lim; i++) {"
+        "     const el = els[i];"
+        "     const r = el.getBoundingClientRect();"
+        "     if (r.width < 1 || r.height < 1) continue;"
+        "     const text = (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 200);"
+        "     const a = {};"
+        "     for (const k of attrs) { const v = el.getAttribute(k); if (v != null) a[k] = String(v).slice(0, 200); }"
+        "     out.push({tag: el.tagName.toLowerCase(), text, attrs: a});"
+        "   }"
+        " } catch(e) { return JSON.stringify({error: String(e)}); }"
+        " return JSON.stringify({matches: out});"
+        "})()"
+    )
+    raw = await session.evaluate(js)
+    try:
+        data = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        return f"(unparseable result: {raw[:200]})"
+    if "error" in data:
+        return f"(query error: {data['error']})"
+    matches = data.get("matches", [])
+    if not matches:
+        return f"(no elements match {selector!r})"
+    lines = []
+    for m in matches:
+        attr_str = " ".join(
+            f'{k}="{v}"' for k, v in (m.get("attrs") or {}).items()
+        )
+        prefix = f"<{m['tag']}"
+        if attr_str:
+            prefix += " " + attr_str
+        text = m.get("text") or ""
+        lines.append(f"{prefix}>{text}</{m['tag']}>")
+    return "\n".join(lines)
+
+
+@tool
+async def find_text(session, text: str) -> str:
+    """Scroll the page so a visible occurrence of `text` is in view.
+    Returns the new scroll position or "(text not found)" if not present.
+
+    Use when you know a word or phrase appears on the page but it's
+    above/below the fold and you need to read its surroundings.
+
+    Args:
+        text: Substring to locate (case-insensitive).
+    """
+    needle = text.lower()
+    js = (
+        "(() => {"
+        f" const needle = {json.dumps(needle)};"
+        " const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);"
+        " let node;"
+        " while ((node = walker.nextNode())) {"
+        "   const v = (node.nodeValue || '').toLowerCase();"
+        "   if (v.includes(needle)) {"
+        "     const p = node.parentElement;"
+        "     if (p) { p.scrollIntoView({block: 'center'}); return JSON.stringify({found: true, y: window.scrollY}); }"
+        "   }"
+        " }"
+        " return JSON.stringify({found: false});"
+        "})()"
+    )
+    raw = await session.evaluate(js)
+    try:
+        data = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        return f"(unparseable: {raw[:120]})"
+    if data.get("found"):
+        return f"scrolled to {text!r} at y={data.get('y', '?')}"
+    return "(text not found)"
+
+
+@tool
+async def get_dropdown_options(session, index: int) -> str:
+    """List the options of a `<select>` or `[role=listbox]` element by
+    its [N] index from the most recent dom_snapshot. Returns one
+    `value | label` line per option.
+
+    Args:
+        index: The [N] index of the dropdown element.
+    """
+    js = (
+        "(() => {"
+        f" const idx = {int(index)};"
+        " const el = document.querySelector(`[data-bu-idx=\"${idx}\"]`);"
+        " if (!el) return JSON.stringify({error: 'no element with index'});"
+        " const tag = el.tagName.toLowerCase();"
+        " const out = [];"
+        " if (tag === 'select') {"
+        "   for (const o of el.options) out.push({value: o.value, label: o.text});"
+        " } else {"
+        "   for (const o of el.querySelectorAll('[role=\"option\"], li, .option')) {"
+        "     const t = (o.innerText || o.textContent || '').replace(/\\s+/g, ' ').trim();"
+        "     if (t) out.push({value: t, label: t});"
+        "     if (out.length >= 100) break;"
+        "   }"
+        " }"
+        " return JSON.stringify({tag, options: out});"
+        "})()"
+    )
+    raw = await session.evaluate(js)
+    try:
+        data = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        return f"(unparseable: {raw[:120]})"
+    if "error" in data:
+        return f"(error: {data['error']})"
+    options = data.get("options", [])
+    if not options:
+        return f"(no options on [{index}] — element may not be a dropdown)"
+    lines = [f"{o['value']} | {o['label']}" for o in options[:200]]
+    return f"<{data.get('tag','?')}> options:\n" + "\n".join(lines)
+
+
+@tool
+async def select_dropdown(session, index: int, value: str) -> str:
+    """Select an option in a `<select>` element by its visible label or
+    value attribute. For ARIA listboxes, simulates a click on the option
+    matching the text.
+
+    Args:
+        index: The [N] index of the dropdown element.
+        value: The visible label (preferred) or the option's value attr.
+    """
+    js = (
+        "(() => {"
+        f" const idx = {int(index)};"
+        f" const want = {json.dumps(value)};"
+        " const el = document.querySelector(`[data-bu-idx=\"${idx}\"]`);"
+        " if (!el) return JSON.stringify({error: 'no element with index'});"
+        " const tag = el.tagName.toLowerCase();"
+        " if (tag === 'select') {"
+        "   for (const o of el.options) {"
+        "     if (o.text === want || o.value === want) {"
+        "       el.value = o.value;"
+        "       el.dispatchEvent(new Event('change', {bubbles: true}));"
+        "       el.dispatchEvent(new Event('input', {bubbles: true}));"
+        "       return JSON.stringify({ok: true, selected: o.text});"
+        "     }"
+        "   }"
+        "   return JSON.stringify({error: `no option matching ${want}`});"
+        " } else {"
+        "   for (const o of el.querySelectorAll('[role=\"option\"], li, .option')) {"
+        "     const t = (o.innerText || o.textContent || '').replace(/\\s+/g, ' ').trim();"
+        "     if (t === want) { o.click(); return JSON.stringify({ok: true, selected: t}); }"
+        "   }"
+        "   return JSON.stringify({error: `no listbox option matching ${want}`});"
+        " }"
+        "})()"
+    )
+    raw = await session.evaluate(js)
+    try:
+        data = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        return f"(unparseable: {raw[:120]})"
+    if "error" in data:
+        return f"(error: {data['error']})"
+    return f"selected: {data.get('selected', value)}"
+
+
+@tool
+async def send_keys(session, keys: str) -> str:
+    """Send a sequence of keyboard keys to the focused element.
+    Common keys: Enter, Tab, Escape, ArrowUp/Down/Left/Right, Backspace,
+    Delete, Home, End, PageUp, PageDown. Or comma-separated combos like
+    "Control+a" / "Meta+v".
+
+    Args:
+        keys: Single key name or `Modifier+Key` combo.
+    """
+    js = (
+        "(() => {"
+        f" const keys = {json.dumps(keys)};"
+        " const target = document.activeElement || document.body;"
+        " const parts = keys.split('+').map(s => s.trim());"
+        " const key = parts[parts.length - 1];"
+        " const mods = parts.slice(0, -1).map(m => m.toLowerCase());"
+        " const init = {key, bubbles: true, cancelable: true};"
+        " for (const m of mods) {"
+        "   if (m === 'control' || m === 'ctrl') init.ctrlKey = true;"
+        "   else if (m === 'shift') init.shiftKey = true;"
+        "   else if (m === 'alt') init.altKey = true;"
+        "   else if (m === 'meta' || m === 'cmd') init.metaKey = true;"
+        " }"
+        " target.dispatchEvent(new KeyboardEvent('keydown', init));"
+        " target.dispatchEvent(new KeyboardEvent('keypress', init));"
+        " target.dispatchEvent(new KeyboardEvent('keyup', init));"
+        " return JSON.stringify({ok: true, key, mods});"
+        "})()"
+    )
+    raw = await session.evaluate(js)
+    return f"sent {keys}"
+
+
+@tool
+async def go_back(session) -> str:
+    """Navigate the browser history back one step. Equivalent to the
+    browser's back button."""
+    await session.evaluate("(() => { history.back(); return ''; })()")
+    return "navigated back"
+
+
+@tool
+async def evaluate_js(session, expression: str) -> str:
+    """Execute an arbitrary JavaScript expression in the page context.
+    Returns the JSON-stringified result.
+
+    Use sparingly — prefer `find_elements` / `search_page` /
+    `get_dropdown_options` when those fit. This is the escape hatch for
+    custom DOM queries (shadow DOM traversal, computed style reads,
+    custom widgets) that the structured tools can't reach.
+
+    Args:
+        expression: A JS expression. Can be wrapped in `(() => {...})()`
+            for multi-statement bodies.
+    """
+    raw = await session.evaluate(expression)
+    if not raw:
+        return "(no result)"
+    return raw[:5000] + ("…" if len(raw) > 5000 else "")
+
+
+# ---------------------------------------------------------------------------
+# Stateful tools — capture the agent in a closure (extract uses LLM,
+# file tools share a sandboxed dir per-agent run).
+# ---------------------------------------------------------------------------
+
+def make_extra_tools(agent: Any) -> list:
+    """Build agent-aware tools that need the LLM or a file-system root.
+    Returns a list of @tool-decorated callables to merge with BROWSER_TOOLS.
+    """
+
+    # Per-agent sandbox directory — agent file tools may only read/write
+    # inside this dir, never outside it. UUID prevents collisions when
+    # multiple agents run concurrently.
+    if not hasattr(agent, "_file_sandbox") or not agent._file_sandbox:
+        sandbox = os.path.join(
+            tempfile.gettempdir(),
+            "browser-use-rs-files",
+            uuid.uuid4().hex[:12],
+        )
+        os.makedirs(sandbox, exist_ok=True)
+        agent._file_sandbox = sandbox
+    sandbox = agent._file_sandbox
+
+    def _resolve(path: str) -> str | None:
+        # Disallow escape via .. or absolute path. Always relative to
+        # sandbox.
+        clean = path.lstrip("/").replace("..", "").strip()
+        if not clean:
+            return None
+        full = os.path.join(sandbox, clean)
+        # Defense in depth — make sure the resolved path stays inside.
+        if not os.path.realpath(full).startswith(os.path.realpath(sandbox)):
+            return None
+        return full
+
+    @tool
+    async def read_file(session, path: str) -> str:
+        """Read a file from the agent's sandbox directory. Use to recall
+        notes, partial extractions, or todo items written earlier in the
+        run.
+
+        Args:
+            path: Relative path in the agent sandbox (e.g. "notes.md").
+        """
+        full = _resolve(path)
+        if not full or not os.path.isfile(full):
+            return f"(no such file: {path})"
+        try:
+            with open(full, "r", encoding="utf-8") as f:
+                return f.read()[:50000]
+        except Exception as e:
+            return f"(read error: {e})"
+
+    @tool
+    async def write_file(session, path: str, content: str) -> str:
+        """Write content to a file in the agent's sandbox. Overwrites
+        existing files. Use for storing notes, partial extractions
+        (e.g. when a long task needs to assemble data from many pages),
+        or maintaining a `todo.md` checklist.
+
+        Args:
+            path: Relative path (e.g. "notes.md", "extracted/page1.json").
+            content: File content (UTF-8 text).
+        """
+        full = _resolve(path)
+        if not full:
+            return f"(invalid path: {path})"
+        try:
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "w", encoding="utf-8") as f:
+                f.write(content[:200000])
+            return f"wrote {len(content)} chars to {path}"
+        except Exception as e:
+            return f"(write error: {e})"
+
+    @tool
+    async def replace_file_str(
+        session, path: str, old: str, new: str
+    ) -> str:
+        """Replace all occurrences of `old` with `new` in a sandboxed
+        file. Use to update a `todo.md` checklist (e.g. swap `[ ]` →
+        `[x]` on completed items) without rewriting the whole file.
+
+        Args:
+            path: Relative path of the file to modify.
+            old: Substring to find (literal, not regex).
+            new: Replacement string.
+        """
+        full = _resolve(path)
+        if not full or not os.path.isfile(full):
+            return f"(no such file: {path})"
+        try:
+            with open(full, "r", encoding="utf-8") as f:
+                data = f.read()
+            count = data.count(old)
+            if count == 0:
+                return f"(no occurrences of {old!r} in {path})"
+            data = data.replace(old, new)
+            with open(full, "w", encoding="utf-8") as f:
+                f.write(data)
+            return f"replaced {count} occurrence(s) in {path}"
+        except Exception as e:
+            return f"(replace error: {e})"
+
+    @tool
+    async def list_files(session) -> str:
+        """List all files currently in the agent's sandbox directory."""
+        out: list[str] = []
+        for root, _dirs, files in os.walk(sandbox):
+            rel_root = os.path.relpath(root, sandbox)
+            for f in files:
+                p = f if rel_root == "." else os.path.join(rel_root, f)
+                out.append(p)
+        if not out:
+            return "(sandbox empty)"
+        return "\n".join(sorted(out))
+
+    @tool
+    async def extract_structured_data(
+        session, query: str, max_chars: int = 30000
+    ) -> str:
+        """Extract specific information from the current page using an
+        LLM-powered query.
+
+        This is the flagship READ tool. The agent's own LLM is asked to
+        find the answer to `query` inside the page's text — much more
+        reliable than dumping `page_text` and reasoning over it manually.
+        Use for: extracting specific values (prices, names, dates),
+        listing items matching a criterion ("top 3 articles"), summarizing
+        a section, or answering a question about the page.
+
+        Args:
+            query: What to extract. Be specific — e.g. "title and price
+                of the top 3 products" beats "tell me about products".
+            max_chars: Max page text to feed the extractor. Default
+                30000. Larger = more context but slower / costlier.
+        """
+        # Use page_text — faster than the full DOM snapshot serialization
+        # and gives the extractor LLM raw rendered text.
+        page = await session.page_text(max_chars)
+        if not page or not page.strip():
+            return "(page is empty — cannot extract)"
+        url = ""
+        try:
+            url = await session.current_url()
+        except Exception:
+            pass
+
+        extraction_prompt = (
+            "You are an expert page-content extractor. Given a page's "
+            "visible text and a query, return ONLY the answer to the "
+            "query — no preamble, no explanation, no markdown formatting "
+            "unless the answer requires structure. If the page does not "
+            "contain the answer, reply exactly: NOT FOUND.\n\n"
+            f"PAGE URL: {url}\n\n"
+            f"QUERY: {query}\n\n"
+            f"PAGE TEXT:\n{page}"
+        )
+
+        try:
+            from browser_use_rs.llm.base import UserMessage
+            messages = [UserMessage(content=extraction_prompt)]
+            completion = await asyncio.wait_for(
+                agent.llm.ainvoke(messages, [], system=None),
+                timeout=getattr(agent, "tool_timeout", 60.0),
+            )
+            text = (completion.text or "").strip()
+            if not text:
+                return "(extractor returned empty response)"
+            return text
+        except asyncio.TimeoutError:
+            return "(extractor timed out — try a narrower query)"
+        except Exception as e:
+            return f"(extractor failed: {type(e).__name__}: {e})"
+
+    return [
+        extract_structured_data,
+        read_file,
+        write_file,
+        replace_file_str,
+        list_files,
+    ]
+
+
+# Stateless tools as a separate list — agent merges these with the
+# stateful ones via make_extra_tools.
+EXTRA_STATELESS_TOOLS = [
+    search_page,
+    find_elements,
+    find_text,
+    get_dropdown_options,
+    select_dropdown,
+    send_keys,
+    go_back,
+    evaluate_js,
+]

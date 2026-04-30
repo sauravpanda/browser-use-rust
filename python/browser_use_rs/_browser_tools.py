@@ -378,3 +378,11 @@ BROWSER_TOOLS = [
     grep_scratchpad,
     read_scratchpad,
 ]
+
+# Extended stateless tools (v0.6.0). Mirror upstream browser_use's
+# search_page / find_elements / find_text / dropdown handling /
+# send_keys / go_back / evaluate. Agent-aware tools (extract_structured_data,
+# file system) are constructed per-agent in _extra_tools.make_extra_tools.
+from browser_use_rs._extra_tools import EXTRA_STATELESS_TOOLS  # noqa: E402
+
+BROWSER_TOOLS.extend(EXTRA_STATELESS_TOOLS)
