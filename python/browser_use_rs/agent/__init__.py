@@ -345,6 +345,12 @@ class Agent:
         # with selectors instead of bare indices, so cross-turn
         # references remain meaningful after DOM mutation. v0.5.0.
         self._index_to_selector: dict[int, str] = {}
+        # Previous step's screenshot, base64-encoded. Attached alongside
+        # the current screenshot in _inject_page_state so the LLM can
+        # see the visual delta between turns ("did my last click do
+        # anything?"). None on the first step or whenever vision is off.
+        # v0.5.4.
+        self._prev_screenshot: str | None = None
         # Running collapsed history of older steps. Each entry: a
         # one-line "<step N> <action> → <result-summary>" string.
         self._collapsed_history: list[str] = []
@@ -1344,26 +1350,63 @@ class Agent:
                 lo = min(self._valid_indices)
                 hi = max(self._valid_indices)
                 count = len(self._valid_indices)
+                # Page-state heuristic — mirrors upstream browser_use's
+                # <page_stats> block: tells the agent the page might be
+                # empty / still loading so it picks `wait` / `scroll`
+                # instead of clicking phantom indices. v0.5.4.
+                page_hint = ""
+                if count == 0:
+                    page_hint = (
+                        " Page appears empty — no interactive elements "
+                        "detected. The page may still be loading or "
+                        "blocked by a network error; consider calling "
+                        "`wait_for_navigation` or re-navigating."
+                    )
+                elif count < 5:
+                    page_hint = (
+                        " Very few interactive elements detected — "
+                        "page may still be loading (skeleton placeholders) "
+                        "or behind a cookie/login overlay. Try `scroll`, "
+                        "`wait_for_navigation`, or look for a dismiss/"
+                        "accept button."
+                    )
                 hint = (
                     f"Valid [N] indices on this page: {count} elements "
                     f"in range [{lo}..{hi}]. Use ONLY indices listed "
-                    f"below; do not invent numbers."
+                    f"below; do not invent numbers.{page_hint}"
                 )
                 body = f"{_PAGE_STATE_TAG}\n{hint}\n\n{dom_text}"
             else:
                 body = f"{_PAGE_STATE_TAG}\n{dom_text}"
 
         if self.use_vision and state.screenshot:
-            self._messages.append(
-                UserMessage(
-                    content=[
-                        TextPart(text=body),
-                        ImagePart(data=state.screenshot, media_type="image/png"),
-                    ]
+            # Previous screenshot: when set, attach it BEFORE the current
+            # screenshot with explicit labels. Lets the LLM see the
+            # *delta* from the prior step — was a button I clicked
+            # actually consumed (page changed), or did nothing happen
+            # (still on the same view)? Mirrors upstream browser_use's
+            # AgentMessagePrompt.get_user_message which appends both
+            # `Previous screenshot:` and `Current screenshot:` labels.
+            # v0.5.4.
+            content_parts: list = [TextPart(text=body)]
+            if self._prev_screenshot:
+                content_parts.append(TextPart(text="Previous screenshot:"))
+                content_parts.append(
+                    ImagePart(
+                        data=self._prev_screenshot, media_type="image/png"
+                    )
                 )
+                content_parts.append(TextPart(text="Current screenshot:"))
+            content_parts.append(
+                ImagePart(data=state.screenshot, media_type="image/png")
             )
+            self._messages.append(UserMessage(content=content_parts))
+            # Roll the cache forward for the next step.
+            self._prev_screenshot = state.screenshot
         else:
             self._messages.append(UserMessage(content=body))
+            # Reset the prev cache when vision is off; nothing to compare.
+            self._prev_screenshot = None
 
     # Tools that read state without changing the page — safe to keep
     # running even after a mutating action in the same batch since they
