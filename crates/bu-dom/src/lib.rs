@@ -88,7 +88,10 @@ impl DomState {
     }
 
     /// Render the snapshot as the LLM-facing string:
-    /// `[1]<button id="x">Sign in</button>` per line, plus a header with url/title.
+    /// `[1]<button id="x">Sign in</button>` per line for interactive
+    /// elements, plus `<h2> "Today's News"` style lines for static text
+    /// content (index == 0 sentinel; not clickable). Header with
+    /// url/title. v0.5.7.
     pub fn to_llm_string(&self) -> String {
         let mut out = String::with_capacity(64 * self.elements.len());
         out.push_str(&format!("URL: {}\nTITLE: {}\n", self.url, self.title));
@@ -97,6 +100,14 @@ impl DomState {
             self.viewport.width, self.viewport.height
         ));
         for el in &self.elements {
+            if el.index == 0 {
+                // Static text content — not clickable. Rendered without
+                // a [N] prefix so the LLM doesn't accidentally try to
+                // click it. The agent uses this for extraction context.
+                let escaped = el.text.replace('"', "\\\"");
+                out.push_str(&format!("<{}> \"{}\"\n", el.tag, escaped));
+                continue;
+            }
             out.push_str(&format!("[{}]<{}", el.index, el.tag));
             for (k, v) in &el.attrs {
                 let escaped = v.replace('"', "\\\"");

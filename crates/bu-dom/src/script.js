@@ -5,6 +5,27 @@
         'a', 'button', 'input', 'select', 'textarea'
     ]);
 
+    // Static text containers — non-interactive but carry the page's
+    // actual content. Without these, the agent literally can't see
+    // headlines / paragraphs / list items / table cells, which is the
+    // primary failure mode on extract-style WebBench tasks. Mirrors
+    // upstream browser_use's serializer which emits text nodes
+    // interleaved with interactive elements (see
+    // browser_use/dom/serializer/serializer.py:1049+). v0.5.7.
+    const STATIC_TEXT_TAGS = new Set([
+        'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+        'p', 'li', 'td', 'th', 'dt', 'dd',
+        'blockquote', 'figcaption', 'time', 'label',
+        'span', 'div',  // catch-all for sites that put content in generic containers
+    ]);
+
+    // Don't bloat the snapshot with the big block-level containers
+    // (article/main/section/div) — their text gets covered by the
+    // narrower descendants (h1/p/li/...) and including them too would
+    // duplicate every paragraph at multiple depths.
+    const STATIC_TEXT_BLOCK_THRESHOLD = 2;
+    const STATIC_TEXT_MAX_LEN = 280;
+
     const INTERACTIVE_ROLES = new Set([
         'button', 'link', 'checkbox', 'radio', 'menuitem', 'menuitemcheckbox',
         'menuitemradio', 'option', 'switch', 'tab', 'treeitem', 'combobox',
@@ -145,8 +166,22 @@
         return el.tagName.toLowerCase();
     };
 
+    // Direct text content of an element, NOT including descendants.
+    // Used for static text emission so we don't duplicate text from
+    // child <h1> when their parent <article> is also walked.
+    const directText = (el) => {
+        let s = '';
+        for (const n of el.childNodes) {
+            if (n.nodeType === 3) s += n.nodeValue;  // TEXT_NODE
+        }
+        return s.replace(/\s+/g, ' ').trim();
+    };
+
     const elements = [];
     let idx = 1;
+    // Track elements we've already emitted (interactive OR static) so
+    // we don't double-count when their containers are walked later.
+    const seen = new WeakSet();
 
     // Walk a document collecting interactive elements. `(offsetX, offsetY)`
     // shifts bbox coordinates from the document's local viewport into the
@@ -162,10 +197,40 @@
             const style = getComputedStyle(el);
             const intrinsic = isIntrinsic(el);
             const cursorOnly = !intrinsic && style.cursor === 'pointer';
+            const tag = el.tagName.toLowerCase();
+            const isStaticText = STATIC_TEXT_TAGS.has(tag);
 
-            if (!intrinsic && !cursorOnly) continue;
+            if (!intrinsic && !cursorOnly && !isStaticText) continue;
             if (cursorOnly && hasIntrinsicAncestor(el)) continue;
             if (!isVisibleInOwnerWindow(el, style, doc)) continue;
+
+            // Static text path — emit non-interactive content so the
+            // agent can extract from it (headlines, prices, table cells)
+            // without needing a separate page_text call.
+            if (!intrinsic && !cursorOnly && isStaticText) {
+                if (seen.has(el)) continue;
+                // Skip if inside an interactive element (already shown).
+                if (hasIntrinsicAncestor(el)) continue;
+                // Use direct text content only, not descendants — avoids
+                // every <p> in an <article> showing the article's full
+                // text repeatedly.
+                const txt = directText(el);
+                if (!txt || txt.length < STATIC_TEXT_BLOCK_THRESHOLD) continue;
+                const trimmed = txt.length > STATIC_TEXT_MAX_LEN
+                    ? txt.slice(0, STATIC_TEXT_MAX_LEN) + '…'
+                    : txt;
+                seen.add(el);
+                const r = el.getBoundingClientRect();
+                elements.push({
+                    index: 0,  // sentinel: non-interactive
+                    tag: tag,
+                    text: trimmed,
+                    attrs: {},
+                    selector: '',
+                    bbox: { x: r.x + offsetX, y: r.y + offsetY, w: r.width, h: r.height }
+                });
+                continue;
+            }
 
             const r = el.getBoundingClientRect();
             if (!isTopAtCenter(el, r, doc)) continue;
@@ -175,6 +240,7 @@
             if (!text && Object.keys(attrs).length === 0) continue;
 
             el.setAttribute('data-bu-idx', String(idx));
+            seen.add(el);
             elements.push({
                 index: idx,
                 tag: el.tagName.toLowerCase(),

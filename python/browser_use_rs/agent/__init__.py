@@ -1148,7 +1148,15 @@ class Agent:
         async def _safe_dom() -> tuple[str, dict[int, str]]:
             try:
                 snap = await self.session.dom_snapshot()
-                idx_to_sel = {e.index: e.selector for e in snap.elements}
+                # Skip index=0 entries — those are static text content
+                # (h1/p/li/td/etc.) emitted for extraction context, not
+                # interactive elements. Including them in the selector
+                # map would let the agent attempt to click them. v0.5.7.
+                idx_to_sel = {
+                    e.index: e.selector
+                    for e in snap.elements
+                    if e.index != 0
+                }
                 return snap.to_llm_string(), idx_to_sel
             except Exception:
                 # No active page yet (very first step before
