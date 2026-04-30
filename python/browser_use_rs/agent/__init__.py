@@ -71,6 +71,11 @@ Strategy:
 - Extract content with `get_text` / `page_text` / `get_links` rather than
   relying solely on the snapshot — long pages render only above-the-fold
   elements in the snapshot.
+- When a tool result is followed by a `[SCRATCHPAD]` banner with a file
+  path, the full content was too long to inline. Use `grep_scratchpad`
+  with a specific pattern (a phrase you expect to find, a CSS class, a
+  date) to locate the answer cheaply, or `read_scratchpad` with offset
+  to page through it. Re-running `page_text` will just truncate again.
 - When the task is complete, respond with a final answer in plain text. Do
   NOT call any further tools — your text turn is the answer.
 
@@ -182,6 +187,19 @@ class Agent:
         # extracts something close-but-wrong. Set False to disable
         # for latency-sensitive consumers.
         self_validate: bool = True,
+        # Skip self-validation if the agent finished in fewer than this
+        # many turns. Short tasks (2-4 steps: navigate, click, extract,
+        # done) don't have the off-by-nuance failure mode, so the +1
+        # validation turn is wasted overhead. v0.4.16 default.
+        self_validate_min_steps: int = 5,
+        # Tool-result scratchpad — when True (default), tool outputs
+        # exceeding `scratchpad_max_bytes` or `scratchpad_max_lines`
+        # are spilled to a per-agent file and the LLM gets a head+tail
+        # preview with a recovery hint pointing at the file. See
+        # `python/browser_use_rs/_scratchpad.py`.
+        scratchpad_enabled: bool = True,
+        scratchpad_max_bytes: int = 32 * 1024,
+        scratchpad_max_lines: int = 1000,
         use_vision: bool = True,
         sensitive_data: dict[str, str] | None = None,
         system_prompt: str | None = None,
@@ -223,6 +241,14 @@ class Agent:
         self.max_consecutive_errors = max_consecutive_errors
         self.tool_timeout = tool_timeout
         self.self_validate = self_validate
+        self.self_validate_min_steps = self_validate_min_steps
+        self.scratchpad_enabled = scratchpad_enabled
+        self.scratchpad_max_bytes = scratchpad_max_bytes
+        self.scratchpad_max_lines = scratchpad_max_lines
+        # Per-agent UUID stamped on scratchpad files so simultaneous
+        # eval runs don't clobber each other.
+        from browser_use_rs._scratchpad import new_agent_id
+        self._scratchpad_id = new_agent_id()
         self.use_vision = use_vision
         self.sensitive_data: dict[str, str] = sensitive_data or {}
         if override_system_message is not None:
@@ -471,6 +497,7 @@ class Agent:
                     and not self._validation_step_used
                     and done_text
                     and step_n < max_steps  # don't validate on the very last step
+                    and step_n >= self.self_validate_min_steps  # skip on short tasks
                 ):
                     logger.info(
                         "agent: VALIDATION_CHECK injected before "
@@ -608,6 +635,7 @@ class Agent:
                     self.self_validate
                     and not self._validation_step_used
                     and step_n < max_steps
+                    and step_n >= self.self_validate_min_steps
                 ):
                     logger.info(
                         "agent: VALIDATION_CHECK injected before "
@@ -1133,6 +1161,38 @@ class Agent:
 
         # Map return value into ContentParts the LLM layer understands.
         content_parts, summary_text = _format_tool_return(raw, self.sensitive_data)
+
+        # Long-output spill: if the formatted text is large enough to
+        # bloat the conversation, write the full content to a scratchpad
+        # file and replace what the LLM sees with a head+tail preview
+        # plus a recovery hint pointing at the file. The LLM can drill
+        # in via grep_scratchpad / read_scratchpad on the next turn
+        # without re-running the original tool. Image-only returns
+        # (single ImagePart, no text) are passed through unchanged.
+        if (
+            self.scratchpad_enabled
+            and summary_text
+            and len(content_parts) == 1
+            and isinstance(content_parts[0], TextPart)
+        ):
+            from browser_use_rs._scratchpad import maybe_spill
+
+            spilled = maybe_spill(
+                summary_text,
+                agent_id=self._scratchpad_id,
+                step=self.state.n_steps,
+                tool_name=tc.name,
+                max_bytes=self.scratchpad_max_bytes,
+                max_lines=self.scratchpad_max_lines,
+            )
+            if spilled is not None:
+                logger.info(
+                    "agent: scratchpad spill %s -> %s (%d lines / %d bytes)",
+                    tc.name, spilled.path, spilled.full_lines, spilled.full_bytes,
+                )
+                content_parts = [TextPart(text=spilled.preview)]
+                summary_text = spilled.preview
+
         return (
             ActionResult(extracted_content=summary_text),
             ToolResultMessage(

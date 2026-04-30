@@ -311,6 +311,39 @@ async def list_downloads(session) -> str:
     return "\n".join(lines)
 
 
+@tool
+async def grep_scratchpad(session, path: str, pattern: str) -> str:
+    """Search a scratchpad file (full text saved when a tool result was too
+    long to inline) for matching lines. Use this when an earlier tool call
+    returned a `[SCRATCHPAD]` banner pointing at a file path — pass that
+    path here with a regex or substring pattern to drill into the content
+    without re-running the original tool.
+
+    Args:
+        path: Absolute path to the scratchpad file (from a prior `[SCRATCHPAD]` banner).
+        pattern: Python regex (preferred) or substring to search for.
+    """
+    from browser_use_rs._scratchpad import grep as _grep
+
+    return _grep(path, pattern)
+
+
+@tool
+async def read_scratchpad(session, path: str, offset: int = 1, limit: int = 100) -> str:
+    """Read a chunk of a scratchpad file by line offset. Use when grep
+    isn't precise enough — e.g. to see the next page of a long article
+    after locating an interesting region with grep_scratchpad.
+
+    Args:
+        path: Absolute path to the scratchpad file.
+        offset: 1-based starting line number. Default 1.
+        limit: Number of lines to return. Default 100.
+    """
+    from browser_use_rs._scratchpad import read_offset
+
+    return read_offset(path, offset=offset, limit=limit)
+
+
 # Note: `dom_snapshot` is intentionally NOT in the default tool set.
 # Agent._loop auto-injects a fresh DOM snapshot at the start of every turn
 # via _inject_page_state(), so the LLM already has the page state without
@@ -340,4 +373,8 @@ BROWSER_TOOLS = [
     list_downloads,
     get_cookies,
     clear_cookies,
+    # Scratchpad recovery — used when a prior tool result spilled to disk
+    # because it exceeded the in-context size threshold. See _scratchpad.py.
+    grep_scratchpad,
+    read_scratchpad,
 ]
