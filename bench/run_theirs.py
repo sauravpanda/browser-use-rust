@@ -61,7 +61,20 @@ async def main() -> None:
     t0 = time.monotonic()
     agent = None
     try:
-        agent = Agent(task=task, llm=llm)
+        # Match the eval workflow's actual upstream config so the bench
+        # is comparing like-for-like. Eval invokes upstream browser_use
+        # with `--flash-mode --max-actions-per-step 4 --use-vision
+        # --images-per-step 1`. Without these, upstream runs in its
+        # verbose default mode and our bench overstates our advantage
+        # (we've seen 3× faster locally but slower on eval).
+        agent = Agent(
+            task=task,
+            llm=llm,
+            flash_mode=True,
+            max_actions_per_step=4,
+            use_vision=True,
+            images_per_step=1,
+        )
         history = await agent.run(max_steps=max_steps)
         answer = history.final_result() or ""
         completed = bool(history.is_done())

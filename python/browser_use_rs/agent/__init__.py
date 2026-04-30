@@ -62,6 +62,21 @@ are skipped because their `[N]` indices were valid only for the page
 you saw at the start of the turn. This means you can plan 2-4 actions
 ahead and have them run without spending an extra LLM turn each.
 
+CRITICAL: Do NOT batch `type_text` followed by `click` (or any indexed
+action). Typing nearly always mutates the DOM — autocomplete dropdowns
+appear, form-validation messages shift elements, suggestion panels open.
+Your `[N]` index for the click was valid BEFORE you typed; after typing,
+the same `[N]` may point to a different element or no element at all.
+The runtime will skip the click and you'll waste a turn. Always:
+  - Type alone (single tool call), wait for the next turn's snapshot,
+    then click the up-to-date index.
+  - Or type and submit the form via Enter if the input supports it
+    (some sites do, in which case no click is needed).
+Safe batches: `[scroll, scroll, page_text]`, `[get_text, get_text]`,
+`[scroll_to_bottom, page_text]`. Risky batches: anything ending in a
+`[N]`-indexed call after a `type_text`, `click`, `upload_file`, or
+`navigate`.
+
 Strategy:
 - Read the page snapshot, then act. After clicks/navigates the next turn's
   snapshot reflects the new page; indices are not stable across turns.
@@ -180,13 +195,13 @@ class Agent:
         # one stuck call can consume the eval framework's whole stage
         # timeout and kill the run with a bare TimeoutError.
         tool_timeout: float = 30.0,
-        # Self-validation: when True (default), inject a one-shot
+        # Self-validation: when True, inject a one-shot
         # "re-check before finalizing" prompt the first time the LLM
-        # tries to finish. Adds ~1 LLM call per task; closes the
-        # self-report ↔ judge-score gap on tasks where the agent
-        # extracts something close-but-wrong. Set False to disable
-        # for latency-sensitive consumers.
-        self_validate: bool = True,
+        # tries to finish. v0.4.15 default; flipped to OFF in v0.4.19
+        # because the +1 turn/task it costs (~10% step inflation) had
+        # no measured benefit on judge score in the data we collected.
+        # Consumers can opt back in if their use case shows a benefit.
+        self_validate: bool = False,
         # Skip self-validation if the agent finished in fewer than this
         # many turns. Short tasks (2-4 steps: navigate, click, extract,
         # done) don't have the off-by-nuance failure mode, so the +1
