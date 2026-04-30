@@ -80,35 +80,27 @@ Safe batches: `[scroll, scroll, page_text]`, `[get_text, get_text]`,
 Strategy:
 - Read the page snapshot, then act. After clicks/navigates the next turn's
   snapshot reflects the new page; indices are not stable across turns.
+- After every action, verify the page state changed as expected. If it
+  didn't (same URL, same elements, no new content), pick a different
+  approach instead of repeating the same action.
 - Prefer clicking visible links over navigating to known URLs — that
   verifies the page is in the expected state.
-- When the page is unfamiliar or text is ambiguous, take a screenshot.
 - Extract content with `get_text` / `page_text` / `get_links` rather than
   relying solely on the snapshot — long pages render only above-the-fold
   elements in the snapshot.
 - When a tool result is followed by a `[SCRATCHPAD]` banner with a file
   path, the full content was too long to inline. Use `grep_scratchpad`
-  with a specific pattern (a phrase you expect to find, a CSS class, a
-  date) to locate the answer cheaply, or `read_scratchpad` with offset
-  to page through it. Re-running `page_text` will just truncate again.
+  with a specific pattern, or `read_scratchpad` with offset to page
+  through it. Re-running `page_text` will just truncate again.
 - When the task is complete, respond with a final answer in plain text. Do
   NOT call any further tools — your text turn is the answer.
 
-Overlays: many sites open with a cookie consent / age gate / region
-selector / newsletter / "log in to continue" / "this site uses cookies"
-modal that covers the actual content. If the page snapshot is dominated
-by such an overlay, your FIRST action must be to dismiss it before
-extracting anything. Look for buttons matching: Accept, Agree, Continue,
-OK, Got it, I agree, Allow all, Allow, Dismiss, Close, Skip, Maybe
-later, No thanks, X (close icons). Do NOT conclude "task impossible" on
+Overlays: cookie consents / age gates / newsletter modals / "log in to
+continue" overlays often cover the actual content. If the snapshot is
+dominated by such an overlay, your FIRST action must be to dismiss it
+(Accept, Agree, Continue, OK, Got it, Allow, Dismiss, Close, Skip,
+Maybe later, No thanks, X). Do NOT conclude "task impossible" on
 your first turn — the real content is almost always one click away.
-
-Stamina: keep going until the task is fully solved. Do NOT end your
-turn with plain text describing what you would do — ACTUALLY make the
-tool call. A turn with no tool calls is treated as your FINAL ANSWER;
-only end your turn that way when you've genuinely completed the task
-or hit a hard blocker. When unsure, prefer one more concrete action
-(scroll, read, click) over giving up.
 
 When calling tools: never invent values for required arguments. If the
 snapshot doesn't show what you need (no [N] for the element, no text
@@ -197,16 +189,20 @@ class Agent:
         tool_timeout: float = 30.0,
         # Self-validation: when True, inject a one-shot
         # "re-check before finalizing" prompt the first time the LLM
-        # tries to finish. v0.4.15 default; flipped to OFF in v0.4.19
-        # because the +1 turn/task it costs (~10% step inflation) had
-        # no measured benefit on judge score in the data we collected.
-        # Consumers can opt back in if their use case shows a benefit.
-        self_validate: bool = False,
-        # Skip self-validation if the agent finished in fewer than this
-        # many turns. Short tasks (2-4 steps: navigate, click, extract,
-        # done) don't have the off-by-nuance failure mode, so the +1
-        # validation turn is wasted overhead. v0.4.16 default.
-        self_validate_min_steps: int = 5,
+        # tries to finish. v0.4.15 default ON; flipped OFF in v0.4.19
+        # based on a (later disproven) measurement. v0.4.15 still holds
+        # the judge-score peak of all our versions (59% vs 53% on the
+        # later versions that have it OFF), and the diff is exactly the
+        # 6pp regression v0.4.16+ introduced. Re-enabled by default in
+        # v0.5.3. Consumers can still opt out if their use case shows
+        # a different trade-off.
+        self_validate: bool = True,
+        # Skip self-validation only on tasks finished in <= 2 steps —
+        # the trivially-quick "navigate + done" cases that genuinely
+        # can't be wrong. v0.4.16 had this at 5 which skipped legitimate
+        # 3-4 step tasks where validation matters; we lower it back so
+        # validation kicks in for anything non-trivial. v0.5.3.
+        self_validate_min_steps: int = 3,
         # Tool-result scratchpad — when True (default), tool outputs
         # exceeding `scratchpad_max_bytes` or `scratchpad_max_lines`
         # are spilled to a per-agent file and the LLM gets a head+tail
