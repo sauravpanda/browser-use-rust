@@ -1381,11 +1381,43 @@ class Agent:
         # Bookkeeping: build a stable signature for the *set* of tool
         # calls in this turn (name+args, JSON-sorted), and track the
         # tool names emitted per turn for the no-extract heuristic.
+        #
+        # v0.8.5 — strip volatile element-locator keys (`index`,
+        # `selector`) from args before hashing the sig. The DOM walker
+        # re-numbers indices each step, so `click(index=5) → scroll →
+        # click(index=12) → scroll → click(index=23)` is the *same
+        # logical loop* (clicking through a list, scrolling, clicking
+        # again) but produced three different sigs in v0.8.4 and
+        # earlier — the tight-loop detector never fired. Stripping
+        # `index`/`selector` collapses these into one sig.
+        #
+        # Args left intact: `text`, `url`, `query`, `direction`, etc.
+        # — different values for those reflect *different intent* and
+        # are legitimately different actions. Only the locator-style
+        # args (which point at elements that re-number each turn) get
+        # stripped.
+        _LOOP_VOLATILE_ARG_KEYS = ("index", "selector")
+
+        def _normalize_args_for_sig(args):
+            if not isinstance(args, dict):
+                return args
+            return {
+                k: v for k, v in args.items()
+                if k not in _LOOP_VOLATILE_ARG_KEYS
+            }
+
         try:
             import json as _json
 
             sig_payload = sorted(
-                (tc.name, _json.dumps(tc.args, sort_keys=True, default=str))
+                (
+                    tc.name,
+                    _json.dumps(
+                        _normalize_args_for_sig(tc.args),
+                        sort_keys=True,
+                        default=str,
+                    ),
+                )
                 for tc in tool_calls
             )
             sig = _json.dumps(sig_payload)
