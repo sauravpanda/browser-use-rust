@@ -6,7 +6,7 @@ resolver = "2"
 version = "0.6.5"
 edition = "2021"
 license = "MIT"
-authors = ["browser-use <hello@browser-use.com>"]
+authors = ["Saurav Panda <support@browser-use.com>"]
 repository = "https://github.com/browser-use/browser-use-rs"
 rust-version = "1.80"
 
