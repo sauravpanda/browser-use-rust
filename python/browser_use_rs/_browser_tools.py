@@ -46,13 +46,26 @@ async def click(session, index: int) -> str:
 
 
 @tool
-async def type_text(session, index: int, text: str) -> str:
+async def type_text(session, index: int, text: str, clear: bool = True) -> str:
     """Type text into an input element by its [N] index. The element is focused first.
 
     Args:
         index: The [N] index of the input element.
         text: The text to type.
+        clear: When True (default) clear existing input before typing.
+            Pass False to append. Mirrors upstream's `input` action.
     """
+    if clear:
+        # Best-effort clear: select-all + delete via JS, then type.
+        try:
+            js = (
+                f"(() => {{ const el = document.querySelector(`[data-bu-idx=\"{int(index)}\"]`);"
+                " if (el) { el.value = ''; el.dispatchEvent(new Event('input', {bubbles:true})); }"
+                " return ''; })()"
+            )
+            await session.evaluate(js)
+        except Exception:
+            pass
     await session.type_index(index, text)
     return f"typed into [{index}]"
 
@@ -73,12 +86,32 @@ async def upload_file(session, index: int, path: str) -> str:
 
 
 @tool
-async def scroll(session, dy: float) -> str:
-    """Scroll the page vertically by a relative offset.
+async def scroll(
+    session,
+    dy: float = 0,
+    direction: str = "",
+    pages: float = 0,
+) -> str:
+    """Scroll the page vertically. Three forms:
 
     Args:
-        dy: Pixels to scroll. Positive scrolls down, negative scrolls up.
+        dy: Pixels to scroll. Positive=down, negative=up. Used when
+            non-zero. Original signature.
+        direction: 'up' or 'down' — used when `pages` > 0. Mirrors
+            upstream's `scroll(down=bool, pages=float)` form.
+        pages: Number of viewport-heights to scroll (e.g. 1.0 = one
+            full screen). Combined with `direction`. Mirrors upstream.
     """
+    if pages > 0 and direction in ("up", "down"):
+        # Translate page-based scroll to pixel scroll.
+        try:
+            vh = await session.evaluate("(() => String(window.innerHeight))()")
+            view_h = float(vh) if vh else 800
+        except Exception:
+            view_h = 800
+        delta = view_h * pages * (-1 if direction == "up" else 1)
+        await session.scroll(delta)
+        return f"scrolled {direction} {pages} pages ({delta:.0f}px)"
     await session.scroll(dy)
     return f"scrolled {dy} px"
 
@@ -404,16 +437,18 @@ def _alias(target_tool, alias_name):
 
 _UPSTREAM_NAME_ALIASES = {
     # upstream name -> our tool callable name
-    # All forms the LLM might call based on its training data + the
-    # eval framework's prompt examples. v0.6.5 expanded per codex
-    # audit (input, save_as_pdf, evaluate, dropdown_options, etc.).
+    # v0.7.2 corrections per codex audit:
+    #   - 'search' previously mapped to search_page, but upstream's
+    #     `search` is the web search action. Re-pointed to web_search.
+    #     search_page now reachable via 'search_text'/'find_in_page'.
     "input": "type_text",
     "input_text": "type_text",
     "click_element_by_index": "click",
     "scroll_down": "scroll_to_bottom",
     "scroll_up": "scroll_to_top",
     "wait": "sleep",
-    "search": "search_page",
+    "search": "web_search",  # was search_page — fixed v0.7.2
+    "search_google": "web_search",
     "extract": "extract_structured_data",
     "extract_structured_data_from_page": "extract_structured_data",
     "save_as_pdf": "save_pdf",
@@ -426,11 +461,20 @@ _UPSTREAM_NAME_ALIASES = {
     "history_back": "go_back",
     "screenshot_page": "screenshot",
     "scroll_to_text": "find_text",
-    "find_in_page": "find_text",
+    "find_in_page": "search_page",
     "query_selector_all": "find_elements",
     "css_select": "find_elements",
     "search_text": "search_page",
 }
+
+# Reverse map: alias-or-canonical -> canonical name. Used by guards
+# (_INDEXED_TOOLS, _READ_ONLY_TOOLS) so they apply to any spelling
+# the LLM uses. v0.7.2.
+ALIAS_TO_CANONICAL: dict[str, str] = {}
+for _t in BROWSER_TOOLS:
+    ALIAS_TO_CANONICAL[_t.name] = _t.name  # canonicals map to themselves
+for _alias, _canon in _UPSTREAM_NAME_ALIASES.items():
+    ALIAS_TO_CANONICAL[_alias] = _canon
 
 _by_name = {t.name: t for t in BROWSER_TOOLS}
 for upstream_name, our_name in _UPSTREAM_NAME_ALIASES.items():

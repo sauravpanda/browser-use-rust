@@ -529,6 +529,9 @@ def make_extra_tools(agent: Any) -> list:
         max_chars: int = 30000,
         start_from_char: int = 0,
         output_schema_hint: str = "",
+        extract_links: bool = False,
+        extract_images: bool = False,
+        already_collected: str = "",
     ) -> str:
         """Extract specific information from the current page using an
         LLM-powered query.
@@ -631,17 +634,59 @@ def make_extra_tools(agent: Any) -> list:
                 f"{output_schema_hint.strip()}"
             )
 
+        # Optional augmentation (v0.7.2): pull links/images from the
+        # actual DOM and append. Cheaper than a separate
+        # extract_links/extract_images call when the agent needs the
+        # answer to incorporate them. Mirrors upstream's
+        # extract_links/extract_images flags.
+        extras = ""
+        if extract_links:
+            try:
+                links = await session.get_links()
+                if links:
+                    extras += "\n\nLINKS:\n" + "\n".join(
+                        f"- {(t or '').strip()[:80]} -> {h}"
+                        for t, h in links[:80]
+                    )
+            except Exception:
+                pass
+        if extract_images:
+            try:
+                imgs_js = (
+                    "(() => { const out=[]; for (const img of document.querySelectorAll('img')){"
+                    " const r=img.getBoundingClientRect(); if(r.width<32||r.height<32) continue;"
+                    " const src=img.src||''; if(src.startsWith('data:')||!src) continue;"
+                    " out.push({alt:(img.alt||img.title||'').trim(), src:src.slice(0,200)}); if(out.length>40) break; }"
+                    " return JSON.stringify(out); })()"
+                )
+                imgs_raw = await session.evaluate(imgs_js)
+                imgs_data = json.loads(imgs_raw) if imgs_raw else []
+                if imgs_data:
+                    extras += "\n\nIMAGES:\n" + "\n".join(
+                        f"- {(d.get('alt') or '(no alt)')[:60]} -> {d['src']}"
+                        for d in imgs_data
+                    )
+            except Exception:
+                pass
+
+        already_clause = ""
+        if already_collected and already_collected.strip():
+            already_clause = (
+                f"\n\nITEMS ALREADY COLLECTED (do NOT repeat in your "
+                f"answer; find NEW ones):\n{already_collected.strip()[:2000]}"
+            )
+
         extraction_prompt = (
             "You are an expert page-content extractor. Given a page's "
             "visible text and a query, return ONLY the answer to the "
             "query — no preamble, no explanation, no markdown formatting "
             "unless the answer requires structure. If the page does not "
             "contain the answer, reply exactly: NOT FOUND."
-            + schema_clause + "\n\n"
+            + schema_clause + already_clause + "\n\n"
             f"PAGE URL: {url}\n"
             f"PAGE OFFSET: {start_from_char} chars\n\n"
             f"QUERY: {query}\n\n"
-            f"PAGE TEXT:\n{page}"
+            f"PAGE TEXT:\n{page}{extras}"
         )
 
         try:

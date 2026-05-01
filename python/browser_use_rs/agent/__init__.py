@@ -375,6 +375,26 @@ class Agent:
                 tools.append(t)
         self.tools = tools
         self.tools_by_name: dict[str, Tool] = {t.name: t for t in tools}
+        # Alias-aware guard sets (v0.7.2). Resolve every tool name +
+        # registered alias to its canonical name via ALIAS_TO_CANONICAL,
+        # then include in the guard set if the canonical is in the
+        # base set. Means `input` (alias of type_text) gets indexed-
+        # validation; `extract` (alias of extract_structured_data)
+        # gets read-only treatment; etc.
+        try:
+            from browser_use_rs._browser_tools import ALIAS_TO_CANONICAL
+            self._READ_ONLY_TOOLS = frozenset(
+                name for name, canon in ALIAS_TO_CANONICAL.items()
+                if canon in self._READ_ONLY_CANONICAL
+            ) | self._READ_ONLY_CANONICAL
+            self._INDEXED_TOOLS = frozenset(
+                name for name, canon in ALIAS_TO_CANONICAL.items()
+                if canon in self._INDEXED_CANONICAL
+            ) | self._INDEXED_CANONICAL
+        except ImportError:
+            # Fallback if _browser_tools wasn't imported (e.g. tests)
+            self._READ_ONLY_TOOLS = self._READ_ONLY_CANONICAL
+            self._INDEXED_TOOLS = self._INDEXED_CANONICAL
         self._owns_session = browser_session is None
         self.session = browser_session or BrowserSession()
         self.max_steps = max_steps
@@ -545,6 +565,41 @@ class Agent:
                 await self.session.start()
             except Exception:
                 pass
+
+            # Apply storage_state cookies if the eval framework passed
+            # them (v0.7.2). Best-effort: ignore failures so the run
+            # continues. Mirrors upstream's storage_state bootstrap.
+            for cookie in self._initial_cookies:
+                try:
+                    await self.session.set_cookie(
+                        cookie.get("name", ""),
+                        cookie.get("value", ""),
+                        cookie.get("domain", ""),
+                        cookie.get("path", "/"),
+                        cookie.get("expires", -1.0),
+                        cookie.get("secure", False),
+                        cookie.get("httpOnly", False),
+                    )
+                except Exception:
+                    pass
+
+            # Symlink available_file_paths into the agent's file-tool
+            # sandbox so read_file actually works on them (v0.7.2).
+            # Without this, available_file_paths was prompt-only — the
+            # paths were advertised but unreadable. Codex audit #4.
+            if self.available_file_paths and hasattr(self, "_file_sandbox"):
+                import os as _os
+                for p in self.available_file_paths:
+                    try:
+                        if not _os.path.isfile(p):
+                            continue
+                        link = _os.path.join(
+                            self._file_sandbox, _os.path.basename(p),
+                        )
+                        if not _os.path.exists(link):
+                            _os.symlink(p, link)
+                    except Exception:
+                        pass
 
         # First-run setup: seed the conversation with the task and any
         # initial_actions the caller scripted (typically a navigate).
@@ -1769,7 +1824,14 @@ class Agent:
     # Tools that read state without changing the page — safe to keep
     # running even after a mutating action in the same batch since they
     # don't depend on the pre-batch DOM indices.
-    _READ_ONLY_TOOLS: frozenset[str] = frozenset({
+    # Read-only tools — safe to keep running after a mutating action
+    # in the same batch. Includes the v0.6.0/v0.6.5 extraction +
+    # search tools and the file-system reads. Aliases get expanded
+    # below. v0.7.2 added: extract_structured_data, search_page,
+    # find_elements, find_text, get_dropdown_options, extract_links,
+    # extract_images, evaluate_js (read-only by default), read_file,
+    # list_files.
+    _READ_ONLY_CANONICAL: frozenset[str] = frozenset({
         "screenshot",
         "page_text",
         "get_text",
@@ -1781,20 +1843,35 @@ class Agent:
         "done",
         "grep_scratchpad",
         "read_scratchpad",
+        "extract_structured_data",
+        "search_page",
+        "find_elements",
+        "find_text",
+        "get_dropdown_options",
+        "extract_links",
+        "extract_images",
+        "evaluate_js",
+        "read_file",
+        "list_files",
     })
 
     # Tools that target an element by `[N]` index from the most recent
-    # DOM snapshot. These become unsafe the moment ANY mutating action
-    # runs in the same batch — the snapshot the LLM planned against is
-    # stale. v0.4.17 fix: dominant v0.4.15 failure was [type_text, click]
-    # batches where typing triggered autocomplete/validation that shifted
-    # the click target's index.
-    _INDEXED_TOOLS: frozenset[str] = frozenset({
+    # DOM snapshot. v0.7.2 added: select_dropdown (acts on indexed
+    # element). Aliases get expanded below.
+    _INDEXED_CANONICAL: frozenset[str] = frozenset({
         "click",
         "type_text",
         "upload_file",
         "scroll_to",
+        "select_dropdown",
+        "get_dropdown_options",
     })
+
+    # Lazily-built alias-aware sets: include every alias that maps to
+    # one of the canonical members above. Built once on first access
+    # by reading ALIAS_TO_CANONICAL from _browser_tools. v0.7.2.
+    _READ_ONLY_TOOLS: frozenset[str] = frozenset()
+    _INDEXED_TOOLS: frozenset[str] = frozenset()
 
     async def _run_tools_sequentially(
         self, tool_calls: list[ToolCall]
