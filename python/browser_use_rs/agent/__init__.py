@@ -238,15 +238,19 @@ class Agent:
         # one stuck call can consume the eval framework's whole stage
         # timeout and kill the run with a bare TimeoutError.
         tool_timeout: float = 30.0,
-        # Per-LLM-call timeout in seconds (v0.8.4). Caps how long the
-        # main agent LLM round-trip can hang. Most providers have an
-        # internal retry budget that can stretch a single ainvoke()
-        # past 60s under partial outages; without this cap the step
-        # silently consumes the eval framework's stage timeout. On
-        # timeout the step is recorded as a recoverable error and the
-        # loop continues — max_consecutive_errors eventually catches
-        # the persistent case and falls back to _force_final_answer.
-        llm_timeout: float = 90.0,
+        # Per-LLM-call timeout in seconds (v0.8.4, bumped v0.8.7).
+        # Caps how long the main agent LLM round-trip can hang,
+        # including the with_retry chain (now 5 attempts × backoff
+        # capped at 30s). Default 180s matches upstream browser_use's
+        # `step_timeout` umbrella — long enough for a full Gemini
+        # Flash retry chain to ride out a 503 burst, short enough to
+        # bound tail latency. Initial v0.8.4 default of 90s was too
+        # tight: cut retry chains mid-recovery → -1.6pp judge vs v0.8.2.
+        # On timeout the step is recorded as a recoverable error AND
+        # a "Keep your thinking and output short" hint is appended to
+        # the next user message (mirrors upstream service.py:1185)
+        # so the LLM doesn't repeat the same too-long completion.
+        llm_timeout: float = 180.0,
         # Self-validation: when True, inject a one-shot
         # "re-check before finalizing" prompt the first time the LLM
         # tries to finish. v0.4.15 default ON; flipped OFF in v0.4.19
@@ -902,6 +906,12 @@ class Agent:
             # below count it as a failure and the agent keep trying;
             # max_consecutive_errors eventually triggers
             # _force_final_answer if the LLM stays unhealthy.
+            #
+            # v0.8.7: on asyncio.TimeoutError specifically, append a
+            # "Keep your thinking and output short" hint to the next
+            # user message so the LLM doesn't repeat the same too-long
+            # completion that just timed out. Mirrors upstream
+            # browser_use service.py:1185.
             try:
                 completion = await asyncio.wait_for(
                     self.llm.ainvoke(
@@ -911,13 +921,13 @@ class Agent:
                     ),
                     timeout=self.llm_timeout,
                 )
-                self._record_usage(step_n, completion.usage)
             except Exception as llm_e:
                 # Exception is broad on purpose — providers raise all
                 # manner of typed errors (RateLimitError, APIError,
                 # network/SSL errors, schema validation, plus the
                 # asyncio.TimeoutError from wait_for above). We treat
                 # them uniformly as a recoverable step failure.
+                is_timeout = isinstance(llm_e, asyncio.TimeoutError)
                 logger.warning(
                     "agent: LLM call failed at step %d (%s: %s) — "
                     "recording as step error and continuing",
@@ -936,6 +946,19 @@ class Agent:
                 )
                 self._consecutive_error_turns += 1
                 self.error_log.append((step_n, err_msg))
+                if is_timeout:
+                    # Mirror upstream browser_use service.py:1185 hint.
+                    self._messages.append(
+                        UserMessage(
+                            content=(
+                                f"[LLM_TIMEOUT] Your previous LLM call "
+                                f"timed out after {self.llm_timeout:.0f}s. "
+                                f"Keep your thinking and output short on "
+                                f"this next turn — fewer tokens will let "
+                                f"the call complete in time."
+                            )
+                        )
+                    )
                 if self._consecutive_error_turns >= self.max_consecutive_errors:
                     await self._force_final_answer(
                         state_summary, step_n,
@@ -948,6 +971,15 @@ class Agent:
                 if on_step_end is not None:
                     await _maybe_await(on_step_end())
                 continue
+
+            # Out of the try/except: usage recording is pure-Python on
+            # the completion object and shouldn't be miscategorized as
+            # an LLM failure if it raises (a parsing bug here would
+            # have been masked as a step error before v0.8.7).
+            try:
+                self._record_usage(step_n, completion.usage)
+            except Exception:
+                logger.exception("agent: _record_usage failed (non-fatal)")
 
             # Parse <memory>/<next_goal>/<evaluation_previous_goal>
             # from completion.text and persist as agent state. Mirrors

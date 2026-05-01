@@ -201,15 +201,20 @@ def _is_retryable(exc: BaseException) -> bool:
 async def with_retry(
     factory,
     *,
-    max_attempts: int = 3,
+    max_attempts: int = 5,
     base_delay: float = 1.0,
-    max_delay: float = 8.0,
+    max_delay: float = 30.0,
     label: str = "llm",
 ):
     """Run `factory()` up to `max_attempts` times with exponential
-    backoff (1s, 2s, 4s) on transient errors. `factory` must be a
-    no-arg callable that returns a fresh coroutine each call — a plain
-    coroutine can only be awaited once.
+    backoff on transient errors. `factory` must be a no-arg callable
+    that returns a fresh coroutine each call — a plain coroutine can
+    only be awaited once.
+
+    v0.8.7: bumped max_attempts 3→5 and max_delay 8s→30s to match
+    upstream browser_use's google/chat.py retry policy. Eval against
+    Gemini Flash showed 503/overload bursts that needed more than 3
+    attempts to ride out, especially under sustained load.
     """
     import asyncio
     import logging
