@@ -237,8 +237,10 @@ class Agent:
         register_should_stop_callback: ShouldStopCallback | None = None,
         injected_agent_state: AgentState | None = None,
         source: str = "browser_use_rs",
-        # Accepted for browser_use API compat. Swallowed silently for now;
-        # consumer code keeps working but these don't change behavior yet.
+        # Accepted for browser_use API compat. Some are now honored
+        # explicitly below (v0.6.2); the rest are still swallowed but
+        # logged as a warning so we know if the eval framework is
+        # passing settings we don't actually act on.
         **_compat_kwargs: Any,
     ):
         self.task = task
@@ -250,6 +252,41 @@ class Agent:
         # ground truth are available to the inline judge.
         self.judge_llm: BaseChatModel | None = _compat_kwargs.pop("judge_llm", None)
         self.ground_truth: str | None = _compat_kwargs.pop("ground_truth", None)
+        # Honor eval-relevant kwargs the eval framework passes (v0.6.2).
+        # Without these we'd silently run with WRONG settings vs upstream.
+        # See evaluations-internal/eval/service.py:343 — Agent is built
+        # with use_vision, max_actions_per_step, use_thinking, flash_mode,
+        # images_per_step. We don't have prompt-template variants for
+        # use_thinking/flash_mode (those map to upstream's
+        # system_prompt_flash.md vs system_prompt.md), so they remain
+        # noted-but-unused — but max_actions_per_step is enforceable
+        # right now and we should respect it.
+        self.max_actions_per_step: int | None = _compat_kwargs.pop(
+            "max_actions_per_step", None,
+        )
+        self.images_per_step: int = int(_compat_kwargs.pop("images_per_step", 1))
+        # Stash but don't act on (no prompt-template variants yet); log a
+        # one-time warning so consumers know the difference from upstream.
+        _flash_mode = _compat_kwargs.pop("flash_mode", None)
+        _use_thinking = _compat_kwargs.pop("use_thinking", None)
+        if _flash_mode is not None or _use_thinking is not None:
+            logger.warning(
+                "agent: flash_mode=%s and use_thinking=%s passed but "
+                "browser_use_rs uses a single DEFAULT_SYSTEM_PROMPT "
+                "(no template variants yet). Behavior matches upstream's "
+                "system_prompt.md (default), not system_prompt_flash.md "
+                "or system_prompt_no_thinking.md. v0.7.x will add the "
+                "templates.",
+                _flash_mode, _use_thinking,
+            )
+        # Anything left is genuinely unused — warn loudly so the user
+        # sees it in eval logs and can either patch the agent or stop
+        # passing the kwarg.
+        if _compat_kwargs:
+            logger.warning(
+                "agent: ignored kwargs (silent compat-pass-through): %s",
+                sorted(_compat_kwargs.keys()),
+            )
         # Tool source: explicit tools= wins, then controller=, then defaults.
         controller = _compat_kwargs.pop("controller", None)
         if tools is None and controller is not None:
@@ -673,21 +710,41 @@ class Agent:
             # gather order was undefined which made the second click in
             # a 2-call turn unsafe. Sequential is both faster (no
             # round-trip per action) and safer.
+            # Honor max_actions_per_step (eval/service.py:321 default 10).
+            # Without this, the LLM can emit a batch of 15+ indexed tool
+            # calls in one turn — most of those addresses become stale
+            # after the first mutation. Upstream caps at this value to
+            # bound the wasted work. v0.6.2.
+            tool_calls = list(completion.tool_calls)
+            if (
+                self.max_actions_per_step is not None
+                and self.max_actions_per_step > 0
+                and len(tool_calls) > self.max_actions_per_step
+            ):
+                logger.info(
+                    "agent: step %d capping batch from %d to %d "
+                    "(max_actions_per_step)",
+                    step_n, len(tool_calls), self.max_actions_per_step,
+                )
+                tool_calls = tool_calls[: self.max_actions_per_step]
+            # Replace the completion's view so downstream code (history,
+            # collapse, validation) sees the capped batch consistently.
+            completion.tool_calls = tool_calls
+            output.tool_calls = tool_calls
+
             # Visibility for eval audits: how big is each batch? Stable
             # 1's mean multi_act isn't helping; consistent 3-4's mean the
             # LLM is using the budget.
-            batch_size = len(completion.tool_calls)
+            batch_size = len(tool_calls)
             if batch_size > 1:
                 logger.info(
                     "agent: step %d batch=%d tools=%s",
                     step_n,
                     batch_size,
-                    [tc.name for tc in completion.tool_calls],
+                    [tc.name for tc in tool_calls],
                 )
 
-            results_and_msgs = await self._run_tools_sequentially(
-                completion.tool_calls
-            )
+            results_and_msgs = await self._run_tools_sequentially(tool_calls)
             tool_results: list[ActionResult] = []
             done_result: ActionResult | None = None
             for action_result, tool_message in results_and_msgs:

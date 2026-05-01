@@ -386,3 +386,39 @@ BROWSER_TOOLS = [
 from browser_use_rs._extra_tools import EXTRA_STATELESS_TOOLS  # noqa: E402
 
 BROWSER_TOOLS.extend(EXTRA_STATELESS_TOOLS)
+
+
+# Upstream-name aliases (v0.6.2). When the eval framework's prompt
+# references upstream's action names (input_text, click_element_by_index,
+# scroll_down/up, search, extract, wait, etc.) the LLM may try to call
+# them by those names. Without aliases the call fails as `unknown tool`
+# and burns a turn. Each alias is registered as the same callable under
+# both names so either form works.
+def _alias(target_tool, alias_name):
+    """Make a copy of `target_tool` re-registered under `alias_name`."""
+    import copy
+    new = copy.copy(target_tool)
+    new.name = alias_name
+    return new
+
+
+_UPSTREAM_NAME_ALIASES = {
+    # upstream name -> our tool callable name
+    "input_text": "type_text",
+    "click_element_by_index": "click",
+    "scroll_down": "scroll_to_bottom",
+    "scroll_up": "scroll_to_top",
+    "wait": "sleep",
+    "search": "search_page",
+    "extract": "extract_structured_data",
+    "extract_structured_data_from_page": "extract_structured_data",
+}
+
+_by_name = {t.name: t for t in BROWSER_TOOLS}
+for upstream_name, our_name in _UPSTREAM_NAME_ALIASES.items():
+    if upstream_name in _by_name:
+        continue  # already registered (don't double-register)
+    target = _by_name.get(our_name)
+    if target is None:
+        continue
+    BROWSER_TOOLS.append(_alias(target, upstream_name))
