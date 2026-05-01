@@ -5,17 +5,25 @@
         'a', 'button', 'input', 'select', 'textarea'
     ]);
 
-    // Static text containers were emitted in v0.5.7 (full set) and
-    // v0.5.8 (narrowed); both regressed judge by ~2pp on
-    // gemini-3-flash-preview. Theory: bloating the snapshot with
-    // duplicate text fragments confused the agent's index referencing —
-    // it had to scan more lines to find the [N] of an interactive
-    // element it wanted, and sometimes picked text-only lines as click
-    // targets. v0.6.1 reverts back to interactive-only emission;
-    // extract_structured_data + page_text + find_elements (all v0.6.0)
-    // give the agent richer access to the same content via dedicated
-    // tool calls that don't pollute the snapshot.
-    const STATIC_TEXT_TAGS = new Set();  // empty — kept for compat
+    // Static text containers — non-interactive but carry the page's
+    // actual content. Walked path:
+    //   v0.5.7 (full set incl. span/div/label): -2pp vs v0.5.6 — too
+    //     much chrome/footer noise.
+    //   v0.5.8 (narrowed: h1-h6/p/li/td/...): -2pp vs v0.5.6 too.
+    //   v0.6.0 KEPT v0.5.8's narrowed set + added extract/file tools:
+    //     +3pp net vs v0.5.6 (53% -> 56%).
+    //   v0.6.1 reverted static text on the theory it was the drag:
+    //     -2pp vs v0.6.0 (56% -> 54%) — WRONG. Static text was
+    //     helping in combination with the extract tools, not hurting.
+    // v0.6.4 restores the v0.5.8/v0.6.0 narrowed set. Keeps
+    // h1-h6, p, li, td, th, dt, dd, blockquote, figcaption, time —
+    // all genuinely-content tags. Drops span/div/label which were
+    // chrome/nav junk in v0.5.7.
+    const STATIC_TEXT_TAGS = new Set([
+        'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+        'p', 'li', 'td', 'th', 'dt', 'dd',
+        'blockquote', 'figcaption', 'time',
+    ]);
     const STATIC_TEXT_BLOCK_THRESHOLD = 2;
     const STATIC_TEXT_MAX_LEN = 280;
 
