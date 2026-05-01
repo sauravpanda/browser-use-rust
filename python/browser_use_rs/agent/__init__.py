@@ -627,6 +627,36 @@ class Agent:
 
         try:
             await self._loop(max_steps, on_step_start, on_step_end)
+        except Exception as e:
+            # v0.8.3: catch crashes inside _loop (browser disconnect,
+            # CDP socket death, OOM, snapshot timeout, LLM error past
+            # retry budget) and convert them into a forced final
+            # answer. Without this, an unhandled exception bubbles up
+            # to the eval workflow's run_agent stage and the task is
+            # recorded with no answer at all — judge counts it as a
+            # 0% fail regardless of how close the agent was. That
+            # asymmetric loss is what shows up in eval logs as
+            # "Stage errors: run_agent: ..." and pulls judge_pass_rate
+            # down by ~0.5pp per crashed task. Mirrors upstream's
+            # contract that Agent.run() always returns a populated
+            # AgentHistoryList with at least one is_done result.
+            #
+            # Note: this is stronger than upstream browser_use, which
+            # logs and re-raises (service.py: agent.run final except).
+            # Our eval framework treats re-raises as no-answer fails,
+            # so we recover here at the agent level instead.
+            logger.exception(
+                "agent: _loop crashed at step %d, attempting force-final",
+                self.state.n_steps,
+            )
+            try:
+                await self._force_final_answer(
+                    None,
+                    self.state.n_steps or 1,
+                    reason=f"agent crashed: {type(e).__name__}: {e}"[:200],
+                )
+            except Exception:
+                logger.exception("agent: force-final after crash also failed")
         finally:
             # Only the Agent-owned session gets stopped — caller-owned
             # sessions (cloud-attached, multi-agent) outlive the Agent.

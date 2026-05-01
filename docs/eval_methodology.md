@@ -79,16 +79,27 @@ expected impact: judge ?pp, cost ?$, steps ?
 
 Each isolated on the v0.8.1 baseline. Order chosen to do cheap-and-safe cost wins first, then re-test the components we may have miscalled, then graduate to bigger structural items only after we've isolated all small wins.
 
-### Phase 1 — cost optimization (low risk, may cut $0.04-0.06)
+### Phase 1 — cost + reliability (revised plan)
+
+The plan was reshuffled mid-stream after two diagnostics shifted priorities:
+1. **v0.7.3 at 50-step (63.6%) and 100-step (64.2%) judge are within noise** → step-out is loop-driven, not budget-driven. Loop-killers move higher up the queue.
+2. **Eval logs show `Stage errors: run_agent: ...` on some tasks** → the agent re-raises unhandled exceptions and the eval framework records those tasks as no-answer fails. Each crash is asymmetrically ~0.5pp judge lost. Crash recovery jumps to top of queue.
+
+Switching to **100-step budget from v0.8.x onward** so step-outs are unambiguously loops, not insufficient time. New baseline = v0.8.1 100-step (~67.1% / 8.6¢ / 18% step-out).
 
 | Version | Single change | Expected |
 |---|---|---|
 | v0.8.2 | history_window_steps default 6 → 3 | cost ↓$0.02-$0.04, judge ±1pp |
-| v0.8.3 | max_consecutive_errors 5 → 3 | cost ↓$0.005, judge ±0pp |
-| v0.8.4 | prompt nudge "batch 2-3 safe actions per turn" | steps ↓ → cost ↓$0.02 |
-| v0.8.5 | cap extract_structured_data at 2 calls/task (hard) | cost ↓$0.005 |
+| v0.8.3 | top-level crash recovery in `Agent.run()` — wrap `_loop` in try/except, route crashes through `_force_final_answer` instead of re-raising | judge ↑1-3pp on crash-prone tasks (was 0% → now whatever partial answer survived); cost ±0¢ |
+| v0.8.4 | loop signature normalization — drop element `index` from tight-loop sig hash so "click idx 5 → click idx 12 → click idx 23" is detected as a loop | step-out% ↓3-6pp, judge ↑1-2pp, cost ↓$0.005-$0.01 |
+| v0.8.5 | hard abort on persistent loop — after 2 LOOP_DETECTED nudges OR stagnation streak ≥6, force `_force_final_answer` | step-out% ↓further, partial credit on remaining loopers |
+| v0.8.6 | max_consecutive_errors 5 → 3 | cost ↓$0.005, judge ±0pp |
+| v0.8.7 | prompt nudge "batch 2-3 safe actions per turn" | steps ↓ → cost ↓$0.02 |
+| v0.8.8 | cap extract_structured_data at 2 calls/task (hard) | cost ↓$0.005 |
 
 ### Phase 2 — re-test miscalled regressions in isolation
+
+> Version numbers below were drafted before Phase 1 expanded from 4 to 7 versions. Renumber by +3 (so v0.8.9 → v0.8.12, etc.) once Phase 1 lands. Keeping original numbers here for traceability against the codex item table at the bottom — that table still references the *content* of each change, which hasn't moved.
 
 | Version | Single change | Reason |
 |---|---|---|
