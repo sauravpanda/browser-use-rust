@@ -589,6 +589,15 @@ class Agent:
         # with selectors instead of bare indices, so cross-turn
         # references remain meaningful after DOM mutation. v0.5.0.
         self._index_to_selector: dict[int, str] = {}
+        # Persistent agent state across steps (v0.8.0). Parsed from the
+        # LLM's <memory>/<next_goal>/<evaluation_previous_goal> tags
+        # each turn and injected into the next turn's page-state
+        # message. Mirrors upstream's first-class memory/next_goal
+        # fields. Without this the LLM had to rebuild context from
+        # collapsed history every turn.
+        self._memory: str = ""
+        self._next_goal: str = ""
+        self._previous_evaluation: str = ""
         # Track selectors seen in the previous snapshot. Used to mark
         # NEW elements (those whose selector wasn't in the prior step's
         # snapshot) with a `*` prefix in the next page-state injection.
@@ -938,6 +947,13 @@ class Agent:
                 system=self.system_prompt,
             )
             self._record_usage(step_n, completion.usage)
+
+            # Parse <memory>/<next_goal>/<evaluation_previous_goal>
+            # from completion.text and persist as agent state. Mirrors
+            # upstream's structured field paradigm. The next turn's
+            # page-state injection will surface these so the LLM sees
+            # its prior reasoning. v0.8.0.
+            self._parse_persistent_state(completion.text or "")
 
             output = AgentOutput(
                 text=completion.text,
@@ -1848,6 +1864,31 @@ class Agent:
         else:
             self._messages.append(UserMessage(content=history_body))
 
+    def _parse_persistent_state(self, text: str) -> None:
+        """Pull <memory>/<next_goal>/<evaluation_previous_goal> from
+        the LLM's response text and persist as agent state. v0.8.0.
+
+        Tolerant: any of the three may be missing. Whitespace trimmed.
+        Truncated to 600 chars each so they don't bloat next turn's
+        context. If the LLM didn't emit a tag, the prior value is
+        kept (so a single missed turn doesn't lose all state).
+        """
+        if not text:
+            return
+        import re as _re
+        for tag, attr in (
+            ("memory", "_memory"),
+            ("next_goal", "_next_goal"),
+            ("evaluation_previous_goal", "_previous_evaluation"),
+        ):
+            m = _re.search(
+                rf"<{tag}>(.*?)</{tag}>", text, _re.DOTALL | _re.IGNORECASE,
+            )
+            if m:
+                val = m.group(1).strip()[:600]
+                if val:
+                    setattr(self, attr, val)
+
     def _inject_page_state(self, state: BrowserStateSummary) -> None:
         """Append a UserMessage with the current page state so the LLM sees
         the DOM without spending a turn on `dom_snapshot`. Older auto-injected
@@ -1874,10 +1915,26 @@ class Agent:
                 ):
                     msg.content = _PAGE_STATE_SUPERSEDED
 
+        # Persistent agent state (v0.8.0): surface prior turn's
+        # memory + next_goal + evaluation so the LLM has continuity
+        # without rebuilding from collapsed history. Mirrors upstream's
+        # <agent_state> block. Only included when something was
+        # actually persisted (skip on first turn).
+        state_block = ""
+        if self._previous_evaluation or self._memory or self._next_goal:
+            parts = []
+            if self._previous_evaluation:
+                parts.append(f"PREVIOUS_EVALUATION: {self._previous_evaluation}")
+            if self._memory:
+                parts.append(f"MEMORY: {self._memory}")
+            if self._next_goal:
+                parts.append(f"PRIOR_NEXT_GOAL: {self._next_goal}")
+            state_block = "<agent_state>\n" + "\n".join(parts) + "\n</agent_state>\n\n"
+
         dom_text = state.elements_text or ""
         if not dom_text:
             body = (
-                f"{_PAGE_STATE_TAG}\nURL: {state.url}\n"
+                f"{_PAGE_STATE_TAG}\n{state_block}URL: {state.url}\n"
                 "(no DOM snapshot available — page not ready)"
             )
         else:
@@ -1901,9 +1958,9 @@ class Agent:
                     f"in range [{lo}..{hi}]. Use ONLY indices listed "
                     f"below; do not invent numbers."
                 )
-                body = f"{_PAGE_STATE_TAG}\n{hint}\n\n{dom_text}"
+                body = f"{_PAGE_STATE_TAG}\n{state_block}{hint}\n\n{dom_text}"
             else:
-                body = f"{_PAGE_STATE_TAG}\n{dom_text}"
+                body = f"{_PAGE_STATE_TAG}\n{state_block}{dom_text}"
 
         if self.use_vision and state.screenshot:
             self._messages.append(
