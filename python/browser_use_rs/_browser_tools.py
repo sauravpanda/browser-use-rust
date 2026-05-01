@@ -473,8 +473,8 @@ _UPSTREAM_NAME_ALIASES = {
 ALIAS_TO_CANONICAL: dict[str, str] = {}
 for _t in BROWSER_TOOLS:
     ALIAS_TO_CANONICAL[_t.name] = _t.name  # canonicals map to themselves
-for _alias, _canon in _UPSTREAM_NAME_ALIASES.items():
-    ALIAS_TO_CANONICAL[_alias] = _canon
+for _alias_name, _canon in _UPSTREAM_NAME_ALIASES.items():
+    ALIAS_TO_CANONICAL[_alias_name] = _canon
 
 _by_name = {t.name: t for t in BROWSER_TOOLS}
 for upstream_name, our_name in _UPSTREAM_NAME_ALIASES.items():
