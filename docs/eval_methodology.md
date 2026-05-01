@@ -71,21 +71,57 @@ delta vs v0.8.1: <one sentence>
 expected impact: judge ?pp, cost ?$, steps ?
 ```
 
+## Release rule
+
+**No v0.9.0 until judge parity with upstream (≈73%).** Everything stays in v0.8.x. v0.9.0 is the parity-hit signal — both for us and for downstream consumers. Until then every iteration is single-change on the v0.8.1 baseline.
+
 ## v0.8.x planned roadmap
 
-Each isolated on the v0.8.1 baseline:
+Each isolated on the v0.8.1 baseline. Order chosen to do cheap-and-safe cost wins first, then re-test the components we may have miscalled, then graduate to bigger structural items only after we've isolated all small wins.
+
+### Phase 1 — cost optimization (low risk, may cut $0.04-0.06)
+
+| Version | Single change | Expected |
+|---|---|---|
+| v0.8.2 | history_window_steps default 6 → 3 | cost ↓$0.02-$0.04, judge ±1pp |
+| v0.8.3 | max_consecutive_errors 5 → 3 | cost ↓$0.005, judge ±0pp |
+| v0.8.4 | prompt nudge "batch 2-3 safe actions per turn" | steps ↓ → cost ↓$0.02 |
+| v0.8.5 | cap extract_structured_data at 2 calls/task (hard) | cost ↓$0.005 |
+
+### Phase 2 — re-test miscalled regressions in isolation
 
 | Version | Single change | Reason |
 |---|---|---|
-| v0.8.2 | history collapse window 6 → 3 | cost ↓ (less per-turn context) |
-| v0.8.3 | `max_consecutive_errors` 5 → 3 | cost ↓ (faster fail) |
-| v0.8.4 | prompt nudge "batch 2-3 actions when safe" | steps ↓ → cost ↓ |
-| v0.8.5 | cap extract_structured_data at 2 calls/task | cost ↓ |
-| v0.8.6 | persistent memory/next_goal state alone | judge ? — re-test on clean baseline |
-| v0.8.7 | `<browser_state>` markers explanation alone | judge ? |
-| v0.8.8 | `<task_completion>` checklist alone | judge ? |
-| v0.8.9 | reasoning XML mandate alone (re-test) | judge ?, cost ↓? |
-| v0.8.10 | 2-pass validation prompt re-introduced alone | judge ? |
+| v0.8.6 | persistent memory/next_goal state ALONE | v0.8.0 was bundled; clean test on baseline |
+| v0.8.7 | `<browser_state>` markers explanation ALONE | v0.7.4 bundled three blocks |
+| v0.8.8 | `<task_completion>` checklist ALONE | same |
+| v0.8.9 | reasoning XML mandate ALONE (re-test) | v0.7.5 cost win was real, judge re-test on baseline |
+| v0.8.10 | 2-pass validation prompt re-introduced ALONE | v0.6.5 was undercalled |
+
+### Phase 3 — codex parity items, judge-leverage ranked
+
+Each as a single change, only after Phase 1+2 land. Most won't move judge but build production parity.
+
+| Version | Codex item | Why this order |
+|---|---|---|
+| v0.8.11 | constructor kwargs honored (`step_timeout`, `llm_timeout`, `vision_detail_level`) | small, may matter if eval passes them |
+| v0.8.12 | `include_attributes` kwarg honored — filters which DOM attrs we emit | could trim snapshot tokens |
+| v0.8.13 | `fallback_llm` rate-limit failover | helps tasks failing on transient model errors |
+| v0.8.14 | `available_file_paths` parity (real upstream FileSystem state) | already partial; close out |
+| v0.8.15 | `output_model_schema` direct task-enhancement path | structured output without controller dance |
+| v0.8.16 | typed `AgentOutput`/`AgentBrain` shape | parity for downstream code reading our trace |
+| v0.8.17 | upstream MessageManager core (recent_events, sample_images, screenshot resize) | medium refactor, may help judge if eval relies on these signals |
+| v0.8.18 | real planner (`PlanItem`, `enable_planning`, `planning_replan_on_stall`) | bigger lift; may close planning-side judge gap |
+| v0.8.19 | full upstream judge construction in `_judge_and_log` | parity but eval judge is identical so low judge-score impact |
+| v0.8.20+ | lifecycle API (pause/resume/stop), telemetry/event bus, artifacts (save_conversation_path, GIF), full AgentHistoryList | infra parity, post-judge-parity hardening |
+
+### Phase 4 — final push to ≥73% if Phases 1-3 don't get us there
+
+If we plateau in Phase 3, options that were deferred earlier:
+
+- **Real upstream prompt template port + JSON output paradigm** (~1 week). Biggest lift but closest to upstream's behavioral shape.
+- **Cheaper extraction LLM** (route extract_structured_data to claude-haiku/gemini-2-flash). Cost lever, may free budget for more aggressive agent loops.
+- **Per-model prompt tuning** — gemini-3-flash-preview may need different language than the generic upstream prompt.
 
 Re-tests above are independently informative regardless of result.
 
