@@ -57,6 +57,8 @@ You are an AI agent designed to operate in an iterative loop to automate browser
 <action_rules>
 Check the browser state each step to verify your previous action achieved its goal. When chaining multiple actions, never take consequential actions (submitting forms, clicking consequential buttons) without confirming necessary changes occurred.
 
+Dynamic pages: if `[N]` returns "index not available" or "no longer present", do NOT retry [N] — the page state has shifted and that index is dead. Read the FRESH snapshot's [N] numbers and pick from those, OR switch to find_elements/search_page to locate by attribute or text. After 2 retries on the same failed index, switch tools or navigate elsewhere.
+
 For extraction tasks (find/list/answer): PREFER `extract_structured_data(query=...)` over scrolling and reading raw page_text. The extractor uses an LLM over the cleaned page — far more reliable than reasoning manually.
 
 For multi-page tasks: use the file system. write_file("notes.md", content) saves partial extractions; replace_file_str("todo.md", "[ ]", "[x]") tracks progress; the file survives history collapse.
@@ -111,6 +113,12 @@ Strategy:
 - After every action, verify the page state changed as expected. If it
   didn't (same URL, same elements, no new content), pick a different
   approach instead of repeating the same action.
+- DYNAMIC PAGES: if `[N]` returns "index not available" / "page state has
+  changed" / "no longer present in the DOM", do NOT retry [N] — the page
+  shifted and that index is dead. Read the FRESH snapshot's [N] numbers
+  and pick from those, OR switch to find_elements / search_page to locate
+  by attribute/text. After 2 retries on the same failed index, switch
+  tools or navigate elsewhere — do not loop on a dead index.
 - Prefer clicking visible links over navigating to known URLs — that
   verifies the page is in the expected state.
 - Extract content with `get_text` / `page_text` / `get_links` rather than
@@ -574,6 +582,18 @@ class Agent:
         # with selectors instead of bare indices, so cross-turn
         # references remain meaningful after DOM mutation. v0.5.0.
         self._index_to_selector: dict[int, str] = {}
+        # Dead-index tracking (v0.8.10). Trace analysis vs upstream
+        # showed Bloomberg-class dynamic pages where the LLM retries
+        # the same `[N]` 12+ times in a row, each time getting "index
+        # not available". Selector retargeting only helps when the
+        # element still exists at a new index — on these pages the
+        # element is GONE. Track per-(tool, index) stale-failure count;
+        # on the third attempt inject a hard nudge telling the LLM the
+        # index is dead. Counter is keyed by (tool_name, index) and
+        # cleared whenever the URL changes (different page = different
+        # numbering, no carry-over).
+        self._dead_index_attempts: dict[tuple[str, int], int] = {}
+        self._dead_index_url: str = ""
         # Persistent agent state across steps (v0.8.0). Parsed from the
         # LLM's <memory>/<next_goal>/<evaluation_previous_goal> tags
         # each turn and injected into the next turn's page-state
@@ -842,6 +862,15 @@ class Agent:
 
             state_summary = await self._capture_state()
             self._inject_page_state(state_summary)
+
+            # v0.8.10: clear dead-index tracking when URL changes —
+            # different page means different element numbering, no
+            # carryover. Only carries within the same URL where the LLM
+            # might retry the same [N] across multiple turns.
+            cur_url = state_summary.url or ""
+            if cur_url != self._dead_index_url:
+                self._dead_index_attempts.clear()
+                self._dead_index_url = cur_url
 
             # CAPTCHA wait (v0.7.1). If the snapshot mentions captcha
             # keywords, the page is likely showing a Cloudflare /
@@ -2518,6 +2547,46 @@ class Agent:
                         f"Re-take a dom_snapshot and pick a fresh index from "
                         f"the new PAGE_STATE."
                     )
+
+                # v0.8.10: dead-index hard nudge. Trace analysis showed
+                # the LLM retrying the same [N] up to 12 times in a row
+                # on dynamic pages (Bloomberg). The "friendly" hint
+                # above is treated as advisory — the LLM ignores it and
+                # re-issues the same call. Track attempts and inject a
+                # hard `[INDEX_DEAD]` UserMessage on the third failure
+                # so the next LLM turn sees an explicit "do NOT retry"
+                # instruction at the top of context.
+                key = (tc.name, stale_idx)
+                self._dead_index_attempts[key] = (
+                    self._dead_index_attempts.get(key, 0) + 1
+                )
+                if self._dead_index_attempts[key] >= 3:
+                    self._messages.append(UserMessage(content=(
+                        f"[INDEX_DEAD] Tool {tc.name}(index=[{stale_idx}]) "
+                        f"has failed 3 times on this page — the element "
+                        f"that was at index [{stale_idx}] no longer exists "
+                        f"in the DOM. STOP retrying [{stale_idx}]. Try ONE "
+                        f"of these alternatives instead:\n"
+                        f"  • Re-read the LATEST PAGE_STATE snapshot — the "
+                        f"new [N] numbers may have what you need.\n"
+                        f"  • Use find_elements(selector=...) or "
+                        f"search_page(pattern=...) to locate the target "
+                        f"by attribute or text, not by index.\n"
+                        f"  • If you've been stuck on the same URL for "
+                        f"5+ turns without progress, navigate elsewhere "
+                        f"or call done(success=False)."
+                    )))
+                    logger.info(
+                        "agent: INDEX_DEAD nudge injected for %s[%d] "
+                        "(attempts=%d, url=%s)",
+                        tc.name, stale_idx,
+                        self._dead_index_attempts[key],
+                        self._dead_index_url,
+                    )
+                    # Reset so we don't re-inject every subsequent turn
+                    # for the same dead index.
+                    self._dead_index_attempts[key] = 0
+
                 ar = ActionResult(extracted_content=friendly)
                 ar._selector_used = cached_sel  # type: ignore[attr-defined]
                 return (
