@@ -516,6 +516,12 @@ def make_extra_tools(agent: Any) -> list:
             return "(sandbox empty)"
         return "\n".join(sorted(out))
 
+    # Per-task dedup memory for extract_structured_data. Keys are
+    # (query, page_offset_bucket); values are the answer strings we
+    # already returned. Saves redundant LLM calls when the agent
+    # re-extracts the same thing it just got. v0.7.0.
+    extract_cache: dict = {}
+
     @tool
     async def extract_structured_data(
         session,
@@ -552,6 +558,18 @@ def make_extra_tools(agent: Any) -> list:
             output_schema_hint: Optional JSON-like template the answer
                 should follow. Default empty (free-form text answer).
         """
+        # Dedup memory (v0.7.0). If the agent calls extract with the
+        # exact same query+offset on the same URL we just answered, return
+        # the cached answer instead of re-running the LLM. Saves ~$0.005
+        # per duplicate call.
+        try:
+            url = await session.current_url()
+        except Exception:
+            url = ""
+        cache_key = (url, query.strip(), start_from_char // 5000)
+        if cache_key in extract_cache:
+            return f"(cached) {extract_cache[cache_key]}"
+
         # Use page_text — faster than the full DOM snapshot serialization
         # and gives the extractor LLM raw rendered text. We over-fetch
         # so the slice has full max_chars regardless of start offset.
@@ -562,11 +580,6 @@ def make_extra_tools(agent: Any) -> list:
             if start_from_char >= len(page):
                 return f"(start_from_char={start_from_char} is past end of page text len={len(page)})"
             page = page[start_from_char : start_from_char + max_chars]
-        url = ""
-        try:
-            url = await session.current_url()
-        except Exception:
-            pass
 
         schema_clause = ""
         if output_schema_hint and output_schema_hint.strip():
@@ -593,13 +606,18 @@ def make_extra_tools(agent: Any) -> list:
         try:
             from browser_use_rs.llm.base import UserMessage
             messages = [UserMessage(content=extraction_prompt)]
+            # Use page_extraction_llm if the consumer set one (mirrors
+            # upstream's separate cheap-extraction-LLM pattern). Falls
+            # back to the agent's main LLM. v0.7.0.
+            extract_llm = getattr(agent, "page_extraction_llm", None) or agent.llm
             completion = await asyncio.wait_for(
-                agent.llm.ainvoke(messages, [], system=None),
+                extract_llm.ainvoke(messages, [], system=None),
                 timeout=getattr(agent, "tool_timeout", 60.0),
             )
             text = (completion.text or "").strip()
             if not text:
                 return "(extractor returned empty response)"
+            extract_cache[cache_key] = text  # cache for dedup
             return text
         except asyncio.TimeoutError:
             return "(extractor timed out — try a narrower query)"

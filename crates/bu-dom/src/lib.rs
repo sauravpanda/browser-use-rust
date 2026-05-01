@@ -69,6 +69,12 @@ pub struct DomElement {
     #[serde(default)]
     pub selector: String,
     pub bbox: Bbox,
+    /// Tree depth — count of interactive ancestors above this element.
+    /// Rendered as leading tabs in to_llm_string so the LLM can see
+    /// hierarchy (which item belongs to which list/article/table).
+    /// Defaults to 0 for snapshots produced before v0.7.0.
+    #[serde(default)]
+    pub depth: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -153,6 +159,11 @@ impl DomState {
             } else {
                 ""
             };
+            // Indent by tree depth (cap at 6 levels to bound bloat).
+            let indent_n = el.depth.min(6) as usize;
+            for _ in 0..indent_n {
+                out.push('\t');
+            }
             out.push_str(&format!("{scroll_prefix}[{}]<{}", el.index, el.tag));
             for (k, v) in &el.attrs {
                 if k == "scrollable" {

@@ -239,9 +239,25 @@
     // we don't double-count when their containers are walked later.
     const seen = new WeakSet();
 
+    // Compute interactive-ancestor depth — how many emitted elements
+    // are above this one in the DOM tree. Used to render the snapshot
+    // with indentation so the LLM sees the tree structure (which item
+    // belongs to which list/article/table). v0.7.0.
+    const interactiveDepth = (el) => {
+        let d = 0;
+        let p = el.parentElement;
+        const root = el.ownerDocument && el.ownerDocument.body;
+        while (p && p !== root) {
+            if (p.hasAttribute && p.hasAttribute('data-bu-idx')) d++;
+            p = p.parentElement;
+        }
+        return d;
+    };
+
     // Walk a document collecting interactive elements. `(offsetX, offsetY)`
     // shifts bbox coordinates from the document's local viewport into the
     // top window's viewport, so click_index can dispatch at absolute coords.
+    // Also descends into shadow roots for proper shadow-DOM coverage. v0.7.0.
     const collect = (doc, offsetX, offsetY) => {
         const all = doc.querySelectorAll('*');
         for (const el of all) {
@@ -310,7 +326,8 @@
                 text: text,
                 attrs: attrs,
                 selector: elementSelector(el, text),
-                bbox: { x: r.x + offsetX, y: r.y + offsetY, w: r.width, h: r.height }
+                bbox: { x: r.x + offsetX, y: r.y + offsetY, w: r.width, h: r.height },
+                depth: interactiveDepth(el),
             });
             idx++;
         }
@@ -324,6 +341,17 @@
             if (!sub) continue;
             const fr = iframe.getBoundingClientRect();
             collect(sub, offsetX + fr.x, offsetY + fr.y);
+        }
+
+        // Shadow DOM walk (v0.7.0). Many web-component-heavy sites
+        // (Salesforce, custom UI kits, modern e-commerce) put real
+        // content inside open shadow roots. querySelectorAll('*')
+        // skips them. Walk each shadow root the same way.
+        for (const host of doc.querySelectorAll('*')) {
+            try {
+                const root = host.shadowRoot;
+                if (root) collect(root, offsetX, offsetY);
+            } catch (e) { /* closed root or cross-origin */ }
         }
     };
 

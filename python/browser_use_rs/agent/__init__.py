@@ -283,6 +283,13 @@ class Agent:
         # ground truth are available to the inline judge.
         self.judge_llm: BaseChatModel | None = _compat_kwargs.pop("judge_llm", None)
         self.ground_truth: str | None = _compat_kwargs.pop("ground_truth", None)
+        # Separate (typically cheaper/faster) LLM used by
+        # extract_structured_data. Mirrors upstream's
+        # page_extraction_llm kwarg. Falls back to the main llm if
+        # not provided. v0.7.0.
+        self.page_extraction_llm: BaseChatModel | None = _compat_kwargs.pop(
+            "page_extraction_llm", None,
+        )
         # Honor eval-relevant kwargs the eval framework passes (v0.6.2).
         # Without these we'd silently run with WRONG settings vs upstream.
         # See evaluations-internal/eval/service.py:343 — Agent is built
