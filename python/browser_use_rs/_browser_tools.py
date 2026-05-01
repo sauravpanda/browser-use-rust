@@ -404,6 +404,10 @@ def _alias(target_tool, alias_name):
 
 _UPSTREAM_NAME_ALIASES = {
     # upstream name -> our tool callable name
+    # All forms the LLM might call based on its training data + the
+    # eval framework's prompt examples. v0.6.5 expanded per codex
+    # audit (input, save_as_pdf, evaluate, dropdown_options, etc.).
+    "input": "type_text",
     "input_text": "type_text",
     "click_element_by_index": "click",
     "scroll_down": "scroll_to_bottom",
@@ -412,6 +416,20 @@ _UPSTREAM_NAME_ALIASES = {
     "search": "search_page",
     "extract": "extract_structured_data",
     "extract_structured_data_from_page": "extract_structured_data",
+    "save_as_pdf": "save_pdf",
+    "evaluate": "evaluate_js",
+    "dropdown_options": "get_dropdown_options",
+    "select_option": "select_dropdown",
+    "press_keys": "send_keys",
+    "key_press": "send_keys",
+    "back": "go_back",
+    "history_back": "go_back",
+    "screenshot_page": "screenshot",
+    "scroll_to_text": "find_text",
+    "find_in_page": "find_text",
+    "query_selector_all": "find_elements",
+    "css_select": "find_elements",
+    "search_text": "search_page",
 }
 
 _by_name = {t.name: t for t in BROWSER_TOOLS}

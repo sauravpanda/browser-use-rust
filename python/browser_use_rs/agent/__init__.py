@@ -119,6 +119,16 @@ the file system. `write_file("notes.md", content)` to save partial
 extractions, `replace_file_str("todo.md", "[ ]", "[x]")` to track
 progress, `read_file("notes.md")` later. The history-collapse window
 loses old context; the file system survives it.
+
+ALWAYS use the file system when:
+  - The task asks you to compare items across 2+ pages (write each
+    page's data to notes.md, then synthesize at the end).
+  - You're collecting a list of more than 5 items (write_file as you
+    go so they survive history collapse).
+  - The task has multiple sub-questions (write_file("todo.md") with
+    `[ ]` for each, mark `[x]` as you answer).
+At the END of any multi-step task, before giving your final answer:
+read_file your notes one last time to make sure nothing was lost.
 """
 
 # Tag prefix that identifies auto-injected per-step page-state messages.
@@ -158,10 +168,17 @@ _VALIDATION_CHECKLIST = (
 _VALIDATION_PROMPT_TEXT = (
     "[VALIDATION_CHECK] You are about to finalize your answer.\n"
     + _VALIDATION_CHECKLIST
-    + "If anything is wrong or incomplete: call the tools you need to "
-    "fix it (scroll, get_text, navigate). If everything is correct: "
-    "repeat your answer in plain text to confirm — that turn will be "
-    "your final."
+    + "STRONGLY RECOMMENDED: before finalizing, call "
+    "`extract_structured_data(query=...)` with the EXACT user task "
+    "as the query, on the page that should contain the answer. "
+    "Compare the extractor's output to your proposed answer. If they "
+    "disagree, the extractor is usually right (it reads the actual "
+    "page text fresh). Only finalize when extractor and your answer "
+    "agree.\n"
+    "If anything is wrong or incomplete: call the tools you need to "
+    "fix it (navigate, scroll, find_elements, extract_structured_data). "
+    "If everything is correct: repeat your answer in plain text to "
+    "confirm — that turn will be your final."
 )
 
 _VALIDATION_PROMPT_DONE = (

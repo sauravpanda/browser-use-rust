@@ -297,6 +297,89 @@ async def go_back(session) -> str:
 
 
 @tool
+async def web_search(session, query: str, engine: str = "duckduckgo") -> str:
+    """Open a search-engine results page for `query`. Use when the
+    requested information isn't on a known site and you need to find
+    it. Subsequent click/scroll/extract calls operate on the results
+    page.
+
+    Mirrors upstream browser_use's web_search action (v0.6.5).
+
+    Args:
+        query: Search terms.
+        engine: 'duckduckgo' (default), 'google', or 'bing'.
+    """
+    eng = engine.lower().strip()
+    base = {
+        "duckduckgo": "https://duckduckgo.com/?q=",
+        "google": "https://www.google.com/search?q=",
+        "bing": "https://www.bing.com/search?q=",
+    }.get(eng, "https://duckduckgo.com/?q=")
+    from urllib.parse import quote
+    url = base + quote(query)
+    await session.navigate(url)
+    return f"opened {eng} results for: {query}"
+
+
+@tool
+async def extract_links(session, limit: int = 50) -> str:
+    """Extract all visible links from the current page as
+    `text -> href` lines, sorted by appearance. Capped at `limit`.
+
+    Use when you need a list of clickable destinations to choose from
+    (e.g. listing article URLs, finding the right product page).
+
+    Args:
+        limit: Max number of links to return. Default 50.
+    """
+    raw_links = await session.get_links()
+    if not raw_links:
+        return "(no visible links)"
+    out = []
+    for text, href in raw_links[:limit]:
+        text = text.strip().replace("\n", " ")[:80] or "(no text)"
+        out.append(f"{text} -> {href}")
+    if len(raw_links) > limit:
+        out.append(f"(... {len(raw_links) - limit} more links truncated)")
+    return "\n".join(out)
+
+
+@tool
+async def extract_images(session, limit: int = 30) -> str:
+    """Extract all visible <img> elements from the page as
+    `alt -> src` lines. Useful for tasks that need to identify
+    pictures by caption / alt text.
+
+    Args:
+        limit: Max images to return. Default 30.
+    """
+    js = (
+        "(() => {"
+        f" const lim = {int(limit)};"
+        " const out = [];"
+        " for (const img of document.querySelectorAll('img')) {"
+        "   if (out.length >= lim) break;"
+        "   const r = img.getBoundingClientRect();"
+        "   if (r.width < 32 || r.height < 32) continue;"
+        "   const src = img.src || img.getAttribute('src') || '';"
+        "   if (src.startsWith('data:') || !src) continue;"
+        "   const alt = (img.alt || img.getAttribute('alt') || img.getAttribute('title') || '').trim();"
+        "   out.push({alt, src: src.length > 200 ? src.slice(0,200) + '…' : src});"
+        " }"
+        " return JSON.stringify(out);"
+        "})()"
+    )
+    raw = await session.evaluate(js)
+    try:
+        data = json.loads(raw) if raw else []
+    except json.JSONDecodeError:
+        return f"(unparseable: {raw[:120]})"
+    if not data:
+        return "(no images)"
+    return "\n".join(f"{(d.get('alt') or '(no alt)')!r} -> {d.get('src')}" for d in data)
+
+
+@tool
 async def evaluate_js(session, expression: str) -> str:
     """Execute an arbitrary JavaScript expression in the page context.
     Returns the JSON-stringified result.
@@ -435,7 +518,11 @@ def make_extra_tools(agent: Any) -> list:
 
     @tool
     async def extract_structured_data(
-        session, query: str, max_chars: int = 30000
+        session,
+        query: str,
+        max_chars: int = 30000,
+        start_from_char: int = 0,
+        output_schema_hint: str = "",
     ) -> str:
         """Extract specific information from the current page using an
         LLM-powered query.
@@ -447,30 +534,58 @@ def make_extra_tools(agent: Any) -> list:
         listing items matching a criterion ("top 3 articles"), summarizing
         a section, or answering a question about the page.
 
+        Pagination: when a page is longer than max_chars, call again
+        with start_from_char=max_chars to read the next chunk
+        (start_from_char=30000 starts the second slice). Repeat until
+        you find the answer or the chunk is empty.
+
+        Structured output: pass output_schema_hint with a JSON-like
+        sketch of the format you want. The extractor will try to match
+        that shape. Example:
+          output_schema_hint='{"products": [{"name": str, "price": str}]}'
+
         Args:
-            query: What to extract. Be specific — e.g. "title and price
-                of the top 3 products" beats "tell me about products".
-            max_chars: Max page text to feed the extractor. Default
-                30000. Larger = more context but slower / costlier.
+            query: What to extract. Be specific.
+            max_chars: Max page text per chunk. Default 30000.
+            start_from_char: Offset to start reading from (for paged
+                long pages). Default 0.
+            output_schema_hint: Optional JSON-like template the answer
+                should follow. Default empty (free-form text answer).
         """
         # Use page_text — faster than the full DOM snapshot serialization
-        # and gives the extractor LLM raw rendered text.
-        page = await session.page_text(max_chars)
+        # and gives the extractor LLM raw rendered text. We over-fetch
+        # so the slice has full max_chars regardless of start offset.
+        page = await session.page_text(max_chars + start_from_char + 1000)
         if not page or not page.strip():
             return "(page is empty — cannot extract)"
+        if start_from_char > 0:
+            if start_from_char >= len(page):
+                return f"(start_from_char={start_from_char} is past end of page text len={len(page)})"
+            page = page[start_from_char : start_from_char + max_chars]
         url = ""
         try:
             url = await session.current_url()
         except Exception:
             pass
 
+        schema_clause = ""
+        if output_schema_hint and output_schema_hint.strip():
+            schema_clause = (
+                f"\n\nRETURN FORMAT: respond with a JSON object/array "
+                f"matching this shape exactly (use real values from the "
+                f"page, do not echo the placeholder types):\n"
+                f"{output_schema_hint.strip()}"
+            )
+
         extraction_prompt = (
             "You are an expert page-content extractor. Given a page's "
             "visible text and a query, return ONLY the answer to the "
             "query — no preamble, no explanation, no markdown formatting "
             "unless the answer requires structure. If the page does not "
-            "contain the answer, reply exactly: NOT FOUND.\n\n"
-            f"PAGE URL: {url}\n\n"
+            "contain the answer, reply exactly: NOT FOUND."
+            + schema_clause + "\n\n"
+            f"PAGE URL: {url}\n"
+            f"PAGE OFFSET: {start_from_char} chars\n\n"
             f"QUERY: {query}\n\n"
             f"PAGE TEXT:\n{page}"
         )
@@ -511,4 +626,7 @@ EXTRA_STATELESS_TOOLS = [
     send_keys,
     go_back,
     evaluate_js,
+    web_search,        # v0.6.5
+    extract_links,     # v0.6.5
+    extract_images,    # v0.6.5
 ]
