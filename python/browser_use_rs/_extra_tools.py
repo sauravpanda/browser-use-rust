@@ -570,16 +570,57 @@ def make_extra_tools(agent: Any) -> list:
         if cache_key in extract_cache:
             return f"(cached) {extract_cache[cache_key]}"
 
-        # Use page_text — faster than the full DOM snapshot serialization
-        # and gives the extractor LLM raw rendered text. We over-fetch
-        # so the slice has full max_chars regardless of start offset.
-        page = await session.page_text(max_chars + start_from_char + 1000)
+        # Markdown extraction (v0.7.1): pull the page DOM and convert
+        # to a cleaned markdown-style text. Drops scripts/styles/nav/
+        # footer/aside (the chrome that pollutes raw page_text) and
+        # converts headings, links, and lists into markdown markers
+        # the LLM is well-trained on. Falls back to raw page_text if
+        # the markdown extractor errors.
+        markdown_js = r"""
+            (() => {
+                try {
+                    const root = document.body.cloneNode(true);
+                    for (const sel of ['script','style','noscript','nav','footer','aside','iframe']) {
+                        for (const el of root.querySelectorAll(sel)) el.remove();
+                    }
+                    for (const h of root.querySelectorAll('h1,h2,h3,h4,h5,h6')) {
+                        const lvl = parseInt(h.tagName[1]);
+                        h.innerHTML = '\n' + '#'.repeat(lvl) + ' ' + h.textContent.trim() + '\n';
+                    }
+                    for (const a of root.querySelectorAll('a[href]')) {
+                        const t = (a.textContent || '').trim();
+                        const href = a.getAttribute('href');
+                        if (t && href) a.innerHTML = `[${t}](${href})`;
+                    }
+                    for (const li of root.querySelectorAll('li')) {
+                        li.innerHTML = '\n- ' + li.textContent.trim();
+                    }
+                    for (const tag of ['p','div','section','article']) {
+                        for (const el of root.querySelectorAll(tag)) {
+                            el.innerHTML = '\n' + el.innerHTML + '\n';
+                        }
+                    }
+                    let txt = root.innerText || root.textContent || '';
+                    txt = txt.replace(/\n{3,}/g, '\n\n').replace(/[ \t]+/g, ' ').trim();
+                    return txt;
+                } catch (e) { return ''; }
+            })()
+        """
+        page = ""
+        try:
+            page = await session.evaluate(markdown_js)
+        except Exception:
+            page = ""
+        if not page:
+            page = await session.page_text(max_chars + start_from_char + 1000)
         if not page or not page.strip():
             return "(page is empty — cannot extract)"
         if start_from_char > 0:
             if start_from_char >= len(page):
                 return f"(start_from_char={start_from_char} is past end of page text len={len(page)})"
             page = page[start_from_char : start_from_char + max_chars]
+        elif len(page) > max_chars:
+            page = page[:max_chars]
 
         schema_clause = ""
         if output_schema_hint and output_schema_hint.strip():

@@ -45,6 +45,30 @@ from browser_use_rs.views import (
     StepMetadata,
 )
 
+# Flash-mode prompt — terse variant matching upstream's
+# system_prompt_flash.md. Used when flash_mode=True is passed to the
+# Agent (eval framework default for many setups). Mirrors upstream's
+# convention of swapping prompt templates based on mode. v0.7.1.
+FLASH_SYSTEM_PROMPT = """\
+You are an AI agent designed to operate in an iterative loop to automate browser tasks. Your ultimate goal is accomplishing the task provided in <user_request>.
+
+<browser_state>Elements: [N]<tag attrs>text</tag>. Only [indexed] elements are interactive. Lines starting with <tag> "..." are static text content (not clickable). Indented lines are children of the element above.</browser_state>
+
+<action_rules>
+Check the browser state each step to verify your previous action achieved its goal. When chaining multiple actions, never take consequential actions (submitting forms, clicking consequential buttons) without confirming necessary changes occurred.
+
+For extraction tasks (find/list/answer): PREFER `extract_structured_data(query=...)` over scrolling and reading raw page_text. The extractor uses an LLM over the cleaned page — far more reliable than reasoning manually.
+
+For multi-page tasks: use the file system. write_file("notes.md", content) saves partial extractions; replace_file_str("todo.md", "[ ]", "[x]") tracks progress; the file survives history collapse.
+</action_rules>
+
+<output>
+Before finalizing your answer, re-read the user request, verify every requirement is met (correct count, filters applied, format matched), confirm actions actually completed via page state/screenshot, and ensure no data was fabricated.
+
+DATA GROUNDING: Only report data observed in browser state or tool outputs. Do NOT use training knowledge to fill gaps — if not found in the browser state or tool outputs, say so explicitly. Never fabricate values.
+</output>
+"""
+
 DEFAULT_SYSTEM_PROMPT = """\
 You are a browser-use agent. You control a real Chromium browser through a
 small set of tools and complete the user's task by calling them.
@@ -168,13 +192,9 @@ _VALIDATION_CHECKLIST = (
 _VALIDATION_PROMPT_TEXT = (
     "[VALIDATION_CHECK] You are about to finalize your answer.\n"
     + _VALIDATION_CHECKLIST
-    + "STRONGLY RECOMMENDED: before finalizing, call "
-    "`extract_structured_data(query=...)` with the EXACT user task "
-    "as the query, on the page that should contain the answer. "
-    "Compare the extractor's output to your proposed answer. If they "
-    "disagree, the extractor is usually right (it reads the actual "
-    "page text fresh). Only finalize when extractor and your answer "
-    "agree.\n"
+    + "If you have NOT already extracted the answer from the page in "
+    "this task, call `extract_structured_data(query=...)` once now to "
+    "verify. Skip if you already have a fresh extract result.\n"
     "If anything is wrong or incomplete: call the tools you need to "
     "fix it (navigate, scroll, find_elements, extract_structured_data). "
     "If everything is correct: repeat your answer in plain text to "
@@ -290,6 +310,20 @@ class Agent:
         self.page_extraction_llm: BaseChatModel | None = _compat_kwargs.pop(
             "page_extraction_llm", None,
         )
+        # Pre-existing file paths the agent can read (mirrors upstream's
+        # available_file_paths kwarg). Injected once into the system
+        # prompt so the LLM knows what's accessible. v0.7.1.
+        self.available_file_paths: list[str] = list(
+            _compat_kwargs.pop("available_file_paths", []) or [],
+        )
+        # Storage state / cookies bootstrap: accept the kwarg (eval may
+        # pass it for sites needing pre-auth) and stash for later
+        # session.start. v0.7.1.
+        self._initial_cookies: list[dict] = list(
+            _compat_kwargs.pop("storage_state", {}).get("cookies", []) or [],
+        ) if isinstance(_compat_kwargs.get("storage_state"), dict) else []
+        if "storage_state" in _compat_kwargs:
+            _compat_kwargs.pop("storage_state", None)
         # Honor eval-relevant kwargs the eval framework passes (v0.6.2).
         # Without these we'd silently run with WRONG settings vs upstream.
         # See evaluations-internal/eval/service.py:343 — Agent is built
@@ -303,19 +337,15 @@ class Agent:
             "max_actions_per_step", None,
         )
         self.images_per_step: int = int(_compat_kwargs.pop("images_per_step", 1))
-        # Stash but don't act on (no prompt-template variants yet); log a
-        # one-time warning so consumers know the difference from upstream.
-        _flash_mode = _compat_kwargs.pop("flash_mode", None)
+        # flash_mode swaps the system prompt to a terser, eval-style
+        # variant matching upstream's system_prompt_flash.md. v0.7.1.
+        # use_thinking is still no-op (no thinking-disabled variant yet).
+        self.flash_mode: bool = bool(_compat_kwargs.pop("flash_mode", False))
         _use_thinking = _compat_kwargs.pop("use_thinking", None)
-        if _flash_mode is not None or _use_thinking is not None:
-            logger.warning(
-                "agent: flash_mode=%s and use_thinking=%s passed but "
-                "browser_use_rs uses a single DEFAULT_SYSTEM_PROMPT "
-                "(no template variants yet). Behavior matches upstream's "
-                "system_prompt.md (default), not system_prompt_flash.md "
-                "or system_prompt_no_thinking.md. v0.7.x will add the "
-                "templates.",
-                _flash_mode, _use_thinking,
+        if _use_thinking is not None and not _use_thinking:
+            logger.info(
+                "agent: use_thinking=False received; we don't have a "
+                "no-thinking template yet. Using the standard prompt.",
             )
         # Anything left is genuinely unused — warn loudly so the user
         # sees it in eval logs and can either patch the agent or stop
@@ -365,7 +395,21 @@ class Agent:
         if override_system_message is not None:
             self.system_prompt = override_system_message
         else:
-            self.system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
+            # flash_mode (eval default in many setups) selects the
+            # terser, upstream-matching prompt. Otherwise our richer
+            # default. v0.7.1.
+            base_prompt = (
+                system_prompt
+                or (FLASH_SYSTEM_PROMPT if self.flash_mode else DEFAULT_SYSTEM_PROMPT)
+            )
+            self.system_prompt = base_prompt
+            # Inject available_file_paths so the agent knows what files
+            # it can read_file() up front. v0.7.1.
+            if self.available_file_paths:
+                paths_block = "\n".join(f"  - {p}" for p in self.available_file_paths)
+                self.system_prompt += (
+                    f"\n\nPre-existing files available to read via read_file:\n{paths_block}"
+                )
             if extend_system_message:
                 self.system_prompt = (
                     self.system_prompt.rstrip() + "\n\n" + extend_system_message
@@ -429,6 +473,13 @@ class Agent:
         # with selectors instead of bare indices, so cross-turn
         # references remain meaningful after DOM mutation. v0.5.0.
         self._index_to_selector: dict[int, str] = {}
+        # Track selectors seen in the previous snapshot. Used to mark
+        # NEW elements (those whose selector wasn't in the prior step's
+        # snapshot) with a `*` prefix in the next page-state injection.
+        # Mirrors upstream's `*` marker. Helps the LLM see what JUST
+        # appeared (e.g. autocomplete dropdown after typing) vs what
+        # was already there. v0.7.1.
+        self._prev_selectors: set[str] = set()
         # Page-stagnation fingerprint (v0.6.3). After N consecutive
         # identical (url, element_count, dom_text_hash) snapshots, the
         # agent's actions clearly aren't moving the page. Inject a
@@ -616,6 +667,23 @@ class Agent:
 
             state_summary = await self._capture_state()
             self._inject_page_state(state_summary)
+
+            # CAPTCHA wait (v0.7.1). If the snapshot mentions captcha
+            # keywords, the page is likely showing a Cloudflare /
+            # hCaptcha / reCAPTCHA challenge. Upstream sleeps a bit
+            # rather than aborting; we do the same — sometimes the
+            # challenge auto-resolves (Cloudflare's "checking your
+            # browser") within a few seconds.
+            try:
+                _dom_lc = (state_summary.elements_text or "").lower()
+                if any(k in _dom_lc for k in (
+                    "captcha", "verify you are human", "checking your browser",
+                    "cloudflare", "hcaptcha", "recaptcha",
+                )):
+                    logger.info("agent: captcha detected, waiting 5s")
+                    await asyncio.sleep(5)
+            except Exception:
+                pass
 
             # Page-stagnation nudge (v0.6.3). Hash the (url, element
             # count, head of DOM text) and compare to the prior step.
@@ -1448,7 +1516,34 @@ class Agent:
                     for e in snap.elements
                     if e.index != 0
                 }
-                return snap.to_llm_string(), idx_to_sel
+                # New-element marker (v0.7.1). Mark interactive elements
+                # whose selectors weren't in the previous snapshot with
+                # a `*` prefix. Helps the LLM see what JUST appeared.
+                dom_text = snap.to_llm_string()
+                cur_selectors = set(idx_to_sel.values())
+                if self._prev_selectors:
+                    new_selectors = cur_selectors - self._prev_selectors
+                    if new_selectors:
+                        # Build a fast index→isNew lookup, then prefix
+                        # the matching `[N]<` lines with `*`.
+                        new_indices = {
+                            idx for idx, sel in idx_to_sel.items()
+                            if sel in new_selectors
+                        }
+                        out_lines = []
+                        for line in dom_text.splitlines():
+                            stripped = line.lstrip("\t|scroll|")
+                            if stripped.startswith("["):
+                                try:
+                                    n = int(stripped[1:].split("]")[0])
+                                    if n in new_indices:
+                                        line = line.replace(f"[{n}]", f"*[{n}]", 1)
+                                except (ValueError, IndexError):
+                                    pass
+                            out_lines.append(line)
+                        dom_text = "\n".join(out_lines)
+                self._prev_selectors = cur_selectors
+                return dom_text, idx_to_sel
             except Exception:
                 # No active page yet (very first step before
                 # initial_actions navigate, or a frame transition
