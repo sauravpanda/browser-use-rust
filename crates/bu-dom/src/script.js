@@ -5,30 +5,17 @@
         'a', 'button', 'input', 'select', 'textarea'
     ]);
 
-    // Static text containers — non-interactive but carry the page's
-    // actual content. Without these, the agent literally can't see
-    // headlines / paragraphs / list items / table cells, which is the
-    // primary failure mode on extract-style WebBench tasks. Mirrors
-    // upstream browser_use's serializer which emits text nodes
-    // interleaved with interactive elements (see
-    // browser_use/dom/serializer/serializer.py:1049+). v0.5.7.
-    //
-    // v0.5.8: narrowed by dropping span/div/label. v0.5.7 included
-    // span+div as catch-all and judge dropped 53% -> 50% — the agent
-    // got noise from <span class="meta">/nav/footer chrome instead of
-    // useful content, then confidently extracted from the wrong block.
-    // Sticking to genuinely-content tags: headings, paragraphs, list
-    // items, table cells, time, blockquote, figcaption.
-    const STATIC_TEXT_TAGS = new Set([
-        'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-        'p', 'li', 'td', 'th', 'dt', 'dd',
-        'blockquote', 'figcaption', 'time',
-    ]);
-
-    // Don't bloat the snapshot with the big block-level containers
-    // (article/main/section/div) — their text gets covered by the
-    // narrower descendants (h1/p/li/...) and including them too would
-    // duplicate every paragraph at multiple depths.
+    // Static text containers were emitted in v0.5.7 (full set) and
+    // v0.5.8 (narrowed); both regressed judge by ~2pp on
+    // gemini-3-flash-preview. Theory: bloating the snapshot with
+    // duplicate text fragments confused the agent's index referencing —
+    // it had to scan more lines to find the [N] of an interactive
+    // element it wanted, and sometimes picked text-only lines as click
+    // targets. v0.6.1 reverts back to interactive-only emission;
+    // extract_structured_data + page_text + find_elements (all v0.6.0)
+    // give the agent richer access to the same content via dedicated
+    // tool calls that don't pollute the snapshot.
+    const STATIC_TEXT_TAGS = new Set();  // empty — kept for compat
     const STATIC_TEXT_BLOCK_THRESHOLD = 2;
     const STATIC_TEXT_MAX_LEN = 280;
 
