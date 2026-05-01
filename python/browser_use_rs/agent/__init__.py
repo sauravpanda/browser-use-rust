@@ -62,6 +62,10 @@ For extraction tasks (find/list/answer): PREFER `extract_structured_data(query=.
 For multi-page tasks: use the file system. write_file("notes.md", content) saves partial extractions; replace_file_str("todo.md", "[ ]", "[x]") tracks progress; the file survives history collapse.
 </action_rules>
 
+<blocked_sites>
+If the target site returns 403 / Cloudflare bot-detection / Turnstile / login wall / paywall, do NOT retry the same URL and do NOT invent content. Required fallbacks in order: (1) `web_search(query=...)` — search engine snippets often contain the answer; (2) try alternative endpoints (mobile.* / m.* / /amp/ / sitemap / RSS); (3) if still blocked after 2-3 attempts, set `success=False` and state what blocked you. Confidently-wrong fabricated answers fail the judge harder than honest "I was blocked" answers. CAPTCHAs auto-resolve — wait one turn before treating one as a hard block.
+</blocked_sites>
+
 <output>
 Before finalizing your answer, re-read the user request, verify every requirement is met (correct count, filters applied, format matched), confirm actions actually completed via page state/screenshot, and ensure no data was fabricated.
 
@@ -125,6 +129,27 @@ dominated by such an overlay, your FIRST action must be to dismiss it
 (Accept, Agree, Continue, OK, Got it, Allow, Dismiss, Close, Skip,
 Maybe later, No thanks, X). Do NOT conclude "task impossible" on
 your first turn — the real content is almost always one click away.
+
+Blocked sites — alternative approaches REQUIRED:
+If the target site returns 403 / "access denied" / Cloudflare bot-
+detection / Turnstile / persistent login wall / paywall, do NOT
+repeatedly retry the same URL and do NOT invent content.
+
+  1. Try `web_search(query="<specific information needed>")` — search
+     engine snippets and cached results often contain the answer the
+     blocked page would have shown. This is the single most useful
+     fallback — use it whenever a target site blocks you.
+  2. Try alternative endpoints on the same site: mobile.* subdomain,
+     m.* subdomain, /amp/ variants, RSS feeds, sitemap.xml.
+  3. CAPTCHAs auto-resolve — wait ONE turn after a CAPTCHA appears
+     before treating it as a hard block.
+  4. If after 2-3 alternative attempts you still cannot retrieve the
+     information, finish HONESTLY: set `success=False` on done (or
+     for plain-text answers, state explicitly that you could not
+     access the data and what blocked you). Do NOT paraphrase or
+     fabricate content as if you had retrieved it from the live site
+     — the judge will reject confidently-wrong answers harder than
+     honest "I was blocked" answers.
 
 When calling tools: never invent values for required arguments. If the
 snapshot doesn't show what you need (no [N] for the element, no text
@@ -208,6 +233,18 @@ _VALIDATION_CHECKLIST = (
     "Y's page, your answer is wrong even if it's well-formed. Common "
     "trap: clicking the first search result without verifying it's the "
     "right entity.\n"
+    "\n"
+    "STEP 4 — Honest success flag (CRITICAL).\n"
+    "If your reasoning or answer mentions ANY of: 'I cannot access', "
+    "'I was unable to', 'blocked', '403', 'forbidden', 'CAPTCHA', "
+    "'login required', 'sign-in required', 'Cloudflare', or 'unable to "
+    "retrieve' for the target site AND you did NOT successfully retrieve "
+    "the answer via web_search or alternative pages, you MUST set "
+    "success=False on done. Do NOT paraphrase typical/likely content as "
+    "if you had retrieved it from the live site — the judge rejects "
+    "confidently-wrong fabricated answers harder than honest \"I was "
+    "blocked\" answers. If you have NOT yet tried `web_search(query=...)` "
+    "as a fallback, do that NOW before finalizing.\n"
 )
 
 _VALIDATION_PROMPT_TEXT = (
