@@ -42,7 +42,7 @@ dependencies = [
 
 [[package]]
 name = "bu-browser"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "base64",
  "bu-cdp",
@@ -57,7 +57,7 @@ dependencies = [
 
 [[package]]
 name = "bu-cdp"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -72,7 +72,7 @@ dependencies = [
 
 [[package]]
 name = "bu-dom"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "bu-cdp",
  "serde",
@@ -83,7 +83,7 @@ dependencies = [
 
 [[package]]
 name = "bu-py"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "bu-browser",
  "bu-cdp",

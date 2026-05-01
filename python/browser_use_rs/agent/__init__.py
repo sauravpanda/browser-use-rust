@@ -276,7 +276,16 @@ class Agent:
         # runs. Combined with read-tool exclusion (turns containing
         # any read tool stay native indefinitely), the LLM keeps full
         # access to content it already extracted.
-        history_window_steps: int = 6,
+        #
+        # v0.8.2: dropped 6 → 3 as the v0.8.x cost-optimization arc.
+        # Average per-turn input tokens scale linearly with K. With
+        # K=6 our v0.7.3 run averaged ~10k input tokens/turn at the
+        # tail; K=3 should drop that ~40%, taking $0.131/task toward
+        # $0.10. Read-tool exclusion still in effect — extracted
+        # content stays native. The earlier K=3 regression was on
+        # v0.5.0 BEFORE we had read-tool exclusion + persistent
+        # selector retargeting; both should now compensate.
+        history_window_steps: int = 3,
         use_vision: bool = True,
         sensitive_data: dict[str, str] | None = None,
         system_prompt: str | None = None,
