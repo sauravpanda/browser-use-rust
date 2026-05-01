@@ -1382,42 +1382,21 @@ class Agent:
         # calls in this turn (name+args, JSON-sorted), and track the
         # tool names emitted per turn for the no-extract heuristic.
         #
-        # v0.8.5 — strip volatile element-locator keys (`index`,
-        # `selector`) from args before hashing the sig. The DOM walker
-        # re-numbers indices each step, so `click(index=5) → scroll →
-        # click(index=12) → scroll → click(index=23)` is the *same
-        # logical loop* (clicking through a list, scrolling, clicking
-        # again) but produced three different sigs in v0.8.4 and
-        # earlier — the tight-loop detector never fired. Stripping
-        # `index`/`selector` collapses these into one sig.
-        #
-        # Args left intact: `text`, `url`, `query`, `direction`, etc.
-        # — different values for those reflect *different intent* and
-        # are legitimately different actions. Only the locator-style
-        # args (which point at elements that re-number each turn) get
-        # stripped.
-        _LOOP_VOLATILE_ARG_KEYS = ("index", "selector")
-
-        def _normalize_args_for_sig(args):
-            if not isinstance(args, dict):
-                return args
-            return {
-                k: v for k, v in args.items()
-                if k not in _LOOP_VOLATILE_ARG_KEYS
-            }
-
+        # v0.8.6 — reverted v0.8.5's index/selector stripping. Eval at
+        # 100-step showed -3pp judge / +20% cost vs v0.8.4: the looser
+        # sig matched legit list-iteration patterns (click(idx=5) →
+        # click(idx=12) → click(idx=23) is often the LLM walking
+        # search results, not a loop), firing LOOP_DETECTED nudges
+        # that bloated context AND confused the LLM into backtracking.
+        # Strict (full-args) matching is restored. A future revisit
+        # could try a higher REPEAT_THRESHOLD with normalization, or
+        # detect loops via different signal (e.g., zero new content
+        # extracted across N turns).
         try:
             import json as _json
 
             sig_payload = sorted(
-                (
-                    tc.name,
-                    _json.dumps(
-                        _normalize_args_for_sig(tc.args),
-                        sort_keys=True,
-                        default=str,
-                    ),
-                )
+                (tc.name, _json.dumps(tc.args, sort_keys=True, default=str))
                 for tc in tool_calls
             )
             sig = _json.dumps(sig_payload)
