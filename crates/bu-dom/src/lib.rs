@@ -71,12 +71,24 @@ pub struct DomElement {
     pub bbox: Bbox,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PageInfo {
+    pub pages_above: f64,
+    pub pages_below: f64,
+    pub scroll_y: f64,
+    pub doc_height: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DomState {
     pub url: String,
     pub title: String,
     pub viewport: Viewport,
     pub elements: Vec<DomElement>,
+    /// Scroll position relative to the document. Renders as "X pages
+    /// above, Y pages below" in the LLM string. v0.6.3.
+    #[serde(default)]
+    pub page_info: PageInfo,
 }
 
 impl DomState {
@@ -91,14 +103,34 @@ impl DomState {
     /// `[1]<button id="x">Sign in</button>` per line for interactive
     /// elements, plus `<h2> "Today's News"` style lines for static text
     /// content (index == 0 sentinel; not clickable). Header with
-    /// url/title. v0.5.7.
+    /// url/title and a `<page_info>` summary of scroll position.
+    /// `|scroll|` prefix on elements that are scrollable containers.
+    /// v0.6.3.
     pub fn to_llm_string(&self) -> String {
         let mut out = String::with_capacity(64 * self.elements.len());
         out.push_str(&format!("URL: {}\nTITLE: {}\n", self.url, self.title));
         out.push_str(&format!(
-            "VIEWPORT: {}x{}\n\nELEMENTS:\n",
+            "VIEWPORT: {}x{}\n",
             self.viewport.width, self.viewport.height
         ));
+        // page_info — scroll context. Mirrors upstream's <page_info>
+        // block. Tells the agent how much content sits above/below the
+        // viewport so it knows whether to scroll vs assume nothing more
+        // is there. v0.6.3.
+        let pi = &self.page_info;
+        if pi.doc_height > 0.0 {
+            out.push_str(&format!(
+                "PAGE_INFO: {:.1} pages above, {:.1} pages below",
+                pi.pages_above, pi.pages_below,
+            ));
+            if pi.pages_below > 0.2 {
+                out.push_str(" — scroll down to reveal more");
+            } else if pi.pages_above < 0.1 && pi.pages_below < 0.1 {
+                out.push_str(" — entire page visible");
+            }
+            out.push('\n');
+        }
+        out.push_str("\nELEMENTS:\n");
         for el in &self.elements {
             if el.index == 0 {
                 // Static text content — not clickable. Rendered without
@@ -108,8 +140,24 @@ impl DomState {
                 out.push_str(&format!("<{}> \"{}\"\n", el.tag, escaped));
                 continue;
             }
-            out.push_str(&format!("[{}]<{}", el.index, el.tag));
+            // Scrollable-container marker (v0.6.3): rendered before the
+            // [N] prefix so the agent sees `|scroll|[5]<div>` and knows
+            // it can scroll inside element 5 (vs scrolling the page).
+            let scroll_prefix = if el
+                .attrs
+                .get("scrollable")
+                .map(|v| v == "true")
+                .unwrap_or(false)
+            {
+                "|scroll|"
+            } else {
+                ""
+            };
+            out.push_str(&format!("{scroll_prefix}[{}]<{}", el.index, el.tag));
             for (k, v) in &el.attrs {
+                if k == "scrollable" {
+                    continue; // already shown via the prefix
+                }
                 let escaped = v.replace('"', "\\\"");
                 out.push_str(&format!(" {k}=\"{escaped}\""));
             }

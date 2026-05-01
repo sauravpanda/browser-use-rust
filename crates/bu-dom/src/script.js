@@ -95,6 +95,18 @@
         return (el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
     };
 
+    // ISO formats for HTML5 date/time inputs. Browser DISPLAYS in
+    // locale format but the .value attribute always uses these. Mirrors
+    // upstream browser_use's serializer which adds a 'format' attr to
+    // date inputs so the LLM can't get it wrong. v0.6.3.
+    const DATE_INPUT_FORMATS = {
+        'date': 'YYYY-MM-DD',
+        'time': 'HH:MM',
+        'datetime-local': 'YYYY-MM-DDTHH:MM',
+        'month': 'YYYY-MM',
+        'week': 'YYYY-Www',
+    };
+
     const collectAttrs = (el) => {
         const out = {};
         for (const k of KEEP_ATTRS) {
@@ -110,7 +122,50 @@
         if (src && !src.startsWith('data:') && src.length <= 200) {
             out['src'] = src;
         }
+        // Date/time format hint (v0.6.3): browser-use upstream adds
+        // this so the LLM can't guess the wrong format and fail
+        // silently when typing into date inputs.
+        const tag = el.tagName.toLowerCase();
+        if (tag === 'input') {
+            const t = (el.getAttribute('type') || '').toLowerCase();
+            if (t in DATE_INPUT_FORMATS) {
+                out['format'] = DATE_INPUT_FORMATS[t];
+            }
+        }
+        // Select options preview (v0.6.3): list the first 4 option
+        // labels inline so the LLM can tell what to pick without a
+        // separate get_dropdown_options call. Mirrors upstream's
+        // compound_children info on selects.
+        if (tag === 'select') {
+            try {
+                const opts = [];
+                for (let i = 0; i < el.options.length && opts.length < 4; i++) {
+                    const o = el.options[i];
+                    const t = (o.text || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+                    if (t) opts.push(t);
+                }
+                if (opts.length) {
+                    out['options'] = opts.join('|');
+                    if (el.options.length > opts.length) {
+                        out['option_count'] = String(el.options.length);
+                    }
+                }
+            } catch (e) { /* defensive */ }
+        }
         return out;
+    };
+
+    // Detect a genuinely-scrollable container: overflow allows scroll AND
+    // there's actually content beyond the visible bounds. Mirrors upstream's
+    // is_actually_scrollable check. Used to tag elements with a `|scroll|`
+    // marker so the agent knows it can scroll *inside* this container, not
+    // just the page. v0.6.3.
+    const isScrollContainer = (el, style) => {
+        const oy = style.overflowY;
+        const ox = style.overflowX;
+        const scrollable_y = (oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight + 4;
+        const scrollable_x = (ox === 'auto' || ox === 'scroll') && el.scrollWidth > el.clientWidth + 4;
+        return scrollable_y || scrollable_x;
     };
 
     // Clear stale data-bu-idx everywhere it might live (top doc + same-origin iframes).
@@ -231,6 +286,13 @@
             const text = collectText(el);
             const attrs = collectAttrs(el);
             if (!text && Object.keys(attrs).length === 0) continue;
+            // Tag scrollable containers so the agent knows to scroll
+            // INSIDE them (e.g. infinite-scroll product grids, comment
+            // threads in modals) rather than scrolling the whole page.
+            // v0.6.3.
+            if (isScrollContainer(el, style)) {
+                attrs['scrollable'] = 'true';
+            }
 
             el.setAttribute('data-bu-idx', String(idx));
             seen.add(el);
@@ -259,6 +321,19 @@
 
     collect(document, 0, 0);
 
+    // Page scroll context (v0.6.3): tells the agent how much content
+    // is above/below the visible viewport so it can decide whether
+    // scrolling is worth it. Mirrors upstream's <page_info> block:
+    // 'X.X pages above, Y.Y pages below — scroll down to reveal more'.
+    const scrollY = window.scrollY || document.documentElement.scrollTop || 0;
+    const docH = Math.max(
+        document.body ? document.body.scrollHeight : 0,
+        document.documentElement ? document.documentElement.scrollHeight : 0,
+    );
+    const viewH = window.innerHeight || 1;
+    const pagesAbove = scrollY / viewH;
+    const pagesBelow = Math.max(0, (docH - scrollY - viewH) / viewH);
+
     return JSON.stringify({
         url: document.URL,
         title: document.title,
@@ -267,6 +342,12 @@
             height: window.innerHeight,
             device_pixel_ratio: window.devicePixelRatio
         },
-        elements: elements
+        elements: elements,
+        page_info: {
+            pages_above: Math.round(pagesAbove * 10) / 10,
+            pages_below: Math.round(pagesBelow * 10) / 10,
+            scroll_y: scrollY,
+            doc_height: docH,
+        }
     });
 })()

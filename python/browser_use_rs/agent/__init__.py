@@ -105,6 +105,20 @@ your first turn — the real content is almost always one click away.
 When calling tools: never invent values for required arguments. If the
 snapshot doesn't show what you need (no [N] for the element, no text
 to read), scroll, navigate, or extract first to get real values.
+
+For extraction tasks (find/list/answer questions about page content):
+PREFER `extract_structured_data(query=...)` over reading raw page_text.
+The extractor uses an LLM to answer your specific question over a
+cleaned page — far more reliable than dumping page_text and reasoning
+manually. Use `find_elements(selector, attributes)` to enumerate
+matching DOM nodes when you need raw HTML. Use `search_page(pattern)`
+when you just want to know "is X mentioned anywhere".
+
+For multi-page tasks where you collect data across several pages: use
+the file system. `write_file("notes.md", content)` to save partial
+extractions, `replace_file_str("todo.md", "[ ]", "[x]")` to track
+progress, `read_file("notes.md")` later. The history-collapse window
+loses old context; the file system survives it.
 """
 
 # Tag prefix that identifies auto-injected per-step page-state messages.
@@ -391,6 +405,15 @@ class Agent:
         # with selectors instead of bare indices, so cross-turn
         # references remain meaningful after DOM mutation. v0.5.0.
         self._index_to_selector: dict[int, str] = {}
+        # Page-stagnation fingerprint (v0.6.3). After N consecutive
+        # identical (url, element_count, dom_text_hash) snapshots, the
+        # agent's actions clearly aren't moving the page. Inject a
+        # one-shot 'you appear stuck' nudge so the LLM tries something
+        # different. Mirrors upstream's ActionLoopDetector. State
+        # tracked across steps as a (fingerprint, count) pair.
+        self._last_page_fp: str | None = None
+        self._page_fp_streak: int = 0
+        self._stagnation_nudged_at_streak: int = 0
         # Running collapsed history of older steps. Each entry: a
         # one-line "<step N> <action> → <result-summary>" string.
         self._collapsed_history: list[str] = []
@@ -569,6 +592,53 @@ class Agent:
 
             state_summary = await self._capture_state()
             self._inject_page_state(state_summary)
+
+            # Page-stagnation nudge (v0.6.3). Hash the (url, element
+            # count, head of DOM text) and compare to the prior step.
+            # If 3 in a row are identical, the agent is stuck — its
+            # actions aren't changing the page state. Inject a
+            # one-shot prompt to try a different approach.
+            try:
+                _dom_head = (state_summary.elements_text or "")[:1500]
+                _fp = (
+                    f"{state_summary.url}|"
+                    f"{len(self._valid_indices)}|"
+                    f"{hash(_dom_head)}"
+                )
+                if _fp == self._last_page_fp:
+                    self._page_fp_streak += 1
+                else:
+                    self._last_page_fp = _fp
+                    self._page_fp_streak = 1
+                    self._stagnation_nudged_at_streak = 0
+                if (
+                    self._page_fp_streak >= 3
+                    and self._page_fp_streak > self._stagnation_nudged_at_streak
+                ):
+                    self._stagnation_nudged_at_streak = self._page_fp_streak
+                    nudge = (
+                        f"[STAGNATION] The page state has not changed "
+                        f"for {self._page_fp_streak} consecutive steps "
+                        f"(same URL, same elements, same content). Your "
+                        f"recent actions are not having any effect. Try "
+                        f"a fundamentally different approach:\n"
+                        f"  - If you've been clicking, try scrolling or "
+                        f"a different element.\n"
+                        f"  - If a popup/overlay may be blocking, try "
+                        f"dismissing it first (Accept, Close, X).\n"
+                        f"  - If on the wrong page, navigate elsewhere.\n"
+                        f"  - If the answer is already on the page, "
+                        f"call extract_structured_data(query=...) and "
+                        f"finalize.\n"
+                        f"Do NOT repeat the same action type."
+                    )
+                    self._messages.append(UserMessage(content=nudge))
+                    logger.info(
+                        "agent: stagnation nudge injected at step %d "
+                        "(streak=%d)", step_n, self._page_fp_streak,
+                    )
+            except Exception as e:
+                logger.debug("page fingerprint check failed: %s", e)
 
             # Step-budget signals (v0.5.9), mirroring upstream browser_use's
             # _inject_budget_warning + _force_done_after_last_step:
