@@ -98,32 +98,73 @@ Each isolated on the v0.8.1 baseline. Order chosen to do cheap-and-safe cost win
 | v0.8.9 | reasoning XML mandate ALONE (re-test) | v0.7.5 cost win was real, judge re-test on baseline |
 | v0.8.10 | 2-pass validation prompt re-introduced ALONE | v0.6.5 was undercalled |
 
-### Phase 3 — codex parity items, judge-leverage ranked
+### Phase 3 — codex parity items (every codex complaint as its own version)
 
-Each as a single change, only after Phase 1+2 land. Most won't move judge but build production parity.
+Each as a single change on the v0.8.1 baseline, only after Phase 1+2 land. Most won't move judge but close out the production parity backlog. Codex item numbers cross-referenced.
 
-| Version | Codex item | Why this order |
+#### Phase 3a — constructor kwargs (codex #1) split by category
+
+| Version | Codex ref | Single change |
 |---|---|---|
-| v0.8.11 | constructor kwargs honored (`step_timeout`, `llm_timeout`, `vision_detail_level`) | small, may matter if eval passes them |
-| v0.8.12 | `include_attributes` kwarg honored — filters which DOM attrs we emit | could trim snapshot tokens |
-| v0.8.13 | `fallback_llm` rate-limit failover | helps tasks failing on transient model errors |
-| v0.8.14 | `available_file_paths` parity (real upstream FileSystem state) | already partial; close out |
-| v0.8.15 | `output_model_schema` direct task-enhancement path | structured output without controller dance |
-| v0.8.16 | typed `AgentOutput`/`AgentBrain` shape | parity for downstream code reading our trace |
-| v0.8.17 | upstream MessageManager core (recent_events, sample_images, screenshot resize) | medium refactor, may help judge if eval relies on these signals |
-| v0.8.18 | real planner (`PlanItem`, `enable_planning`, `planning_replan_on_stall`) | bigger lift; may close planning-side judge gap |
-| v0.8.19 | full upstream judge construction in `_judge_and_log` | parity but eval judge is identical so low judge-score impact |
-| v0.8.20+ | lifecycle API (pause/resume/stop), telemetry/event bus, artifacts (save_conversation_path, GIF), full AgentHistoryList | infra parity, post-judge-parity hardening |
+| v0.8.11 | #1 | Honor `step_timeout` + `llm_timeout` (per-step + per-LLM-call timeouts; eval may pass both). Default to `tool_timeout` value if unset. |
+| v0.8.12 | #1 | Honor `vision_detail_level` + `include_attributes` + `sample_images`. Vision detail (`auto`/`low`/`high`) goes to image rendering; include_attributes filters DOM walker output (token saver); sample_images attaches in user message. |
+| v0.8.13 | #1 | Honor `browser_profile` + `browser` + `file_system_path` + `save_conversation_path`. Profile/browser map to BrowserSession config; file_system_path overrides our temp sandbox; save_conversation_path triggers a transcript writer (covered more in v0.8.24). |
+| v0.8.14 | #1 | Honor `skills` / `skill_ids` / `skill_service` (treat as no-op compatibly with WARN log unless we have a real implementation). Honor `demo_mode`, `enable_planning` (real impl in v0.8.20), `pricing_url`, `calculate_cost`, `generate_gif` (real impl in v0.8.25), `extraction_schema`, `output_model_schema` (real impl in v0.8.16). |
+
+#### Phase 3b — judge-relevant items
+
+| Version | Codex ref | Single change |
+|---|---|---|
+| v0.8.15 | #6 | `fallback_llm` rate-limit failover. On 429/5xx/Overloaded, retry on the fallback LLM if provided. Already have `with_retry`; this adds cross-LLM failover. |
+| v0.8.16 | #11 | Direct `output_model_schema` / `extraction_schema` task-enhancement path. Inject the schema into the task prompt at run() start so the LLM knows the expected output shape from turn 1, not just at done(). Mirrors upstream's task-enhance path. |
+| v0.8.17 | #8 | Full upstream FileSystem parity. Replace sandboxed temp dir with a `FileSystem` service: managed files (track creation/edit/read), output-file events, full done-text/display-files behavior, `file_system_path` actually used as root, parity with upstream's `available_file_paths` model (was partial in v0.7.2). |
+| v0.8.18 | #3 | Typed `AgentOutput` / `AgentBrain` shape + proper `use_thinking=False` no-op + real flash-mode reduced-output contract. Currently flash_mode is just a prompt swap; upstream actually changes the output schema (skips `thinking` field in flash). Implement parity. |
+| v0.8.19 | #4 | Upstream `MessageManager` core: include_attributes handling (DOM filter), screenshot resizing, recent browser events surfacing, sample_images injection, full message compaction settings (max_clickable_elements truncation, max_input_tokens etc), unavailable skills text. Medium refactor; may help judge if eval signals rely on these. |
+| v0.8.20 | #2 | Real planner: `PlanItem`, `enable_planning`, `planning_replan_on_stall`, `planning_exploration_limit`, plan list in agent state, plan markers (`[x]/[>]/[ ]/[-]`) shown in agent context. Mirrors upstream's first-class planning. Closes the planning-side judge gap if there is one. |
+| v0.8.21 | #7 | Full upstream judge construction in `_judge_and_log`. Pass the richer browser-state context (snapshots, screenshots, full agent history) the way upstream constructs its judge messages. Lower judge-score leverage (eval judge is identical) but parity for offline/inline judge use cases. |
+
+#### Phase 3c — operational + infra parity
+
+| Version | Codex ref | Single change |
+|---|---|---|
+| v0.8.22 | #5 | Public control API: `pause` / `resume` / `stop` state, external status callbacks, signal handling (SIGINT triggers graceful pause), event-based pause control (`asyncio.Event`-driven instead of poll). |
+| v0.8.23 | #9 part 1 | Telemetry events (anonymized) — agent_start, step_completed, run_finished, with versioned schema. No cloud sync yet. |
+| v0.8.24 | #9 part 2 | Cloud sync hooks: cloud task/session/step events. Pluggable `cloud_client` kwarg; default no-op. Match upstream's WAL-backed event bus shape. |
+| v0.8.25 | #10 | Artifacts: `save_conversation_path` writes a JSONL transcript per run; GIF generation from screenshot history; screenshot service equivalent (saves PNGs to a known dir); recording/HAR hooks. |
+| v0.8.26 | #12 | Richer `AgentHistoryList`: structured output deserialization (parse `output_model_schema` payloads), full browser state history per step, file system state snapshot per step, pause/stop state captured, loop detector state, richer action metadata (latency, retries, batched-with-others). |
 
 ### Phase 4 — final push to ≥73% if Phases 1-3 don't get us there
 
-If we plateau in Phase 3, options that were deferred earlier:
+If we plateau in Phase 3, options that were deferred earlier. Each as a single change.
 
-- **Real upstream prompt template port + JSON output paradigm** (~1 week). Biggest lift but closest to upstream's behavioral shape.
-- **Cheaper extraction LLM** (route extract_structured_data to claude-haiku/gemini-2-flash). Cost lever, may free budget for more aggressive agent loops.
-- **Per-model prompt tuning** — gemini-3-flash-preview may need different language than the generic upstream prompt.
+| Version | Single change | Reason |
+|---|---|---|
+| v0.8.27 | Port upstream's full `system_prompt.md` (269 lines) + JSON output paradigm | biggest single lever; closest to upstream behavioral shape; ~1 week effort |
+| v0.8.28 | Route extract_structured_data calls to claude-haiku-4-5 by default | cost lever — extract is 5% of cost today but if we double its usage in Phase 1+2 it grows |
+| v0.8.29 | Per-model prompt tuning — gemini-3-flash-preview specific language | gemini may need different phrasing than generic upstream prompt |
+| v0.8.30 | Cross-origin iframe DOM walking (currently same-origin only) | unblocks tasks where content lives in 3rd-party iframes |
+| v0.8.31 | Real shadow-DOM closed root attempt via CDP (not just open roots) | last DOM coverage gap |
 
-Re-tests above are independently informative regardless of result.
+### Release rule reminder
+
+**v0.9.0 ships only when judge ≥ 73%.** All work above stays in v0.8.x. If we hit parity at, say, v0.8.18, that's v0.9.0 and Phase 3c+ becomes v0.9.x.
+
+### Codex item → version map (cross-reference)
+
+| Codex # | Description | Version(s) |
+|---|---|---|
+| 1 | Constructor kwargs honored | v0.8.11, v0.8.12, v0.8.13, v0.8.14 |
+| 2 | Real planner | v0.8.20 |
+| 3 | Typed AgentOutput / use_thinking / flash-mode contract | v0.8.18 |
+| 4 | Full MessageManager | v0.8.19 |
+| 5 | Public control API (pause/resume/stop, signals) | v0.8.22 |
+| 6 | fallback_llm | v0.8.15 |
+| 7 | Full upstream judge construction | v0.8.21 |
+| 8 | FileSystem state parity | v0.8.17 |
+| 9 | Cloud telemetry / event bus | v0.8.23, v0.8.24 |
+| 10 | Artifacts (save_conversation, GIF, recording) | v0.8.25 |
+| 11 | Direct output_model_schema task path | v0.8.16 |
+| 12 | Richer AgentHistoryList | v0.8.26 |
 
 ## Codex's outstanding parity items (12)
 
