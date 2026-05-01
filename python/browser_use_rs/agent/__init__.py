@@ -238,6 +238,15 @@ class Agent:
         # one stuck call can consume the eval framework's whole stage
         # timeout and kill the run with a bare TimeoutError.
         tool_timeout: float = 30.0,
+        # Per-LLM-call timeout in seconds (v0.8.4). Caps how long the
+        # main agent LLM round-trip can hang. Most providers have an
+        # internal retry budget that can stretch a single ainvoke()
+        # past 60s under partial outages; without this cap the step
+        # silently consumes the eval framework's stage timeout. On
+        # timeout the step is recorded as a recoverable error and the
+        # loop continues — max_consecutive_errors eventually catches
+        # the persistent case and falls back to _force_final_answer.
+        llm_timeout: float = 90.0,
         # Self-validation: when True, inject a one-shot
         # "re-check before finalizing" prompt the first time the LLM
         # tries to finish. v0.4.15 default ON; flipped OFF in v0.4.19
@@ -409,6 +418,7 @@ class Agent:
         self.max_steps = max_steps
         self.max_consecutive_errors = max_consecutive_errors
         self.tool_timeout = tool_timeout
+        self.llm_timeout = llm_timeout
         self.self_validate = self_validate
         self.self_validate_min_steps = self_validate_min_steps
         self.scratchpad_enabled = scratchpad_enabled
@@ -884,12 +894,60 @@ class Agent:
                     )
                 )
 
-            completion = await self.llm.ainvoke(
-                self._messages,
-                self.tools,
-                system=self.system_prompt,
-            )
-            self._record_usage(step_n, completion.usage)
+            # v0.8.4: hard timeout + crash boundary on the LLM call.
+            # This is THE biggest unprotected path inside _loop. Without
+            # it, a single LLM rate-limit storm or 5xx past the
+            # provider's retry budget kills the entire run with no
+            # answer recorded. Catching here lets the step bookkeeping
+            # below count it as a failure and the agent keep trying;
+            # max_consecutive_errors eventually triggers
+            # _force_final_answer if the LLM stays unhealthy.
+            try:
+                completion = await asyncio.wait_for(
+                    self.llm.ainvoke(
+                        self._messages,
+                        self.tools,
+                        system=self.system_prompt,
+                    ),
+                    timeout=self.llm_timeout,
+                )
+                self._record_usage(step_n, completion.usage)
+            except Exception as llm_e:
+                # Exception is broad on purpose — providers raise all
+                # manner of typed errors (RateLimitError, APIError,
+                # network/SSL errors, schema validation, plus the
+                # asyncio.TimeoutError from wait_for above). We treat
+                # them uniformly as a recoverable step failure.
+                logger.warning(
+                    "agent: LLM call failed at step %d (%s: %s) — "
+                    "recording as step error and continuing",
+                    step_n, type(llm_e).__name__, str(llm_e)[:200],
+                )
+                err_msg = (
+                    f"LLM call failed: {type(llm_e).__name__}: "
+                    f"{str(llm_e)[:200]}"
+                )
+                self._append_history(
+                    state_summary,
+                    AgentOutput(text=None, tool_calls=[]),
+                    [ActionResult(error=err_msg)],
+                    t0,
+                    step_n,
+                )
+                self._consecutive_error_turns += 1
+                self.error_log.append((step_n, err_msg))
+                if self._consecutive_error_turns >= self.max_consecutive_errors:
+                    await self._force_final_answer(
+                        state_summary, step_n,
+                        reason=(
+                            f"{self._consecutive_error_turns} "
+                            f"consecutive LLM/step failures"
+                        ),
+                    )
+                    return
+                if on_step_end is not None:
+                    await _maybe_await(on_step_end())
+                continue
 
             # Parse <memory>/<next_goal>/<evaluation_previous_goal>
             # from completion.text and persist as agent state. Mirrors
@@ -1016,7 +1074,42 @@ class Agent:
                     [tc.name for tc in tool_calls],
                 )
 
-            results_and_msgs = await self._run_tools_sequentially(tool_calls)
+            # v0.8.4: crash boundary on the tool batch. _run_tool itself
+            # is well-defended (per-tool timeout, broad except, stale-
+            # element retargeting), but _run_tools_sequentially can fail
+            # at the orchestration layer — e.g., session.current_url()
+            # on a dead browser, or an unexpected exception from a tool
+            # that escapes _run_tool's net. Without this wrap, those
+            # surface as a hard run_agent crash. With it, the step is
+            # recorded as a recoverable failure and the loop continues.
+            try:
+                results_and_msgs = await self._run_tools_sequentially(tool_calls)
+            except Exception as tool_e:
+                logger.warning(
+                    "agent: tool batch crashed at step %d (%s: %s) — "
+                    "recording as step error and continuing",
+                    step_n, type(tool_e).__name__, str(tool_e)[:200],
+                )
+                err_msg = (
+                    f"tool batch crashed: {type(tool_e).__name__}: "
+                    f"{str(tool_e)[:200]}"
+                )
+                # Synthesize tool_message stubs for every requested tool
+                # call — the LLM provider expects a result for each id.
+                synthetic_msgs: list[tuple[ActionResult, ToolResultMessage]] = [
+                    (
+                        ActionResult(error=err_msg),
+                        ToolResultMessage(
+                            tool_call_id=tc.id,
+                            name=tc.name,
+                            content=err_msg,
+                            is_error=True,
+                        ),
+                    )
+                    for tc in tool_calls
+                ]
+                results_and_msgs = synthetic_msgs
+                self.error_log.append((step_n, err_msg))
             tool_results: list[ActionResult] = []
             done_result: ActionResult | None = None
             for action_result, tool_message in results_and_msgs:

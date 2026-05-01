@@ -90,12 +90,20 @@ Switching to **100-step budget from v0.8.x onward** so step-outs are unambiguous
 | Version | Single change | Expected |
 |---|---|---|
 | v0.8.2 | history_window_steps default 6 → 3 | cost ↓$0.02-$0.04, judge ±1pp |
-| v0.8.3 | top-level crash recovery in `Agent.run()` — wrap `_loop` in try/except, route crashes through `_force_final_answer` instead of re-raising | judge ↑1-3pp on crash-prone tasks (was 0% → now whatever partial answer survived); cost ±0¢ |
-| v0.8.4 | loop signature normalization — drop element `index` from tight-loop sig hash so "click idx 5 → click idx 12 → click idx 23" is detected as a loop | step-out% ↓3-6pp, judge ↑1-2pp, cost ↓$0.005-$0.01 |
-| v0.8.5 | hard abort on persistent loop — after 2 LOOP_DETECTED nudges OR stagnation streak ≥6, force `_force_final_answer` | step-out% ↓further, partial credit on remaining loopers |
-| v0.8.6 | max_consecutive_errors 5 → 3 | cost ↓$0.005, judge ±0pp |
-| v0.8.7 | prompt nudge "batch 2-3 safe actions per turn" | steps ↓ → cost ↓$0.02 |
-| v0.8.8 | cap extract_structured_data at 2 calls/task (hard) | cost ↓$0.005 |
+| v0.8.3 | top-level crash recovery in `Agent.run()` — wrap `_loop` in try/except, route crashes through `_force_final_answer` instead of re-raising | judge ↑1-3pp on crash-prone tasks (was 0% → now whatever partial answer survived); cost ±0¢. Outer last-resort layer. |
+| v0.8.4 | per-step defense (real layer 2): wrap LLM call (line 887) in `asyncio.wait_for(llm_timeout=90s)` + try/except; wrap tool batch (line 1019) in try/except. Crashes count as step errors → `max_consecutive_errors` triggers `_force_final_answer`; otherwise loop continues with the agent intact. Stops 80% of crashes from ever reaching the v0.8.3 fallback. | judge ↑2-4pp on previously-crashed tasks (agent now recovers and finishes properly instead of just emitting partial credit) |
+| v0.8.5 | loop signature normalization — drop element `index` from tight-loop sig hash so "click idx 5 → click idx 12 → click idx 23" is detected as a loop | step-out% ↓3-6pp, judge ↑1-2pp, cost ↓$0.005-$0.01 |
+| v0.8.6 | hard abort on persistent loop — after 2 LOOP_DETECTED nudges OR stagnation streak ≥6, force `_force_final_answer` | step-out% ↓further, partial credit on remaining loopers |
+| v0.8.7 | max_consecutive_errors 5 → 3 | cost ↓$0.005, judge ±0pp |
+| v0.8.8 | prompt nudge "batch 2-3 safe actions per turn" | steps ↓ → cost ↓$0.02 |
+| v0.8.9 | cap extract_structured_data at 2 calls/task (hard) | cost ↓$0.005 |
+
+**Three defense layers after v0.8.4:**
+1. Per-tool try/except (existing) → tool crashes become `ActionResult.error`
+2. Per-step try/except (v0.8.4) → step crashes become recoverable, agent continues task
+3. Top-level run() try/except (v0.8.3) → only fires if L2 itself dies, last-resort partial answer
+
+This stops `Stage errors: run_agent: ...` patterns at L2 in the common case; L3 only fires for truly unexpected escapes.
 
 ### Phase 2 — re-test miscalled regressions in isolation
 
