@@ -68,6 +68,8 @@ LOCATE-THEN-EXTRACT: when the task names a specific NAMED section/category/page 
 For time windows ("past week", "current week", "today", "latest", "most recent"), counts ("top 3", "first 5", "next three"), prices/attributes ("under $100", "with private pool"), do NOT search for the filter text as a section. Instead inspect the current results/list, use visible sort/filter controls if present, and extract matching items from the list.
 
 For multi-page tasks: use the file system. write_file("notes.md", content) saves partial extractions; replace_file_str("todo.md", "[ ]", "[x]") tracks progress; the file survives history collapse.
+
+Finalize via `done(text="<your answer>", success=true|false)`. Set success=true only if you completed the task with observed page evidence; success=false if blocked, data unavailable, or unsure. For "list N items / top N / first N" tasks, your answer should contain EXACTLY N items unless the page legitimately had fewer (state how many were available in that case). A plain-text turn (no tool calls) still works as a fallback but `done(...)` is preferred because it makes finalization explicit.
 </action_rules>
 
 <blocked_sites>
@@ -140,8 +142,16 @@ Strategy:
   path, the full content was too long to inline. Use `grep_scratchpad`
   with a specific pattern, or `read_scratchpad` with offset to page
   through it. Re-running `page_text` will just truncate again.
-- When the task is complete, respond with a final answer in plain text. Do
-  NOT call any further tools — your text turn is the answer.
+- When the task is complete, finalize via `done(text="<your answer>",
+  success=true|false)`. Set `success=true` only if you completed the
+  task with observed page evidence; `success=false` if blocked, data
+  unavailable, or unsure. For "list N items / top N / first N" tasks,
+  your `text` should contain EXACTLY N distinct items in the requested
+  order, unless the page legitimately had fewer (in which case state
+  explicitly that the page showed only M matching items). A plain-text
+  turn with no tool calls still works as a fallback, but `done(...)`
+  is preferred because it makes finalization explicit and lets the
+  runtime verify counts before committing.
 
 Per-turn state emission (for context survival across history compaction):
 On every turn that calls a tool, prefix your message with three short XML
@@ -655,6 +665,10 @@ class Agent:
         self._memory: str = ""
         self._next_goal: str = ""
         self._previous_evaluation: str = ""
+        # v0.8.27 — Top-N count-check guard fires AT MOST ONCE per task.
+        # Reset state when add_new_task() rotates the agent into a new
+        # task so the guard works on the next task too.
+        self._done_count_check_fired: bool = False
         # Track selectors seen in the previous snapshot. Used to mark
         # NEW elements (those whose selector wasn't in the prior step's
         # snapshot) with a `*` prefix in the next page-state injection.

@@ -861,13 +861,195 @@ def make_extra_tools(agent: Any) -> list:
         except Exception as e:
             return f"(extractor failed: {type(e).__name__}: {e})"
 
+    # ---------- v0.8.27: always-available done(text, success) tool ----
+    # Codex-recommended addition. The plain "no tool calls = done"
+    # heuristic worked but was implicit; this gives the LLM an explicit
+    # finalize action AND lets us wedge a Top-N count-check guard
+    # between the LLM saying "done" and the runtime committing the
+    # answer. Targets the dominant failure pattern (17 tasks where the
+    # agent over-claimed completion with too few list items).
+    #
+    # Skip registration if a Controller already added `done`
+    # (structured-output mode) — that one carries a payload schema and
+    # the loop has the corresponding parser. Adding our duplicate would
+    # confuse the LLM about which to call.
+
+    @tool
+    async def done(session, text: str, success: bool = True) -> str:
+        """Commit your final answer. Call this when the task is complete
+        (or unrecoverable) — your `text` becomes the final answer the
+        judge sees, and the agent loop terminates.
+
+        Args:
+            text: The final answer in plain text. For list/Top-N tasks
+                ("list top 3 headlines"), include EXACTLY N distinct
+                items in the requested order. If fewer than N matching
+                items were available on the page, include only those
+                and state explicitly that the page showed only M items.
+            success: True if you completed the task and your answer is
+                correct based on observed page evidence. False if you
+                were blocked, the data wasn't available, or you're
+                unsure.
+        """
+        # Top-N count-check guard. Fires AT MOST ONCE per task so we
+        # don't spin if the LLM genuinely cannot find more items —
+        # codex's design: nudge once, then trust the agent.
+        already_fired = getattr(agent, "_done_count_check_fired", False)
+        if success and not already_fired:
+            n_required = _parse_required_count(agent.task or "")
+            if n_required is not None and n_required >= 2:
+                n_found = _count_items_in_answer(text)
+                # Only nudge when SIGNIFICANTLY short — < ceil(N/2). A
+                # 3-of-5 partial is plausible; 1-of-5 is suspicious. Also
+                # skip if the agent already explicitly acknowledged
+                # partial coverage in the text (avoids double-prompting
+                # honest "only M available" answers).
+                acknowledges_partial = bool(
+                    re.search(
+                        r"\b(only|just|fewer than|less than|less|partial)\b.*"
+                        r"\b(item|result|article|headline|entry|game|review|"
+                        r"deal|product|listing|video|press release|"
+                        r"available|matching|found)\b",
+                        text,
+                        re.IGNORECASE,
+                    )
+                ) or bool(
+                    re.search(
+                        r"\b(showed|returned|displayed|had|contained)\b\s+"
+                        r"only\s+\d+",
+                        text,
+                        re.IGNORECASE,
+                    )
+                )
+                if (
+                    n_found is not None
+                    and n_found < (n_required + 1) // 2
+                    and not acknowledges_partial
+                ):
+                    agent._done_count_check_fired = True
+                    return (
+                        f"[DONE_COUNT_CHECK] The task asks for "
+                        f"{n_required} items but your answer appears "
+                        f"to contain only {n_found} list item(s). "
+                        f"Either:\n"
+                        f"  (a) extract more items from the page (call "
+                        f"extract_structured_data or scroll to reveal "
+                        f"more), OR\n"
+                        f"  (b) call done() again, including in your "
+                        f"text the explicit phrase 'the page showed "
+                        f"only X matching items' so the judge knows "
+                        f"this is a verified-partial answer, not an "
+                        f"oversight.\n"
+                        f"This guard fires once — your next done() "
+                        f"call will commit whatever you submit."
+                    )
+        # Encode for the agent loop's existing __DONE__ parser
+        # (agent/__init__.py: ~line 1369). The success flag must be 0
+        # or 1; payload follows the second colon.
+        return f"__DONE__:{int(bool(success))}:{text}"
+
     return [
         extract_structured_data,
         read_file,
         write_file,
         replace_file_str,
         list_files,
+        done,
     ]
+
+
+# ---------------------------------------------------------------------------
+# v0.8.27 Top-N parsing helpers (used by the always-available done tool).
+# Module-level so unit tests can hit them without spinning up an Agent.
+# ---------------------------------------------------------------------------
+
+_NUMBER_WORDS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+}
+
+_COUNT_PATTERNS = [
+    # "top 3", "top three", "first 5", "first five", "next 3"
+    re.compile(
+        r"\b(?:top|first|next|last|latest|recent)\s+"
+        r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b",
+        re.IGNORECASE,
+    ),
+    # "list 5 articles", "list five entries"
+    re.compile(
+        r"\blist\s+"
+        r"(\d+|two|three|four|five|six|seven|eight|nine|ten)\s+"
+        r"(?:item|article|headline|result|entry|game|review|deal|"
+        r"product|listing|video|press release|recipe|paragraph|"
+        r"option|topic|tour|community|hashtag|name|definition|fee|"
+        r"address|database|paper|recommendation|advisory|step)",
+        re.IGNORECASE,
+    ),
+    # "the 3 most recent", "the five highest"
+    re.compile(
+        r"\bthe\s+(\d+|two|three|four|five|six|seven|eight|nine|ten)\s+"
+        r"(?:most|highest|lowest|featured|recent|latest|top)",
+        re.IGNORECASE,
+    ),
+    # "5 (most recent|featured|highest|...)" without leading "the"
+    re.compile(
+        r"\b(\d+|two|three|four|five|six|seven|eight|nine|ten)\s+"
+        r"(?:most|featured|highest|lowest)\s+\w+",
+        re.IGNORECASE,
+    ),
+]
+
+
+def _parse_required_count(task: str) -> int | None:
+    """Extract N from task text when the task asks for N items.
+
+    Returns None when the task isn't a recognisable Top-N pattern.
+    Conservative on purpose — false positives cost the agent a
+    spurious nudge turn, so we only fire when the pattern is clearly
+    "give me N of something".
+    """
+    if not task:
+        return None
+    for pat in _COUNT_PATTERNS:
+        m = pat.search(task)
+        if m:
+            tok = m.group(1).lower()
+            if tok.isdigit():
+                n = int(tok)
+            else:
+                n = _NUMBER_WORDS.get(tok)
+            # Cap sanity: tasks asking for 50+ items aren't really
+            # Top-N, they're "extract everything" — skip the guard.
+            if n is not None and 1 <= n <= 20:
+                return n
+    return None
+
+
+def _count_items_in_answer(text: str) -> int | None:
+    """Heuristic count of distinct list items in a final-answer string.
+
+    Returns None when no recognisable list structure was detected (so
+    the count check skips and we don't misfire on prose answers).
+    """
+    if not text:
+        return 0
+    # Numbered lines like "1.", "2)", "1:", at start of a line/segment.
+    numbered = len(
+        re.findall(r"(?:^|\n)\s*\d+[.)\]:](?:\s|\*)", text)
+    )
+    # Bulleted lines: -, *, •, ·, — followed by space.
+    bulleted = len(
+        re.findall(r"(?:^|\n)\s*[-*•·—](?:\s|\*)", text)
+    )
+    n = max(numbered, bulleted)
+    if n >= 2:
+        return n
+    # Fallback: bold-prefixed enumerations like "**Title:**" — common
+    # gemini-flash output style for list items.
+    bolded = len(re.findall(r"\*\*[^*\n]{2,80}:\*\*", text))
+    if bolded >= 2:
+        return bolded
+    return None  # no recognisable list shape — skip the guard
 
 
 # Stateless tools as a separate list — agent merges these with the
