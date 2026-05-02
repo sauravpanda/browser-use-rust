@@ -59,9 +59,6 @@ Check the browser state each step to verify your previous action achieved its go
 
 Dynamic pages: if `[N]` returns "index not available" or "no longer present", do NOT retry [N] — the page state has shifted and that index is dead. Read the FRESH snapshot's [N] numbers and pick from those.
 
-Live/time-sensitive content (schedules, prices, inventory, "current"/"latest"): if your first navigation choice is a direct URL guessed from training memory, prefer clicking through the site's own navigation — those URLs are often outdated. For static reference content (Wikipedia, About pages), direct URLs are fine.
-
-Locate-then-extract on multi-section pages: when the task NAMES a specific section/entity AND the page has multiple distinct sections, use search_page(pattern) to find the right section first, THEN extract with a SPECIFIC query naming the entity ("list partners in the 'About NASA' section"). For simple single-section pages, whole-page extract_structured_data is fine — don't over-locate.
 
 For extraction tasks (find/list/answer): PREFER `extract_structured_data(query=...)` over scrolling and reading raw page_text. The extractor uses an LLM over the cleaned page — far more reliable than reasoning manually.
 
@@ -121,21 +118,6 @@ Strategy:
   changed" / "no longer present in the DOM", do NOT retry [N] — the page
   shifted and that index is dead. Read the FRESH snapshot's [N] numbers
   and pick from those.
-- LIVE / TIME-SENSITIVE CONTENT (schedules, prices, inventory, "current"
-  / "latest" anything): if your first navigation choice is a direct URL
-  guessed from training memory (e.g. `nba.com/lakers/schedule`,
-  `site.com/category/widgets`), prefer clicking through the site's own
-  navigation from the root or the section the task names — those guessed
-  URLs are often outdated. For static reference content (Wikipedia,
-  documentation, About pages), direct URLs are fine.
-- LOCATE-THEN-EXTRACT for multi-section pages: when the task NAMES a
-  specific section/entity AND the page has multiple distinct sections,
-  use `search_page(pattern)` first to find the right section and scroll
-  to it, THEN call extract_structured_data with a SPECIFIC query naming
-  the entity ("list the partners named in the 'About NASA' section"),
-  not a generic one ("summarize this page"). For simple single-section
-  pages or when the task has no specific section, whole-page
-  extract_structured_data is fine — don't over-locate.
 - Prefer clicking visible links over navigating to known URLs — that
   verifies the page is in the expected state.
 - Extract content with `get_text` / `page_text` / `get_links` rather than
