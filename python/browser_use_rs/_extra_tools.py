@@ -209,39 +209,104 @@ async def get_dropdown_options(session, index: int) -> str:
 
 
 @tool
-async def select_dropdown(session, index: int, value: str) -> str:
-    """Select an option in a `<select>` element by its visible label or
-    value attribute. For ARIA listboxes, simulates a click on the option
-    matching the text.
+async def select_dropdown(
+    session,
+    index: int,
+    value: str = "",
+    text: str = "",
+) -> str:
+    """Select an option in a `<select>` element or an ARIA dropdown
+    (combobox / listbox / menu / Semantic UI custom) by its visible
+    label or value.
 
     Args:
         index: The [N] index of the dropdown element.
         value: The visible label (preferred) or the option's value attr.
+        text: Alias for `value` matching upstream browser_use's
+            `select_dropdown(text=...)` parameter. If both are given,
+            `value` wins. Case-insensitive matching.
+
+    v0.8.12: ported the JS from upstream
+    `default_action_watchdog.on_SelectDropdownOptionEvent`. Adds:
+    case-insensitive matching, focus()-before-set + blur()-after-set
+    (critical for React/Vue/Svelte reactive frameworks), selection-
+    reverted detection (when the framework re-overrides our value),
+    fallback to click-the-option when set fails, ARIA combobox/menu
+    parity (matches `[role=combobox|listbox|menu]` + child
+    `[role=menuitem|option]` + `data-value` attr matching), Semantic
+    UI / `.dropdown.ui` class detection.
+
+    Original v0.6.5 behavior was a thin native-select impl that didn't
+    handle reactive frameworks or any non-`[role=option]` ARIA; the
+    Lakers nba.com schedule task (combobox-driven) failed where
+    upstream succeeded — that gap is what this port closes.
     """
+    want = (value or text or "").strip()
+    if not want:
+        return "(error: must pass `value` or `text` arg)"
     js = (
         "(() => {"
         f" const idx = {int(index)};"
-        f" const want = {json.dumps(value)};"
+        f" const want = {json.dumps(want)};"
         " const el = document.querySelector(`[data-bu-idx=\"${idx}\"]`);"
         " if (!el) return JSON.stringify({error: 'no element with index'});"
-        " const tag = el.tagName.toLowerCase();"
-        " if (tag === 'select') {"
-        "   for (const o of el.options) {"
-        "     if (o.text === want || o.value === want) {"
-        "       el.value = o.value;"
-        "       el.dispatchEvent(new Event('change', {bubbles: true}));"
-        "       el.dispatchEvent(new Event('input', {bubbles: true}));"
-        "       return JSON.stringify({ok: true, selected: o.text});"
+        " const wantLow = want.toLowerCase();"
+        " function trySelect(element) {"
+        "   const tag = element.tagName.toLowerCase();"
+        "   if (tag === 'select') {"
+        "     const opts = Array.from(element.options);"
+        "     for (const o of opts) {"
+        "       const tLow = o.text.trim().toLowerCase();"
+        "       const vLow = (o.value || '').toLowerCase();"
+        "       if (tLow === wantLow || vLow === wantLow) {"
+        "         element.focus();"
+        "         element.value = o.value;"
+        "         o.selected = true;"
+        "         element.selectedIndex = o.index;"
+        "         element.dispatchEvent(new Event('input', {bubbles: true, cancelable: true}));"
+        "         element.dispatchEvent(new Event('change', {bubbles: true, cancelable: true}));"
+        "         element.blur();"
+        "         if (element.value !== o.value) {"
+        "           return {success: false, reverted: true, error: 'selection reverted by framework — try clicking the option', tried: o.text.trim()};"
+        "         }"
+        "         return {success: true, selected: o.text.trim(), value: o.value};"
+        "       }"
         "     }"
+        "     return {success: false, error: 'no <select> option matching ' + want, available: opts.slice(0,30).map(o => o.text.trim())};"
         "   }"
-        "   return JSON.stringify({error: `no option matching ${want}`});"
-        " } else {"
-        "   for (const o of el.querySelectorAll('[role=\"option\"], li, .option')) {"
-        "     const t = (o.innerText || o.textContent || '').replace(/\\s+/g, ' ').trim();"
-        "     if (t === want) { o.click(); return JSON.stringify({ok: true, selected: t}); }"
+        "   const role = (element.getAttribute('role') || '').toLowerCase();"
+        "   if (role === 'menu' || role === 'listbox' || role === 'combobox') {"
+        "     const items = element.querySelectorAll('[role=\"menuitem\"], [role=\"option\"]');"
+        "     for (const item of items) {"
+        "       const txt = ((item.innerText || item.textContent) || '').trim();"
+        "       const dv = (item.getAttribute('data-value') || '').toLowerCase();"
+        "       if (txt.toLowerCase() === wantLow || dv === wantLow) {"
+        "         items.forEach(mi => { mi.setAttribute('aria-selected', 'false'); mi.classList.remove('selected'); });"
+        "         item.setAttribute('aria-selected', 'true');"
+        "         item.classList.add('selected');"
+        "         item.click();"
+        "         item.dispatchEvent(new MouseEvent('click', {view: window, bubbles: true, cancelable: true}));"
+        "         return {success: true, selected: txt};"
+        "       }"
+        "     }"
+        "     return {success: false, error: 'no ARIA item matching ' + want, available: Array.from(items).slice(0,30).map(i => ((i.innerText||i.textContent)||'').trim())};"
         "   }"
-        "   return JSON.stringify({error: `no listbox option matching ${want}`});"
+        "   if (element.classList.contains('dropdown') || element.classList.contains('ui')) {"
+        "     const items = element.querySelectorAll('.item, .option, [data-value]');"
+        "     for (const item of items) {"
+        "       const txt = ((item.innerText || item.textContent) || '').trim();"
+        "       const dv = (item.getAttribute('data-value') || '').toLowerCase();"
+        "       if (txt.toLowerCase() === wantLow || dv === wantLow) {"
+        "         item.click();"
+        "         return {success: true, selected: txt};"
+        "       }"
+        "     }"
+        "     return {success: false, error: 'no Semantic UI dropdown item matching ' + want};"
+        "   }"
+        "   return {success: false, error: 'element [' + idx + '] is not a recognized dropdown (tag=' + tag + ', role=' + role + ')'};"
         " }"
+        " const result = trySelect(el);"
+        " return JSON.stringify(result);"
         "})()"
     )
     raw = await session.evaluate(js)
@@ -249,9 +314,13 @@ async def select_dropdown(session, index: int, value: str) -> str:
         data = json.loads(raw) if raw else {}
     except json.JSONDecodeError:
         return f"(unparseable: {raw[:120]})"
-    if "error" in data:
-        return f"(error: {data['error']})"
-    return f"selected: {data.get('selected', value)}"
+    if data.get("success"):
+        return f"selected: {data.get('selected', want)}"
+    err = data.get("error") or "unknown error"
+    if data.get("available"):
+        avail = ", ".join(repr(a)[:40] for a in data["available"][:15])
+        return f"(error: {err}; available: {avail})"
+    return f"(error: {err})"
 
 
 @tool
@@ -676,28 +745,65 @@ def make_extra_tools(agent: Any) -> list:
                 f"answer; find NEW ones):\n{already_collected.strip()[:2000]}"
             )
 
-        extraction_prompt = (
-            "You are an expert page-content extractor. Given a page's "
-            "visible text and a query, return ONLY the answer to the "
-            "query — no preamble, no explanation, no markdown formatting "
-            "unless the answer requires structure. If the page does not "
-            "contain the answer, reply exactly: NOT FOUND."
+        # v0.8.12: split into proper SystemMessage + UserMessage. Was
+        # passing the whole instruction block as a single user message
+        # with `system=None`. SystemMessage is treated with much higher
+        # authority by every provider — that change alone tends to make
+        # the extractor obey "don't hallucinate, list ALL items" much
+        # more reliably. System prompt mirrors upstream's free-text
+        # extraction prompt at tools/service.py:1196-1216 with our
+        # additions (schema hint + already-collected) appended.
+        extraction_system = (
+            "You are an expert at extracting data from the markdown of "
+            "a webpage.\n\n"
+            "<input>\n"
+            "You will be given a query and the markdown of a webpage "
+            "that has been filtered to remove noise and advertising "
+            "content.\n"
+            "</input>\n\n"
+            "<instructions>\n"
+            "- Extract ONLY information available in the webpage that "
+            "is relevant to the query. Do NOT make up information or "
+            "guess from your own knowledge.\n"
+            "- If the relevant information is not available in the "
+            "page, your response should mention that — reply exactly "
+            "NOT FOUND.\n"
+            "- If the query asks for ALL items, products, etc., make "
+            "sure to directly list ALL of them — do not summarize or "
+            "pick just a few unless the query specifies a count.\n"
+            "- If the content was truncated and you need more, note "
+            "that the user can use start_from_char to continue from "
+            "where truncation occurred.\n"
+            "- If <already_collected> items are provided, exclude any "
+            "results whose name/title/URL matches those — do not "
+            "include duplicates.\n"
+            "</instructions>\n\n"
+            "<output>\n"
+            "- Present ALL information relevant to the query in a "
+            "concise way.\n"
+            "- Do NOT answer in conversational format. Directly output "
+            "the relevant information, or NOT FOUND if unavailable.\n"
+            "- No preamble, no explanation, no markdown formatting "
+            "unless the answer requires structure.\n"
+            "</output>"
+        )
+        extraction_user = (
+            f"<query>\n{query}\n</query>\n\n"
+            f"<page_url>\n{url}\n</page_url>\n\n"
+            f"<page_offset>{start_from_char}</page_offset>"
             + schema_clause + already_clause + "\n\n"
-            f"PAGE URL: {url}\n"
-            f"PAGE OFFSET: {start_from_char} chars\n\n"
-            f"QUERY: {query}\n\n"
-            f"PAGE TEXT:\n{page}{extras}"
+            f"<webpage_content>\n{page}{extras}\n</webpage_content>"
         )
 
         try:
             from browser_use_rs.llm.base import UserMessage
-            messages = [UserMessage(content=extraction_prompt)]
+            messages = [UserMessage(content=extraction_user)]
             # Use page_extraction_llm if the consumer set one (mirrors
             # upstream's separate cheap-extraction-LLM pattern). Falls
             # back to the agent's main LLM. v0.7.0.
             extract_llm = getattr(agent, "page_extraction_llm", None) or agent.llm
             completion = await asyncio.wait_for(
-                extract_llm.ainvoke(messages, [], system=None),
+                extract_llm.ainvoke(messages, [], system=extraction_system),
                 timeout=getattr(agent, "tool_timeout", 60.0),
             )
             text = (completion.text or "").strip()
