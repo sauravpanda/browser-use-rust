@@ -44,10 +44,22 @@
     // the v0.8.16 list. The link href/text reversal fix and
     // _valid_indices regex fix from v0.8.17 are KEPT — both pure
     // correctness bug fixes with no plausible regression vector.
+    //
+    // v0.8.29 (codex-recommended): narrow re-add of just min/max/step.
+    // Filter UIs (range sliders, date pickers, number inputs for
+    // price/rating filters) need these constraint values to apply the
+    // right filter. Excluded from the v0.8.17 22-attr bloat: aria-*
+    // and data-* attrs which appear on EVERY element on dense pages.
+    // min/max/step are essentially input-only attributes and rarely
+    // appear elsewhere, so per-page bloat should be near-zero.
+    // Targets the 7 "filter-then-extract" failures still in the v0.8.27
+    // failure set (vacation rentals with private pool, properties
+    // under $X rent, range/date filter tasks).
     const KEEP_ATTRS = [
         'id', 'name', 'type', 'placeholder', 'href', 'value', 'alt',
         'title', 'role', 'aria-label', 'aria-labelledby', 'aria-expanded',
-        'aria-checked', 'aria-selected', 'data-testid'
+        'aria-checked', 'aria-selected', 'data-testid',
+        'min', 'max', 'step'
     ];
 
     const isInsideSvg = (el) => {

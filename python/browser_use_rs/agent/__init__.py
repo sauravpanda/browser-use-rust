@@ -60,7 +60,6 @@ Check the browser state each step to verify your previous action achieved its go
 
 Dynamic pages: if `[N]` returns "index not available" or "no longer present", do NOT retry [N] — the page state has shifted and that index is dead. Read the FRESH snapshot's [N] numbers and pick from those.
 
-LIVE/TIME-SENSITIVE CONTENT (schedules, prices, scores, inventory, "current" / "latest" / "today" / "this week"): if your first navigation choice is a direct URL guessed from training memory (e.g. `nba.com/lakers/schedule`, `site.com/category/widgets`), prefer clicking through the site's own navigation from the root or the section the task names — guessed URLs are often outdated, redirect, or 404. For static reference content (Wikipedia, documentation, About pages), direct URLs are fine.
 
 For extraction tasks (find/list/answer): PREFER `extract_structured_data(query=...)` over scrolling and reading raw page_text. The extractor uses an LLM over the cleaned page — far more reliable than reasoning manually.
 
@@ -134,14 +133,6 @@ Strategy:
   changed" / "no longer present in the DOM", do NOT retry [N] — the page
   shifted and that index is dead. Read the FRESH snapshot's [N] numbers
   and pick from those.
-- LIVE / TIME-SENSITIVE CONTENT (schedules, prices, scores, inventory,
-  "current" / "latest" / "today" / "this week" anything): if your first
-  navigation choice is a direct URL guessed from training memory (e.g.
-  `nba.com/lakers/schedule`, `site.com/category/widgets`), prefer
-  clicking through the site's own navigation from the root or the
-  section the task names — those guessed URLs are often outdated,
-  redirect, or 404 to "page not found". For static reference content
-  (Wikipedia, documentation, About pages), direct URLs are fine.
 - Prefer clicking visible links over navigating to known URLs — that
   verifies the page is in the expected state.
 - Extract content with `get_text` / `page_text` / `get_links` rather than
