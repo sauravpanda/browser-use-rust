@@ -46,20 +46,20 @@
     // correctness bug fixes with no plausible regression vector.
     //
     // v0.8.29 (codex-recommended): narrow re-add of just min/max/step.
-    // Filter UIs (range sliders, date pickers, number inputs for
-    // price/rating filters) need these constraint values to apply the
-    // right filter. Excluded from the v0.8.17 22-attr bloat: aria-*
-    // and data-* attrs which appear on EVERY element on dense pages.
-    // min/max/step are essentially input-only attributes and rarely
-    // appear elsewhere, so per-page bloat should be near-zero.
-    // Targets the 7 "filter-then-extract" failures still in the v0.8.27
-    // failure set (vacation rentals with private pool, properties
-    // under $X rent, range/date filter tasks).
+    // REVERTED in v0.8.30 — empirically caused -9 judge tasks vs the
+    // v0.8.27 baseline (143 → 134) and ZERO of the 5 targeted filter
+    // tasks recovered (2049 Orlando rentals, 97 LA rent filter, 1134
+    // electronics avg price, 2570 porch swing, 1496 Harvard renewable
+    // energy). +13 "Incorrect Result" failures and +32 action errors
+    // confirm the v0.8.21 lesson: KEEP_ATTRS additions of any size
+    // hurt this substrate. Even input-only attributes are weighed
+    // against primary content by the LLM. Filter UIs need a different
+    // intervention (e.g. dedicated filter tool, structured output
+    // mode), not raw DOM attribute exposure.
     const KEEP_ATTRS = [
         'id', 'name', 'type', 'placeholder', 'href', 'value', 'alt',
         'title', 'role', 'aria-label', 'aria-labelledby', 'aria-expanded',
-        'aria-checked', 'aria-selected', 'data-testid',
-        'min', 'max', 'step'
+        'aria-checked', 'aria-selected', 'data-testid'
     ];
 
     const isInsideSvg = (el) => {
