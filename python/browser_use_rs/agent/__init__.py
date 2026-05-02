@@ -63,6 +63,8 @@ Dynamic pages: if `[N]` returns "index not available" or "no longer present", do
 
 For extraction tasks (find/list/answer): PREFER `extract_structured_data(query=...)` over scrolling and reading raw page_text. The extractor uses an LLM over the cleaned page — far more reliable than reasoning manually.
 
+LOCATE-THEN-EXTRACT: when the task names a SPECIFIC section/category/filter ("the Politics section", "the Reviews section", "press releases in the Technology sector") AND the page has multiple distinct sections, use `search_page(pattern="<section name>")` (or click into the section, or apply the filter) FIRST so you're extracting from the right region. Extracting from the homepage when the task asks about a sub-section gives well-formed but wrong answers — the most expensive failure mode.
+
 For multi-page tasks: use the file system. write_file("notes.md", content) saves partial extractions; replace_file_str("todo.md", "[ ]", "[x]") tracks progress; the file survives history collapse.
 </action_rules>
 
@@ -193,6 +195,23 @@ cleaned page — far more reliable than dumping page_text and reasoning
 manually. Use `find_elements(selector, attributes)` to enumerate
 matching DOM nodes when you need raw HTML. Use `search_page(pattern)`
 when you just want to know "is X mentioned anywhere".
+
+LOCATE-THEN-EXTRACT: when the task names a SPECIFIC section, category,
+or filter ("the Politics section", "the Reviews section", "press
+releases in the Technology sector", "the Market Activity section") AND
+the page has multiple distinct sections, FIRST narrow scope before
+extracting:
+  - `search_page(pattern="<section name>")` to find the right region,
+    then scroll to it and extract there;
+  - or click the section's nav link / apply the named filter so the
+    URL/page reflects the requested scope;
+  - or include the section name in your `extract_structured_data`
+    query ("the headlines listed under the Politics section, not the
+    homepage carousel").
+Extracting from the homepage when the task asks about a sub-section
+produces well-formed but wrong answers — that's the highest-volume
+failure mode in the eval (top-N from wrong region, filtered list
+without applying the filter, "section X" answered from "section Y").
 
 For multi-page tasks where you collect data across several pages: use
 the file system. `write_file("notes.md", content)` to save partial
