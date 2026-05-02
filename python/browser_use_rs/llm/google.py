@@ -218,7 +218,26 @@ class ChatGoogle(BaseChatModel):
         if self.thinking_level is not None or self.thinking_budget is not None:
             tc_kwargs: dict[str, Any] = {}
             if self.thinking_level is not None:
-                tc_kwargs["thinking_level"] = self.thinking_level
+                # v0.8.22: explicitly convert to ThinkingLevel enum (upper-
+                # case) before handing to the SDK. The eval framework
+                # passes the level as a lowercase string ("medium"); the
+                # SDK's `ThinkingLevel` is a CaseInSensitiveEnum with
+                # uppercase canonicals (LOW / MEDIUM / HIGH / MINIMAL).
+                # Pydantic *may* coerce "medium" → MEDIUM via the
+                # case-insensitive matcher, but the behavior isn't
+                # guaranteed across SDK versions, and our previous code
+                # was passing the raw string, possibly silently no-op'ing
+                # the thinking config. Upstream browser_use's
+                # google/chat.py:266 does the same explicit conversion.
+                level_val = self.thinking_level
+                if isinstance(level_val, str):
+                    try:
+                        level_val = gtypes.ThinkingLevel(level_val.upper())
+                    except ValueError:
+                        # Unknown level (typo from caller); fall through
+                        # with the raw string and let the SDK reject it.
+                        pass
+                tc_kwargs["thinking_level"] = level_val
             if self.thinking_budget is not None:
                 tc_kwargs["thinking_budget"] = self.thinking_budget
             config_kwargs["thinking_config"] = gtypes.ThinkingConfig(**tc_kwargs)
