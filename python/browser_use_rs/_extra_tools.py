@@ -323,38 +323,62 @@ async def select_dropdown(
     return f"(error: {err})"
 
 
+# Canonical names accepted by the Rust dispatch_key impl. The map
+# normalizes common LLM input variations (case, "Esc" vs "Escape", etc.)
+# to the exact tokens Rust expects.
+_CDP_KEY_ALIASES = {
+    "enter": "Enter", "return": "Enter", "ret": "Enter",
+    "tab": "Tab",
+    "escape": "Escape", "esc": "Escape",
+    "backspace": "Backspace", "bksp": "Backspace",
+    "delete": "Delete", "del": "Delete",
+    "space": "Space", "spacebar": "Space",
+    "arrowup": "ArrowUp", "up": "ArrowUp",
+    "arrowdown": "ArrowDown", "down": "ArrowDown",
+    "arrowleft": "ArrowLeft", "left": "ArrowLeft",
+    "arrowright": "ArrowRight", "right": "ArrowRight",
+    "home": "Home",
+    "end": "End",
+    "pageup": "PageUp", "pgup": "PageUp",
+    "pagedown": "PageDown", "pgdn": "PageDown",
+}
+
+
 @tool
 async def send_keys(session, keys: str) -> str:
-    """Send a sequence of keyboard keys to the focused element.
-    Common keys: Enter, Tab, Escape, ArrowUp/Down/Left/Right, Backspace,
-    Delete, Home, End, PageUp, PageDown. Or comma-separated combos like
-    "Control+a" / "Meta+v".
+    """Send a real CDP keyboard event for a special key (Enter, Tab,
+    Escape, Backspace, Delete, Space, ArrowUp/Down/Left/Right, Home,
+    End, PageUp, PageDown).
+
+    v0.8.19 routes through Rust `session.dispatch_key()` →
+    CDP `Input.dispatchKeyEvent`. This issues a "trusted" event that
+    triggers default browser behavior (form submit on Enter, focus
+    move on Tab, etc.). The previous JS `KeyboardEvent` dispatch was
+    "untrusted" per the WHATWG spec and silently no-op'd default
+    actions on most sites — that's why "type then Enter to submit"
+    flows often hung and burned step budget.
+
+    Modifier combos like "Ctrl+a" are NOT supported here yet (would
+    need CDP modifier-bit support). For typing literal text, use
+    type_text instead.
 
     Args:
-        keys: Single key name or `Modifier+Key` combo.
+        keys: A single key name. Case-insensitive, common aliases
+            supported (Enter/Return, Esc/Escape, Up/ArrowUp, etc.).
     """
-    js = (
-        "(() => {"
-        f" const keys = {json.dumps(keys)};"
-        " const target = document.activeElement || document.body;"
-        " const parts = keys.split('+').map(s => s.trim());"
-        " const key = parts[parts.length - 1];"
-        " const mods = parts.slice(0, -1).map(m => m.toLowerCase());"
-        " const init = {key, bubbles: true, cancelable: true};"
-        " for (const m of mods) {"
-        "   if (m === 'control' || m === 'ctrl') init.ctrlKey = true;"
-        "   else if (m === 'shift') init.shiftKey = true;"
-        "   else if (m === 'alt') init.altKey = true;"
-        "   else if (m === 'meta' || m === 'cmd') init.metaKey = true;"
-        " }"
-        " target.dispatchEvent(new KeyboardEvent('keydown', init));"
-        " target.dispatchEvent(new KeyboardEvent('keypress', init));"
-        " target.dispatchEvent(new KeyboardEvent('keyup', init));"
-        " return JSON.stringify({ok: true, key, mods});"
-        "})()"
-    )
-    raw = await session.evaluate(js)
-    return f"sent {keys}"
+    canonical = _CDP_KEY_ALIASES.get(keys.strip().lower())
+    if not canonical:
+        return (
+            f"(unsupported key {keys!r} — use one of: "
+            "Enter, Tab, Escape, Backspace, Delete, Space, "
+            "ArrowUp, ArrowDown, ArrowLeft, ArrowRight, "
+            "Home, End, PageUp, PageDown)"
+        )
+    try:
+        await session.dispatch_key(canonical)
+        return f"sent {canonical} (trusted CDP key event)"
+    except Exception as e:
+        return f"(dispatch_key failed: {type(e).__name__}: {e})"
 
 
 @tool

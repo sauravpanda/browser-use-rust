@@ -1160,6 +1160,87 @@ impl BrowserSession {
         Ok(())
     }
 
+    /// Dispatch a real CDP keyboard event for a named special key.
+    ///
+    /// v0.8.19. The previous `send_keys` Python tool dispatched JS
+    /// `KeyboardEvent` objects via `evaluate()`; those events are
+    /// "untrusted" per the WHATWG spec and do NOT trigger default
+    /// browser behavior — Enter does not submit forms, Tab does not
+    /// move focus, etc. Many "search-then-Enter-to-submit" eval flows
+    /// were silently no-oping. CDP `Input.dispatchKeyEvent` issues
+    /// "trusted" events that fire defaults correctly.
+    ///
+    /// Supported keys (case-insensitive on the Python side, but pass
+    /// them in the canonical form here):
+    ///   Enter Tab Escape Backspace Delete Space
+    ///   ArrowUp ArrowDown ArrowLeft ArrowRight
+    ///   Home End PageUp PageDown
+    pub async fn dispatch_key(&self, key_name: &str) -> Result<()> {
+        let (key, code, vk) = match key_name {
+            "Enter" => ("Enter", "Enter", 13u32),
+            "Tab" => ("Tab", "Tab", 9),
+            "Escape" => ("Escape", "Escape", 27),
+            "Backspace" => ("Backspace", "Backspace", 8),
+            "Delete" => ("Delete", "Delete", 46),
+            "Space" => (" ", "Space", 32),
+            "ArrowUp" => ("ArrowUp", "ArrowUp", 38),
+            "ArrowDown" => ("ArrowDown", "ArrowDown", 40),
+            "ArrowLeft" => ("ArrowLeft", "ArrowLeft", 37),
+            "ArrowRight" => ("ArrowRight", "ArrowRight", 39),
+            "Home" => ("Home", "Home", 36),
+            "End" => ("End", "End", 35),
+            "PageUp" => ("PageUp", "PageUp", 33),
+            "PageDown" => ("PageDown", "PageDown", 34),
+            other => {
+                return Err(BrowserError::BadResponse {
+                    method: "dispatch_key",
+                    detail: format!("unsupported key name {other:?}"),
+                })
+            }
+        };
+        let sid = self.session_id().await;
+        // Step 1: keyDown
+        self.conn
+            .send(
+                "Input.dispatchKeyEvent",
+                json!({
+                    "type": "keyDown",
+                    "key": key,
+                    "code": code,
+                    "windowsVirtualKeyCode": vk,
+                }),
+                Some(&sid),
+            )
+            .await?;
+        // Step 2: char (only for Enter — needed for textareas to insert
+        // a newline, and matches upstream's pattern at
+        // browser_use/browser/watchdogs/default_action_watchdog.py:1166).
+        // Not needed for navigation keys (Tab/Arrow/etc.).
+        if key_name == "Enter" {
+            self.conn
+                .send(
+                    "Input.dispatchKeyEvent",
+                    json!({ "type": "char", "text": "\r" }),
+                    Some(&sid),
+                )
+                .await?;
+        }
+        // Step 3: keyUp
+        self.conn
+            .send(
+                "Input.dispatchKeyEvent",
+                json!({
+                    "type": "keyUp",
+                    "key": key,
+                    "code": code,
+                    "windowsVirtualKeyCode": vk,
+                }),
+                Some(&sid),
+            )
+            .await?;
+        Ok(())
+    }
+
     pub async fn get_text(&self, selector: &str) -> Result<String> {
         let sid = self.session_id().await;
         let sel = serde_json::to_string(selector)?;

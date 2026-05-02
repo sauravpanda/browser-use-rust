@@ -320,6 +320,27 @@ impl BrowserSession {
         })
     }
 
+    /// v0.8.19: real CDP keyboard event for special keys
+    /// (Enter / Tab / Escape / Backspace / Delete / Space / Arrow* /
+    /// Home / End / PageUp / PageDown). Replaces the old JS
+    /// `KeyboardEvent` dispatch which was untrusted and didn't
+    /// trigger form submit / focus navigation defaults.
+    fn dispatch_key<'py>(
+        &self,
+        py: Python<'py>,
+        key_name: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let guard = inner.lock().await;
+            let s = guard
+                .as_ref()
+                .ok_or_else(|| map_err("session not started — call start() first"))?;
+            s.dispatch_key(&key_name).await.map_err(map_err)?;
+            Ok(())
+        })
+    }
+
     fn scroll<'py>(&self, py: Python<'py>, dy: f64) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         future_into_py(py, async move {
