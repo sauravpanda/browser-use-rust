@@ -33,27 +33,21 @@
         'searchbox', 'textbox', 'slider', 'spinbutton'
     ]);
 
-    // v0.8.17: expanded attrs to surface filter / range / date / multi-
-    // select metadata. Trace data showed the 22% long-tail tasks are
-    // dominated by filter UIs (price sliders, date-range pickers,
-    // language multi-selects) where the LLM lacked the constraint info
-    // to set values correctly. Added: min/max/step/pattern (range/
-    // number/date), autocomplete/list (combobox/listbox association),
-    // multiple/aria-multiselectable, aria-valuenow/valuemin/valuemax
-    // (slider state), aria-controls/owns (ARIA combobox→listbox link),
-    // checked/selected/disabled/readonly/required (state visibility),
-    // data-value (ARIA dropdowns where label != value), for (label→
-    // input association).
+    // v0.8.21: reverted v0.8.17's KEEP_ATTRS expansion. The 22-attr
+    // expansion (min/max/step/pattern/autocomplete/list/multiple/
+    // aria-*/data-value/for) materially bloated the per-element DOM
+    // serialization on dense pages — measured judge regression of
+    // -3pp v0.8.16 → v0.8.17 (64.65% → 61.62%) with no offsetting
+    // win on the long-tail filter tasks the expansion was meant to
+    // help. Hypothesis: extra attrs added more noise than constraint
+    // signal; LLM weighted them against primary content. Restoring
+    // the v0.8.16 list. The link href/text reversal fix and
+    // _valid_indices regex fix from v0.8.17 are KEPT — both pure
+    // correctness bug fixes with no plausible regression vector.
     const KEEP_ATTRS = [
         'id', 'name', 'type', 'placeholder', 'href', 'value', 'alt',
         'title', 'role', 'aria-label', 'aria-labelledby', 'aria-expanded',
-        'aria-checked', 'aria-selected', 'data-testid',
-        'min', 'max', 'step', 'pattern', 'autocomplete', 'list',
-        'multiple', 'aria-multiselectable',
-        'aria-valuenow', 'aria-valuemin', 'aria-valuemax',
-        'aria-controls', 'aria-owns',
-        'checked', 'selected', 'disabled', 'readonly', 'required',
-        'data-value', 'for'
+        'aria-checked', 'aria-selected', 'data-testid'
     ];
 
     const isInsideSvg = (el) => {
