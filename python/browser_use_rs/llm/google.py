@@ -170,6 +170,18 @@ class ChatGoogle(BaseChatModel):
     ):
         self.model = model
         self.temperature = temperature
+        # v0.8.18: mirror upstream browser_use's google/chat.py defaults
+        # for gemini-3-flash. Without these the model defaults to
+        # different (smaller) thinking_budget and a tight max_output
+        # cap that truncates long answers / tool-call sequences. Set
+        # only when the caller didn't already configure them, so
+        # explicit overrides win.
+        is_gemini_3 = "gemini-3" in (model or "").lower()
+        if max_output_tokens is None and is_gemini_3:
+            max_output_tokens = 8096
+        if thinking_budget is None and thinking_level is None and is_gemini_3:
+            # `-1` means "model decides" — upstream's default for Gemini 3.
+            thinking_budget = -1
         self.max_output_tokens = max_output_tokens
         self.thinking_level = thinking_level
         self.thinking_budget = thinking_budget
@@ -254,9 +266,16 @@ class ChatGoogle(BaseChatModel):
             )
 
         usage_meta = response.usage_metadata
+        # v0.8.18: include thoughts_token_count in the output total.
+        # Gemini 2.5+ separates "thinking" tokens from candidate tokens
+        # in the usage metadata; without this addition, billed-but-
+        # uncounted thinking tokens were inflating actual cost vs
+        # reported. Mirrors upstream google/chat.py:178.
+        candidate_tokens = getattr(usage_meta, "candidates_token_count", 0) or 0
+        thoughts_tokens = getattr(usage_meta, "thoughts_token_count", 0) or 0
         usage = ChatInvokeUsage(
             input=getattr(usage_meta, "prompt_token_count", 0) or 0,
-            output=getattr(usage_meta, "candidates_token_count", 0) or 0,
+            output=candidate_tokens + thoughts_tokens,
             cache_read=getattr(usage_meta, "cached_content_token_count", 0) or 0,
         )
         return ChatInvokeCompletion(

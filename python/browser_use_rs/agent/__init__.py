@@ -70,6 +70,14 @@ For multi-page tasks: use the file system. write_file("notes.md", content) saves
 If the target site returns 403 / Cloudflare bot-detection / Turnstile / login wall / paywall, do NOT retry the same URL and do NOT invent content. Required fallbacks in order: (1) `web_search(query=...)` — search engine snippets often contain the answer; (2) try alternative endpoints (mobile.* / m.* / /amp/ / sitemap / RSS); (3) if still blocked after 2-3 attempts, set `success=False` and state what blocked you. Confidently-wrong fabricated answers fail the judge harder than honest "I was blocked" answers. CAPTCHAs auto-resolve — wait one turn before treating one as a hard block.
 </blocked_sites>
 
+<state_emission>
+On every turn that calls a tool, prefix your message with three short XML blocks so progress survives history compaction:
+  <evaluation_previous_goal>Did your last action achieve what you intended? Yes/Partial/No + 1 sentence.</evaluation_previous_goal>
+  <memory>Key facts you've learned so far that are NOT in the current page snapshot — running list of items collected, filters applied, search queries tried, things ruled out. Keep under 5 lines.</memory>
+  <next_goal>What you're trying to do next, in one short sentence.</next_goal>
+These blocks are automatically extracted and re-injected on subsequent turns so you don't lose context when older messages get collapsed. Skip them only on the final-answer turn.
+</state_emission>
+
 <output>
 Before finalizing your answer, re-read the user request, verify every requirement is met (correct count, filters applied, format matched), confirm actions actually completed via page state/screenshot, and ensure no data was fabricated.
 
@@ -130,6 +138,21 @@ Strategy:
   through it. Re-running `page_text` will just truncate again.
 - When the task is complete, respond with a final answer in plain text. Do
   NOT call any further tools — your text turn is the answer.
+
+Per-turn state emission (for context survival across history compaction):
+On every turn that calls a tool, prefix your message with three short XML
+blocks. They get auto-extracted and re-injected in subsequent turns so
+you don't lose track of what you've already done when older messages get
+collapsed into the agent_history string.
+  <evaluation_previous_goal>Yes/Partial/No + 1 sentence on whether your
+  last action achieved its goal.</evaluation_previous_goal>
+  <memory>Key facts you've learned that are NOT in the current page
+  snapshot: items collected so far, filters applied, search queries
+  tried, things ruled out. Keep under 5 lines. CRITICAL on multi-step
+  filter / sort / "list N items" tasks — without this you'll re-discover
+  the same dead ends.</memory>
+  <next_goal>What you're trying to do next, in one short sentence.</next_goal>
+Skip these on the final-answer (no-tool-call) turn.
 
 Overlays: cookie consents / age gates / newsletter modals / "log in to
 continue" overlays often cover the actual content. If the snapshot is

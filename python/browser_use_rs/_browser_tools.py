@@ -91,17 +91,52 @@ async def scroll(
     dy: float = 0,
     direction: str = "",
     pages: float = 0,
+    index: int = 0,
 ) -> str:
-    """Scroll the page vertically. Three forms:
+    """Scroll vertically. Page-level by default; in-container when `index` is given.
 
     Args:
         dy: Pixels to scroll. Positive=down, negative=up. Used when
             non-zero. Original signature.
         direction: 'up' or 'down' — used when `pages` > 0. Mirrors
             upstream's `scroll(down=bool, pages=float)` form.
-        pages: Number of viewport-heights to scroll (e.g. 1.0 = one
-            full screen). Combined with `direction`. Mirrors upstream.
+        pages: Number of viewport-heights (or container-heights when
+            `index` is set) to scroll. Combined with `direction`.
+        index: Optional [N] of an indexed scroll container (one of the
+            elements rendered with the `|scroll|` prefix). When set,
+            scroll INSIDE that container instead of the whole page.
+            Required for "Show more"-style virtualized lists, filter
+            panes, and map/list panels where the parent doesn't scroll.
+            Mirrors upstream `ScrollEvent.index`.
     """
+    # v0.8.18: in-container scroll via JS evaluate when `index` is set.
+    # Doesn't need a Rust API change — uses the data-bu-idx attribute
+    # the DOM walker already stamps on every indexed element.
+    if index > 0:
+        # Compute pixel delta from `dy` / `pages+direction`.
+        try:
+            ch_raw = await session.evaluate(
+                f"(() => {{ const el = document.querySelector('[data-bu-idx=\"{int(index)}\"]'); "
+                f"return el ? String(el.clientHeight || el.offsetHeight || 600) : '0'; }})()"
+            )
+            container_h = float(ch_raw) if ch_raw and ch_raw != "0" else 600.0
+        except Exception:
+            container_h = 600.0
+        if pages > 0 and direction in ("up", "down"):
+            delta = container_h * pages * (-1 if direction == "up" else 1)
+        elif dy != 0:
+            delta = dy
+        else:
+            delta = container_h  # single container-height down by default
+        try:
+            await session.evaluate(
+                f"(() => {{ const el = document.querySelector('[data-bu-idx=\"{int(index)}\"]'); "
+                f"if (!el) return 'no-element'; el.scrollBy({{top: {delta:.0f}, behavior: 'auto'}}); return 'ok'; }})()"
+            )
+            return f"scrolled inside [{index}] by {delta:.0f}px (container_h={container_h:.0f})"
+        except Exception as e:
+            return f"(scroll-in-container failed: {type(e).__name__}: {e})"
+
     if pages > 0 and direction in ("up", "down"):
         # Translate page-based scroll to pixel scroll.
         try:
