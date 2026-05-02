@@ -59,6 +59,10 @@ Check the browser state each step to verify your previous action achieved its go
 
 Dynamic pages: if `[N]` returns "index not available" or "no longer present", do NOT retry [N] — the page state has shifted and that index is dead. Read the FRESH snapshot's [N] numbers and pick from those, OR switch to find_elements/search_page to locate by attribute or text. After 2 retries on the same failed index, switch tools or navigate elsewhere.
 
+Live/time-sensitive content (schedules, prices, inventory, "current"/"latest"): if your first navigation choice is a direct URL guessed from training memory, prefer clicking through the site's own navigation — those URLs are often outdated. For static reference content (Wikipedia, About pages), direct URLs are fine.
+
+Locate-then-extract on multi-section pages: when the task NAMES a specific section/entity AND the page has multiple distinct sections, use search_page(pattern) to find the right section first, THEN extract with a SPECIFIC query naming the entity ("list partners in the 'About NASA' section"). For simple single-section pages, whole-page extract_structured_data is fine — don't over-locate.
+
 For extraction tasks (find/list/answer): PREFER `extract_structured_data(query=...)` over scrolling and reading raw page_text. The extractor uses an LLM over the cleaned page — far more reliable than reasoning manually.
 
 For multi-page tasks: use the file system. write_file("notes.md", content) saves partial extractions; replace_file_str("todo.md", "[ ]", "[x]") tracks progress; the file survives history collapse.
@@ -119,6 +123,21 @@ Strategy:
   and pick from those, OR switch to find_elements / search_page to locate
   by attribute/text. After 2 retries on the same failed index, switch
   tools or navigate elsewhere — do not loop on a dead index.
+- LIVE / TIME-SENSITIVE CONTENT (schedules, prices, inventory, "current"
+  / "latest" anything): if your first navigation choice is a direct URL
+  guessed from training memory (e.g. `nba.com/lakers/schedule`,
+  `site.com/category/widgets`), prefer clicking through the site's own
+  navigation from the root or the section the task names — those guessed
+  URLs are often outdated. For static reference content (Wikipedia,
+  documentation, About pages), direct URLs are fine.
+- LOCATE-THEN-EXTRACT for multi-section pages: when the task NAMES a
+  specific section/entity AND the page has multiple distinct sections,
+  use `search_page(pattern)` first to find the right section and scroll
+  to it, THEN call extract_structured_data with a SPECIFIC query naming
+  the entity ("list the partners named in the 'About NASA' section"),
+  not a generic one ("summarize this page"). For simple single-section
+  pages or when the task has no specific section, whole-page
+  extract_structured_data is fine — don't over-locate.
 - Prefer clicking visible links over navigating to known URLs — that
   verifies the page is in the expected state.
 - Extract content with `get_text` / `page_text` / `get_links` rather than
@@ -1127,11 +1146,26 @@ class Agent:
                         await _maybe_await(on_step_end())
                     continue
 
+                # v0.8.11: mechanical success downgrade. The v0.8.9
+                # prompt told the agent to set success=False on
+                # blocked-and-not-recovered tasks. Trace data showed
+                # the LLM still claims success=True on ~18 v0.8.9 tasks
+                # with answers like "I was unable to retrieve... based
+                # on what would typically be available...". Catch those
+                # at code layer regardless of what the LLM says.
+                _success = bool(done_text)
+                if _success and _looks_like_fabricated_blocked_answer(done_text):
+                    _success = False
+                    logger.info(
+                        "agent: success downgraded to False at step %d "
+                        "(blocked-fabrication detected in plain-text answer)",
+                        step_n,
+                    )
                 results = [
                     ActionResult(
                         extracted_content=done_text,
                         is_done=True,
-                        success=bool(done_text),
+                        success=_success,
                     )
                 ]
                 self._append_history(state_summary, output, results, t0, step_n)
@@ -1246,18 +1280,40 @@ class Agent:
                 ):
                     try:
                         _, success_flag, payload = action_result.extracted_content.split(":", 2)
+                        s_flag = bool(int(success_flag))
+                        # v0.8.11: same mechanical downgrade as the
+                        # plain-text path. Catches structured done()
+                        # calls where the LLM smuggled a "I was unable
+                        # but here's typical content" answer with
+                        # success=True.
+                        if s_flag and _looks_like_fabricated_blocked_answer(payload):
+                            s_flag = False
+                            logger.info(
+                                "agent: success downgraded to False at step %d "
+                                "(blocked-fabrication detected in done payload)",
+                                step_n,
+                            )
                         done_result = ActionResult(
                             extracted_content=payload,
                             is_done=True,
-                            success=bool(int(success_flag)),
+                            success=s_flag,
                         )
                     except (ValueError, IndexError):
                         # Marker malformed — fall back to treating the raw
                         # text as the final answer rather than crashing.
+                        text = action_result.extracted_content
+                        s_flag = True
+                        if _looks_like_fabricated_blocked_answer(text):
+                            s_flag = False
+                            logger.info(
+                                "agent: success downgraded to False at step %d "
+                                "(blocked-fabrication, malformed-marker fallback)",
+                                step_n,
+                            )
                         done_result = ActionResult(
-                            extracted_content=action_result.extracted_content,
+                            extracted_content=text,
                             is_done=True,
-                            success=True,
+                            success=s_flag,
                         )
 
             if done_result is not None:
@@ -1445,6 +1501,12 @@ class Agent:
                 )
 
     # Tool name groups used by the loop-detection heuristics.
+    # v0.8.11: added `extract_structured_data` and `search_page`.
+    # These are the primary semantic-extract tools the prompt pushes
+    # the agent toward; without them in this set the no-extract nudge
+    # would fire telling the agent to call page_text/get_text even
+    # when it had been correctly extracting via the LLM-powered tools.
+    # That fought against the locate-then-extract behavior we want.
     _EXTRACT_TOOLS: frozenset[str] = frozenset({
         "get_text",
         "page_text",
@@ -1454,6 +1516,8 @@ class Agent:
         "get_cookies",
         "save_pdf",
         "done",
+        "extract_structured_data",
+        "search_page",
     })
 
     def _maybe_inject_loop_nudge(
@@ -2756,6 +2820,76 @@ async def _maybe_await(value: Any) -> Any:
     if inspect.isawaitable(value):
         return await value
     return value
+
+
+# v0.8.11: phrases that signal the agent admitted a block (in head)
+# or smuggled training-knowledge content as a fallback (anywhere).
+# Used for the mechanical success-flag downgrade applied to done()
+# results below — the v0.8.9 blocked-site prompt advice is treated as
+# advisory by the LLM, so we enforce it at the code layer instead.
+# Signals had to be tuned against actual v0.8.9 false-positive answers
+# to avoid flagging legit search-fallback recoveries (which start with
+# "Based on the search results from..." — not in the blocker list).
+_BLOCKER_PHRASES = (
+    "i am unable to retrieve",
+    "i was unable to retrieve",
+    "i am unable to access",
+    "i was unable to access",
+    "i cannot access",
+    "i could not access",
+    "i could not retrieve",
+    "could not be retrieved",
+    "blocked access",
+    "persistently blocked",
+    "the website returned a 403",
+    "the website is currently blocked",
+    "403 forbidden",
+    "401 unauthorized",
+    "access was blocked",
+    "access denied",
+    "captcha verification",
+    "could not bypass the bot",
+    "due to persistent bot",
+)
+_FABRICATION_PHRASES = (
+    "would typically",
+    "is typically",
+    "based on what would typically",
+    "based on typical",
+    "based on training",
+    "based on prior knowledge",
+    "based on my knowledge of",
+    "from training data",
+    "from memory of",
+    "i recall that",
+    "based on the content typically",
+    "is generally known",
+    "as is commonly known",
+)
+
+
+def _looks_like_fabricated_blocked_answer(text: str) -> bool:
+    """Detect 'I was blocked, but here's typical content' fabrications.
+
+    Two trigger conditions, either is enough:
+      (1) The first 220 chars contain a blocker phrase — the answer
+          LEADS WITH admission of failure, regardless of what follows.
+      (2) The text contains BOTH a blocker phrase AND a fabrication
+          phrase — combination signals "couldn't get it but answered
+          from training memory." Either one alone is OK.
+
+    Returns False on empty/short inputs to avoid noise.
+    """
+    if not text or len(text) < 30:
+        return False
+    s = text.lower()
+    head = s[:220]
+    has_blocker_in_head = any(p in head for p in _BLOCKER_PHRASES)
+    if has_blocker_in_head:
+        return True
+    has_blocker_anywhere = any(p in s for p in _BLOCKER_PHRASES)
+    has_fab = any(p in s for p in _FABRICATION_PHRASES)
+    return has_blocker_anywhere and has_fab
 
 
 def _format_tool_return(
