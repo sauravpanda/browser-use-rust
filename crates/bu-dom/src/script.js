@@ -33,10 +33,27 @@
         'searchbox', 'textbox', 'slider', 'spinbutton'
     ]);
 
+    // v0.8.17: expanded attrs to surface filter / range / date / multi-
+    // select metadata. Trace data showed the 22% long-tail tasks are
+    // dominated by filter UIs (price sliders, date-range pickers,
+    // language multi-selects) where the LLM lacked the constraint info
+    // to set values correctly. Added: min/max/step/pattern (range/
+    // number/date), autocomplete/list (combobox/listbox association),
+    // multiple/aria-multiselectable, aria-valuenow/valuemin/valuemax
+    // (slider state), aria-controls/owns (ARIA combobox→listbox link),
+    // checked/selected/disabled/readonly/required (state visibility),
+    // data-value (ARIA dropdowns where label != value), for (label→
+    // input association).
     const KEEP_ATTRS = [
         'id', 'name', 'type', 'placeholder', 'href', 'value', 'alt',
         'title', 'role', 'aria-label', 'aria-labelledby', 'aria-expanded',
-        'aria-checked', 'aria-selected', 'data-testid'
+        'aria-checked', 'aria-selected', 'data-testid',
+        'min', 'max', 'step', 'pattern', 'autocomplete', 'list',
+        'multiple', 'aria-multiselectable',
+        'aria-valuenow', 'aria-valuemin', 'aria-valuemax',
+        'aria-controls', 'aria-owns',
+        'checked', 'selected', 'disabled', 'readonly', 'required',
+        'data-value', 'for'
     ];
 
     const isInsideSvg = (el) => {

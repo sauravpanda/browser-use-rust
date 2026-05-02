@@ -1954,10 +1954,18 @@ class Agent:
         # We also reset the staleness flag here because we just took a
         # fresh snapshot — the indices we extract are by definition
         # valid against what the LLM is about to see.
-        import re as _re
-        self._valid_indices = {
-            int(m.group(1)) for m in _re.finditer(r"^\[(\d+)\]", dom_text, _re.MULTILINE)
-        }
+        #
+        # v0.8.17: derive from the structured snapshot's index map
+        # instead of regex-parsing the rendered DOM text. The previous
+        # `r"^\[(\d+)\]"` regex only matched lines whose first character
+        # was `[`, missing every line decorated with `*` (new element),
+        # `\t` (indented child), or `|scroll|` (scroll container) —
+        # all real, clickable indices. The LLM saw them in the snapshot,
+        # picked them, and then preflight rejected the call as
+        # "hallucinated index" even though it was real. Now we use the
+        # exact same set the rendered text is built from, so the two
+        # views stay in sync.
+        self._valid_indices = set(self._index_to_selector.keys())
         self._indices_invalidated = False
 
         return BrowserStateSummary(

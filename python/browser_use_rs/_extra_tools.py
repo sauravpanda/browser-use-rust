@@ -405,7 +405,15 @@ async def extract_links(session, limit: int = 50) -> str:
     if not raw_links:
         return "(no visible links)"
     out = []
-    for text, href in raw_links[:limit]:
+    # v0.8.17: Rust session.get_links() returns Vec<(String, String)>
+    # where the first element is href and the second is text (per
+    # crates/bu-browser/src/lib.rs:1287). Previously we unpacked as
+    # `for text, href in raw_links`, which swapped them: URLs ended up
+    # as labels and labels ended up as hrefs. Tasks asking for "the URL
+    # of the X link" got confidently-wrong results back. Same bug at
+    # _extra_tools.py:717 in the extract_structured_data link
+    # augmentation path, fixed with the same swap.
+    for href, text in raw_links[:limit]:
         text = text.strip().replace("\n", " ")[:80] or "(no text)"
         out.append(f"{text} -> {href}")
     if len(raw_links) > limit:
@@ -713,9 +721,10 @@ def make_extra_tools(agent: Any) -> list:
             try:
                 links = await session.get_links()
                 if links:
+                    # v0.8.17: same href/text swap fix as extract_links above.
                     extras += "\n\nLINKS:\n" + "\n".join(
                         f"- {(t or '').strip()[:80]} -> {h}"
-                        for t, h in links[:80]
+                        for h, t in links[:80]
                     )
             except Exception:
                 pass
