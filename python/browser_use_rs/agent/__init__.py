@@ -743,6 +743,46 @@ class Agent:
 
         try:
             await self._loop(max_steps, on_step_start, on_step_end)
+        except asyncio.CancelledError:
+            # v0.8.23: catch CancelledError SEPARATELY before the generic
+            # Exception handler below. In Python 3.8+, CancelledError
+            # inherits from BaseException, NOT Exception, so the v0.8.3
+            # `except Exception` did NOT catch it. Result: when the eval
+            # framework's `asyncio.wait_for(stage_func(), timeout)` fired,
+            # the task was cancelled mid-CDP-call (typically session.
+            # screenshot()), CancelledError propagated past our wrapper,
+            # and the task was recorded with no answer — the residual
+            # "Stage errors: run_agent:" pattern.
+            #
+            # On cancellation we have ~ZERO time before the framework
+            # gives up — the wait_for has already fired. Try a tight
+            # force-final-answer (10s budget) to commit whatever we have,
+            # then RE-RAISE so the framework's wait_for can complete its
+            # cleanup. NOT swallowing — that would deadlock the
+            # framework. Best-case the framework still gets nothing
+            # back from us (it's already in cleanup), but the partial
+            # answer at least lands in self.state.history for any
+            # consumer that reads it after.
+            logger.warning(
+                "agent: cancelled at step %d (likely eval-framework "
+                "timeout); attempting tight force-final before re-raise",
+                self.state.n_steps,
+            )
+            try:
+                await asyncio.wait_for(
+                    self._force_final_answer(
+                        None,
+                        self.state.n_steps or 1,
+                        reason="task cancelled by eval-framework timeout",
+                    ),
+                    timeout=10.0,
+                )
+            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                # Force-final couldn't run inside the cancel window —
+                # the eval framework already gave up. History stays
+                # whatever it was when cancellation hit.
+                pass
+            raise
         except Exception as e:
             # v0.8.3: catch crashes inside _loop (browser disconnect,
             # CDP socket death, OOM, snapshot timeout, LLM error past
@@ -1896,15 +1936,30 @@ class Agent:
         # per step (current_url + screenshot + dom_snapshot); together
         # they finish in roughly the slowest single call's time. On a
         # 35-turn run that's 30+ saved seconds per task.
+        # v0.8.23: bound each CDP op with asyncio.wait_for so a single
+        # hung call (Chrome unresponsive on captcha / hostile JS / dead
+        # tab) cannot hold the entire agent past the eval framework's
+        # per-stage timeout. The trace from one v0.8.22 failure showed
+        # session.screenshot() hanging when the eval wait_for fired,
+        # causing CancelledError to slip past our defenses. With these
+        # individual timeouts each CDP call is bounded; the agent step
+        # completes (with empty results from any timed-out call) and
+        # the loop continues normally instead of waiting indefinitely.
+        # 15s screenshot, 5s url, 30s dom_snapshot — looser on the DOM
+        # walk because that's the legitimately-slowest CDP op.
         async def _safe_url() -> str:
             try:
-                return await self.session.current_url()
+                return await asyncio.wait_for(
+                    self.session.current_url(), timeout=5.0
+                )
             except Exception:
                 return ""
 
         async def _safe_screenshot() -> str | None:
             try:
-                png = await self.session.screenshot()
+                png = await asyncio.wait_for(
+                    self.session.screenshot(), timeout=15.0
+                )
                 return base64.b64encode(png).decode("ascii")
             except Exception:
                 return None
@@ -1918,7 +1973,13 @@ class Agent:
         # cross-turn references stay stable through DOM mutation.
         async def _safe_dom() -> tuple[str, dict[int, str]]:
             try:
-                snap = await self.session.dom_snapshot()
+                # v0.8.23: 30s cap. DOM snapshot is the slowest CDP op
+                # (full DOM walk + serialize + map indices) but should
+                # never legitimately exceed 30s. Beyond that, Chrome
+                # is wedged.
+                snap = await asyncio.wait_for(
+                    self.session.dom_snapshot(), timeout=30.0
+                )
                 # Skip index=0 entries — those are static text content
                 # (h1/p/li/td/etc.) emitted for extraction context, not
                 # interactive elements. Including them in the selector
