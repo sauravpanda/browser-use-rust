@@ -41,8 +41,67 @@ async def click(session, index: int) -> str:
     Args:
         index: The [N] index of the element to click.
     """
+    # v0.8.31 (codex F2): detect a click that opens a new tab and
+    # auto-switch to it so the next dom_snapshot reflects the new
+    # page. News/article/review sites frequently open `target=_blank`
+    # links from list pages; without auto-switch the agent stays on
+    # the list page, snapshots the same elements again, and either
+    # loops or fabricates content from the snippet.
+    #
+    # Tab list shape: list[(tid, url, title, ttype, active)]. Only
+    # 'page' targets count as tabs — iframe contexts are common and
+    # noisy. Using id-set diff is robust to popups that flash open
+    # and close (no spurious switch).
+    try:
+        tabs_before = await session.list_tabs()
+        before_ids = {tid for tid, _u, _t, ttype, _a in tabs_before if ttype == 'page'}
+    except Exception:
+        before_ids = None
+
     await session.click_index(index)
-    return f"clicked [{index}]"
+
+    if before_ids is None:
+        return f"clicked [{index}]"
+
+    # Brief settle window — Chrome often surfaces the new target a few
+    # tens of ms after the click event. Two short polls keep latency
+    # bounded if no new tab actually opened.
+    new_tid = None
+    for _ in range(2):
+        try:
+            await asyncio.sleep(0.15)
+            tabs_after = await session.list_tabs()
+        except Exception:
+            break
+        added = [
+            (tid, url, title) for tid, url, title, ttype, _active in tabs_after
+            if ttype == 'page' and tid not in before_ids
+        ]
+        if added:
+            # Pick the most recently added tab (last in list); if Chrome
+            # opened more than one (rare), the user typically wants the
+            # most recent.
+            new_tid, new_url, new_title = added[-1]
+            break
+
+    if new_tid is None:
+        return f"clicked [{index}]"
+
+    try:
+        await session.switch_tab(new_tid)
+    except Exception as e:
+        # Switch failed — agent can recover via list_tabs/switch_tab
+        # manually. Report so it knows.
+        return (
+            f"clicked [{index}] — opened new tab {new_tid} "
+            f"({new_url}) but auto-switch failed ({type(e).__name__}); "
+            f"call switch_tab({new_tid}) on next turn"
+        )
+    return (
+        f"clicked [{index}] — opened new tab and switched to it "
+        f"(target_id={new_tid}, url={new_url}, title={new_title!r}). "
+        f"Take a fresh dom_snapshot before the next interaction."
+    )
 
 
 @tool
