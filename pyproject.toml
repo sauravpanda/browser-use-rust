@@ -1,6 +1,6 @@
 [project]
 name = "browser-use-rs"
-version = "0.8.14"
+version = "0.8.15"
 description = "Lean Rust runtime for browser-use, with Python bindings"
 requires-python = ">=3.10"
 authors = [{ name = "Saurav Panda", email = "support@browser-use.com" }]
@@ -19,6 +19,13 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["maturin>=1.7,<2", "pytest>=8"]
+# Install with `pip install browser-use-rs[lmnr]` to enable Laminar
+# (lmnr.ai) tracing. The `observe` decorator in
+# `browser_use_rs.observability` no-ops when lmnr isn't installed, so
+# this extra is purely opt-in. The eval framework typically calls
+# `Laminar.initialize()` itself before invoking the agent; spans then
+# nest into that context. Local users can call it manually.
+lmnr = ["lmnr>=0.5"]
 
 [build-system]
 requires = ["maturin>=1.7,<2"]

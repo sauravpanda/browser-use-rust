@@ -1,70 +1,147 @@
-"""Compat stubs for `from browser_use.observability import observe, observe_debug`.
+"""Optional Laminar (lmnr.ai) tracing integration.
 
-browser_use exposes Laminar tracing decorators here. We don't ship Laminar
-integration; these are no-op decorators so consumer code that imports them
-(judges, eval orchestration) keeps working without changes.
+When `lmnr` is installed AND `LMNR_PROJECT_API_KEY` is set, the `@observe`
+decorator emits OpenTelemetry spans to Laminar. When lmnr isn't installed,
+the decorator becomes a no-op so consumer code keeps working.
 
-If you want tracing, keep importing the real decorators directly from
-`browser_use.observability` — those work as no-ops when no Laminar key is
-configured anyway, and they emit spans when `LMNR_PROJECT_API_KEY` is set.
-This module exists for the case where browser_use isn't installed at all
-(rs-only deployments).
+Initialization is the caller's responsibility — eval frameworks like
+`evaluations-internal/eval/service.py` already call `Laminar.initialize()`
+before invoking the agent, after which our `@observe` decorators emit
+spans into that active context. Local users can call `Laminar.initialize()`
+themselves to enable tracing.
+
+Mirrors `browser_use.observability` so consumers can drop us in.
 """
 
 from __future__ import annotations
 
-import functools
-import inspect
-from typing import Any, Callable, TypeVar
+import logging
+import os
+from collections.abc import Callable
+from functools import wraps
+from typing import Any, Literal, TypeVar, cast
 
+logger = logging.getLogger(__name__)
 F = TypeVar("F", bound=Callable[..., Any])
 
 
-def observe(
-    name: str | None = None,
-    *,
-    span_type: str | None = None,
-    ignore_input: bool = False,
-    ignore_output: bool = False,
-    **_compat_kwargs: Any,
-) -> Callable[[F], F]:
-    """No-op replacement for `lmnr.observe` / `browser_use.observability.observe`.
+def _is_debug_mode() -> bool:
+    """Debug mode (used by `observe_debug`) gated on LMNR_LOGGING_LEVEL=debug."""
+    return os.getenv("LMNR_LOGGING_LEVEL", "").lower() == "debug"
 
-    Accepts the same kwargs as the real decorator and returns the wrapped
-    function unchanged. Preserves async vs sync correctly.
-    """
+
+# Optional lmnr import — silently degrades to no-op if missing.
+_LMNR_AVAILABLE = False
+_lmnr_observe: Any = None
+try:
+    from lmnr import observe as _lmnr_observe  # type: ignore[no-redef]
+
+    _LMNR_AVAILABLE = True
+    if os.environ.get("BROWSER_USE_RS_VERBOSE_OBSERVABILITY", "false").lower() == "true":
+        logger.debug("lmnr available — observability decorators will emit spans")
+except (ImportError, TypeError):
+    if os.environ.get("BROWSER_USE_RS_VERBOSE_OBSERVABILITY", "false").lower() == "true":
+        logger.debug("lmnr not installed — observability decorators will no-op")
+
+
+def _create_no_op_decorator(**_kwargs: Any) -> Callable[[F], F]:
+    """No-op decorator that accepts any kwargs and returns the function unchanged."""
+    import asyncio
 
     def decorator(func: F) -> F:
-        if inspect.iscoroutinefunction(func):
+        if asyncio.iscoroutinefunction(func):
 
-            @functools.wraps(func)
+            @wraps(func)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 return await func(*args, **kwargs)
 
-            return async_wrapper  # type: ignore[return-value]
+            return cast(F, async_wrapper)
 
-        @functools.wraps(func)
+        @wraps(func)
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
             return func(*args, **kwargs)
 
-        return sync_wrapper  # type: ignore[return-value]
+        return cast(F, sync_wrapper)
 
     return decorator
 
 
-def observe_debug(
+def observe(
     name: str | None = None,
-    *,
     ignore_input: bool = False,
     ignore_output: bool = False,
-    **_compat_kwargs: Any,
+    metadata: dict[str, Any] | None = None,
+    span_type: Literal["DEFAULT", "LLM", "TOOL"] = "DEFAULT",
+    **kwargs: Any,
 ) -> Callable[[F], F]:
-    """No-op replacement for `browser_use.observability.observe_debug`."""
-    return observe(
-        name=name,
-        ignore_input=ignore_input,
-        ignore_output=ignore_output,
-    )
+    """Trace function execution via Laminar when available.
+
+    Falls back to no-op when `lmnr` isn't installed. Same signature as
+    `lmnr.observe` and `browser_use.observability.observe`.
+
+    Args:
+        name: Span name (defaults to function name).
+        ignore_input: Don't capture function args in the span.
+        ignore_output: Don't capture return value in the span.
+        metadata: Extra attributes attached to the span.
+        span_type: One of DEFAULT / LLM / TOOL — Laminar uses this for
+            UI grouping and per-span semantics.
+    """
+    decorator_kwargs: dict[str, Any] = {
+        "name": name,
+        "ignore_input": ignore_input,
+        "ignore_output": ignore_output,
+        "metadata": metadata,
+        "span_type": span_type,
+        # `tags` need to be created on Laminar first; mirroring upstream's defaults.
+        "tags": ["observe", "observe_debug"],
+        **kwargs,
+    }
+    if _LMNR_AVAILABLE and _lmnr_observe is not None:
+        return cast(Callable[[F], F], _lmnr_observe(**decorator_kwargs))
+    return _create_no_op_decorator(**decorator_kwargs)
 
 
-__all__ = ["observe", "observe_debug"]
+def observe_debug(
+    name: str | None = None,
+    ignore_input: bool = False,
+    ignore_output: bool = False,
+    metadata: dict[str, Any] | None = None,
+    span_type: Literal["DEFAULT", "LLM", "TOOL"] = "DEFAULT",
+    **kwargs: Any,
+) -> Callable[[F], F]:
+    """Like `observe` but only fires when LMNR_LOGGING_LEVEL=debug.
+
+    Use for hot inner-loop functions where always-on tracing would be
+    too noisy or expensive but you want detail when debugging.
+    """
+    decorator_kwargs: dict[str, Any] = {
+        "name": name,
+        "ignore_input": ignore_input,
+        "ignore_output": ignore_output,
+        "metadata": metadata,
+        "span_type": span_type,
+        "tags": ["observe_debug"],
+        **kwargs,
+    }
+    if _LMNR_AVAILABLE and _lmnr_observe is not None and _is_debug_mode():
+        return cast(Callable[[F], F], _lmnr_observe(**decorator_kwargs))
+    return _create_no_op_decorator(**decorator_kwargs)
+
+
+def is_lmnr_available() -> bool:
+    """True iff `lmnr` is importable in the current process."""
+    return _LMNR_AVAILABLE
+
+
+def get_observability_status() -> dict[str, bool]:
+    """Snapshot of observability state for diagnostics."""
+    return {
+        "lmnr_available": _LMNR_AVAILABLE,
+        "debug_mode": _is_debug_mode(),
+        "observe_active": _LMNR_AVAILABLE,
+        "observe_debug_active": _LMNR_AVAILABLE and _is_debug_mode(),
+    }
+
+
+__all__ = ["observe", "observe_debug", "is_lmnr_available", "get_observability_status"]

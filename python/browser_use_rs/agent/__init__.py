@@ -35,6 +35,7 @@ from browser_use_rs.llm.base import (
     UserMessage,
 )
 from browser_use_rs.tools import Tool
+from browser_use_rs.observability import observe
 from browser_use_rs.views import (
     ActionResult,
     AgentHistory,
@@ -655,6 +656,7 @@ class Agent:
         `agent.history.final_result()`, etc."""
         return self.state.history
 
+    @observe(name="agent.run", ignore_input=True, ignore_output=True)
     async def run(
         self,
         max_steps: int | None = None,
@@ -819,6 +821,15 @@ class Agent:
             tools=[],
             system="You are a strict, concise judge. Output JSON only.",
         )
+        # v0.8.15: account for the judge LLM call. Whether the judge
+        # call should count against task cost is a policy choice, but
+        # leaving it uncounted made our reported per-task cost a strict
+        # under-estimate. Now it's accurate.
+        try:
+            if completion.usage is not None:
+                self._record_usage(self.state.n_steps, completion.usage)
+        except Exception:
+            pass
         verdict = _parse_judgement(completion.text or "")
         self.state.history._set_judgement(verdict)
         return verdict
@@ -839,6 +850,7 @@ class Agent:
                 except Exception:
                     pass
 
+    @observe(name="agent.loop", ignore_input=True, ignore_output=True)
     async def _loop(
         self,
         max_steps: int,
@@ -2364,6 +2376,7 @@ class Agent:
 
         return results
 
+    @observe(name="agent.tool", span_type="TOOL", ignore_output=True)
     async def _run_tool(
         self, tc: ToolCall
     ) -> tuple[ActionResult, ToolResultMessage]:

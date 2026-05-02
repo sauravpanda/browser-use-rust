@@ -806,6 +806,18 @@ def make_extra_tools(agent: Any) -> list:
                 extract_llm.ainvoke(messages, [], system=extraction_system),
                 timeout=getattr(agent, "tool_timeout", 60.0),
             )
+            # v0.8.15: account for the extractor LLM call. Without this,
+            # 5-15K input tokens × N extracts/task were silently missing
+            # from usage_log → step_metadata.input_tokens → eval framework's
+            # tokensUsed → dashboard total_cost. The eval framework reads
+            # the SUM across step_metadata, so adding to history.usage
+            # also flows through. Wrapped in try/except so a missing
+            # _record_usage attr (older Agent shape) doesn't break extract.
+            try:
+                if completion.usage is not None:
+                    agent._record_usage(agent.state.n_steps, completion.usage)
+            except Exception:
+                pass
             text = (completion.text or "").strip()
             if not text:
                 return "(extractor returned empty response)"
