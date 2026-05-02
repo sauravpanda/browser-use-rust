@@ -2091,6 +2091,28 @@ class Agent:
                 len(self._recent_turn_records),
             )
 
+        # v0.8.20: cap the rendered history at first N + last M lines
+        # with an "[X steps omitted]" marker between. _collapsed_history
+        # was growing unbounded — at step 50 with ~47 lines × 30-80
+        # tokens each we were spending 2-4K tokens per turn just on
+        # history rendering. Mirrors upstream's max_history_items
+        # windowing pattern (browser_use/agent/message_manager/
+        # service.py:150-186). Lines list itself is preserved in
+        # `_collapsed_history` so we can show more if needed later;
+        # only the LLM-facing render is windowed.
+        FIRST_N = 3
+        LAST_M = 12
+        full = self._collapsed_history
+        if len(full) > FIRST_N + LAST_M:
+            omitted = len(full) - FIRST_N - LAST_M
+            rendered_lines = (
+                full[:FIRST_N]
+                + [f"  [... {omitted} earlier step(s) omitted to control context size ...]"]
+                + full[-LAST_M:]
+            )
+        else:
+            rendered_lines = full
+
         # Inject (or refresh) the [AGENT_HISTORY] message at the FRONT
         # of self._messages, right after the initial user task. This
         # keeps the rendering consistent across LLM calls.
@@ -2098,7 +2120,7 @@ class Agent:
             "[AGENT_HISTORY] Earlier turns (collapsed; native message "
             "history is preserved for the most recent "
             f"{self.history_window_steps} turn(s) below):\n"
-            + "\n".join(self._collapsed_history)
+            + "\n".join(rendered_lines)
         )
         # Find an existing AGENT_HISTORY message and update it; else
         # insert at index 1 (right after the initial task UserMessage).
@@ -2152,21 +2174,33 @@ class Agent:
         ImagePart alongside the DOM text — same one-message shape upstream
         browser_use uses for state messages.
         """
-        # Supersede any prior page-state messages. Their indices are stale
-        # the moment a new snapshot lands; keeping them just inflates tokens.
-        for msg in self._messages:
+        # v0.8.20: drop prior page-state messages entirely instead of
+        # replacing their content with the SUPERSEDED placeholder. The
+        # placeholder still cost ~10 tokens per message and one
+        # accumulated per step → ~500 tokens of pure dead weight by
+        # step 50. Latest snapshot fully replaces them anyway, so
+        # there's no information loss. Mirrors upstream's
+        # message_manager pattern (single replaceable state slot vs
+        # appending placeholders).
+        def _is_old_page_state(msg: Message) -> bool:
             if not isinstance(msg, UserMessage):
-                continue
-            if isinstance(msg.content, str) and msg.content.startswith(_PAGE_STATE_TAG):
-                msg.content = _PAGE_STATE_SUPERSEDED
-            elif isinstance(msg.content, list):
-                # Mixed text+image state message from a prior vision-on step.
+                return False
+            if isinstance(msg.content, str):
+                return (
+                    msg.content.startswith(_PAGE_STATE_TAG)
+                    or msg.content == _PAGE_STATE_SUPERSEDED
+                )
+            if isinstance(msg.content, list):
                 first = msg.content[0] if msg.content else None
-                if (
+                return (
                     isinstance(first, TextPart)
                     and first.text.startswith(_PAGE_STATE_TAG)
-                ):
-                    msg.content = _PAGE_STATE_SUPERSEDED
+                )
+            return False
+
+        self._messages = [
+            msg for msg in self._messages if not _is_old_page_state(msg)
+        ]
 
         # Persistent agent state (v0.8.0): surface prior turn's
         # memory + next_goal + evaluation so the LLM has continuity
