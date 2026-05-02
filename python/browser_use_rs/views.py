@@ -180,9 +180,16 @@ class AgentHistoryList:
         return self.usage.output
 
     def model_dump(self) -> dict[str, Any]:
+        # v0.8.16: use ChatInvokeUsage.model_dump() instead of asdict()
+        # so the cost fields (`total_cost`, `total_prompt_cost`,
+        # `total_prompt_cached_cost`, `total_completion_cost`) injected
+        # by `pricing.cost_for()` propagate. asdict() only walks
+        # @dataclass fields and silently drops dynamically-added cost
+        # values, so any consumer reading `history.model_dump()["usage"]`
+        # was getting tokens but no cost.
         return {
             "history": [h.model_dump() for h in self.history],
-            "usage": asdict(self.usage),
+            "usage": self.usage.model_dump(),
         }
 
 

@@ -2721,12 +2721,22 @@ class Agent:
         t_start: float,
         step_n: int,
     ) -> None:
-        last = self.usage_log[-1] if self.usage_log else None
+        # v0.8.16: sum ALL usage records for this step instead of taking
+        # `[-1]`. v0.8.15 wired extract_structured_data and _judge_and_log
+        # through `_record_usage`, so multiple LLM calls now land in
+        # `usage_log` for the same step. Reading only the LAST one gave
+        # per-step metadata of "last LLM call in step" rather than "sum
+        # across all LLM calls in step", which made StepMetadata
+        # inaccurate (per-task totals were still right because the eval
+        # framework sums across steps, but per-step values were wrong).
+        # Filter and sum is O(n_steps) per call but n_steps is small;
+        # not worth maintaining a separate per-step cache.
+        step_calls = [u for u in self.usage_log if u.get("step") == step_n]
         metadata = StepMetadata(
             step_number=step_n,
-            input_tokens=(last["input"] if last else 0),
-            output_tokens=(last["output"] if last else 0),
-            cache_read_tokens=(last["cache_read"] if last else 0),
+            input_tokens=sum(u.get("input", 0) for u in step_calls),
+            output_tokens=sum(u.get("output", 0) for u in step_calls),
+            cache_read_tokens=sum(u.get("cache_read", 0) for u in step_calls),
             step_start_time=t_start,
             step_end_time=time.monotonic(),
         )
