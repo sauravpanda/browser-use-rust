@@ -1208,6 +1208,12 @@ class Agent:
                 # with answers like "I was unable to retrieve... based
                 # on what would typically be available...". Catch those
                 # at code layer regardless of what the LLM says.
+                # v0.8.24: strip leaked <memory>/<eval>/<next_goal>
+                # wrappers before committing — gemini-3-flash sometimes
+                # forgets the "skip on final-answer turn" rule and the
+                # raw XML reaches the eval framework's finalAnswer
+                # field, where the judge can't parse around it.
+                done_text = self._strip_state_tags_for_answer(done_text)
                 _success = bool(done_text)
                 if _success and _looks_like_fabricated_blocked_answer(done_text):
                     _success = False
@@ -1493,16 +1499,45 @@ class Agent:
         use the text content as the final answer.
         """
         try:
-            prompt = (
-                f"[FORCE FINAL ANSWER] The agent loop is terminating "
-                f"({reason}). Reply RIGHT NOW with your best plain-text "
-                f"answer to the original task based on everything you've "
-                f"seen so far. Do NOT call any tools — your text reply "
-                f"IS the final answer. If you don't know the full answer, "
-                f"give your best partial answer and explicitly note what "
-                f"is unverified or missing. A partial answer is far more "
-                f"valuable than no answer."
-            )
+            # v0.8.24: distinguish cancellation from other terminators.
+            # On cancellation the eval framework has already given up on
+            # us; we have <10s before tear-down. Force-final under that
+            # pressure tends to hallucinate clean answers. The
+            # cancellation path measured +7 wrong-answer "rescues" of
+            # tasks that had crashed in v0.8.21 — net judge change ≈ 0
+            # (wrong answers count the same as crashes). Better to land
+            # an HONEST partial than a confident fabrication so the
+            # judge can distinguish "interrupted" from "tried and
+            # failed". The other terminators (max_steps, all-error
+            # streak, LLM unhealthy) keep the original prompt — the
+            # agent there has had time to think and a partial answer is
+            # genuinely the best signal.
+            is_cancel = "cancelled by eval-framework" in reason
+            if is_cancel:
+                prompt = (
+                    f"[TASK INTERRUPTED] The eval framework's per-task "
+                    f"timeout fired ({reason}). Reply RIGHT NOW in "
+                    f"plain text — do NOT call tools. Format:\n\n"
+                    f"  TASK INTERRUPTED before completion. Partial "
+                    f"findings: <bullet list of facts you actually "
+                    f"observed in the page snapshots / tool results>.\n\n"
+                    f"If you have NO usable findings yet, reply "
+                    f"exactly: 'TASK INTERRUPTED — no usable findings.' "
+                    f"Do NOT fabricate completion. Do NOT use training "
+                    f"knowledge to fill gaps. The judge needs an honest "
+                    f"interruption signal, not a guessed answer."
+                )
+            else:
+                prompt = (
+                    f"[FORCE FINAL ANSWER] The agent loop is terminating "
+                    f"({reason}). Reply RIGHT NOW with your best plain-text "
+                    f"answer to the original task based on everything you've "
+                    f"seen so far. Do NOT call any tools — your text reply "
+                    f"IS the final answer. If you don't know the full answer, "
+                    f"give your best partial answer and explicitly note what "
+                    f"is unverified or missing. A partial answer is far more "
+                    f"valuable than no answer."
+                )
             self._messages.append(UserMessage(content=prompt))
             completion = await asyncio.wait_for(
                 self.llm.ainvoke(
@@ -1517,6 +1552,9 @@ class Agent:
                 # LLM returned only tool calls — nothing to commit. Fall
                 # through to the original error result.
                 raise RuntimeError("force-final returned no text")
+            # v0.8.24: strip leaked <memory>/<eval>/<next_goal> tags
+            # (same fix as the no-tool-call done path).
+            answer = self._strip_state_tags_for_answer(answer)
             ar = ActionResult(
                 extracted_content=answer,
                 is_done=True,
@@ -2199,6 +2237,50 @@ class Agent:
             self._messages.insert(1, UserMessage(content=history_body))
         else:
             self._messages.append(UserMessage(content=history_body))
+
+    @staticmethod
+    def _strip_state_tags_for_answer(text: str) -> str:
+        """v0.8.24: clean state-emission XML tags out of a final-answer string.
+
+        The agent prompt asks the LLM to wrap per-turn state in
+        <evaluation_previous_goal>, <memory>, <next_goal> blocks and to
+        SKIP them on the final-answer turn. In practice gemini-3-flash
+        sometimes forgets and emits them on the answer turn anyway —
+        either as the only content (the actual answer ends up inside
+        <memory>) or wrapped around the prose.
+
+        Behavior:
+          - <evaluation_previous_goal>...</...> and <next_goal>...</...>
+            are removed entirely (their inner text is meta-commentary,
+            not part of the answer).
+          - <memory>...</...> wrapper is removed but the inner text is
+            preserved — when the LLM mis-emits, the answer is almost
+            always inside <memory>.
+
+        Idempotent and safe on text without tags.
+        """
+        if not text or "<" not in text:
+            return text
+        import re as _re
+        # Drop the meta tags entirely.
+        for tag in ("evaluation_previous_goal", "next_goal"):
+            text = _re.sub(
+                rf"<{tag}>.*?</{tag}>\s*",
+                "",
+                text,
+                flags=_re.DOTALL | _re.IGNORECASE,
+            )
+        # Unwrap <memory> — keep the inner content as the answer body.
+        # Append a blank-line separator after unwrap so memory content
+        # doesn't run into prose that followed the closing tag (final
+        # strip below normalises trailing whitespace away).
+        text = _re.sub(
+            r"<memory>(.*?)</memory>\s*",
+            r"\1\n\n",
+            text,
+            flags=_re.DOTALL | _re.IGNORECASE,
+        )
+        return text.strip()
 
     def _parse_persistent_state(self, text: str) -> None:
         """Pull <memory>/<next_goal>/<evaluation_previous_goal> from
