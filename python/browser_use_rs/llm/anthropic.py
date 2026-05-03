@@ -149,14 +149,42 @@ class ChatAnthropic(BaseChatModel):
         kwargs: dict[str, Any] = {
             "model": self.model,
             "max_tokens": self.max_tokens,
-            # Top-level cache_control auto-caches the most recent cacheable
-            # block (the latest message). Combined with the explicit
-            # breakpoint on the system prompt, two breakpoints accumulate
-            # the cache turn by turn.
-            "cache_control": {"type": "ephemeral"},
             "tools": tool_defs,
             "messages": anthropic_msgs,
         }
+        # Caching: tag the LAST user/tool-result content block with
+        # cache_control=ephemeral so the prompt cache extends through
+        # the most recent turn. Combined with the system-prompt
+        # breakpoint below, that gives us two cache breakpoints per
+        # request, accumulating cache hits turn-by-turn.
+        #
+        # Earlier code passed `cache_control` as a TOP-LEVEL kwarg to
+        # client.messages.create(); the Anthropic SDK rejects that
+        # (TypeError: unexpected keyword argument 'cache_control').
+        # cache_control only belongs on individual content blocks.
+        if anthropic_msgs:
+            last_msg = anthropic_msgs[-1]
+            content = last_msg.get("content")
+            if isinstance(content, list) and content:
+                # Only string-text or tool_result blocks support
+                # cache_control. Walk back to find the last block that
+                # accepts it; mutate in place.
+                for blk in reversed(content):
+                    if isinstance(blk, dict) and blk.get("type") in (
+                        "text", "tool_result", "image", "document",
+                    ):
+                        blk["cache_control"] = {"type": "ephemeral"}
+                        break
+            elif isinstance(content, str) and content:
+                # Promote string content to a single text block so we
+                # can attach cache_control without changing semantics.
+                last_msg["content"] = [
+                    {
+                        "type": "text",
+                        "text": content,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ]
         if system:
             kwargs["system"] = [
                 {
