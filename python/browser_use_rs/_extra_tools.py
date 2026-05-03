@@ -1342,21 +1342,45 @@ def make_extra_tools(agent: Any) -> list:
                 f"answer; find NEW ones):\n{already_collected.strip()[:2000]}"
             )
 
-        # v0.9.0 content_stats envelope. Mirrors upstream's tools/
-        # service.py:1099-1109 stats_summary line. Tells the LLM where
-        # in the page it is and how to paginate if more is needed.
-        stats_lines = [
-            f"chunk {sel_chunk.chunk_index + 1} of {sel_chunk.total_chunks}",
-            f"page total: {content_stats['total_markdown_chars']:,} chars",
-            f"this chunk: {content_stats['chunk_chars']:,} chars (source [{content_stats['char_offset_start']:,}..{content_stats['char_offset_end']:,}])",
-        ]
-        if sel_chunk.has_more:
-            stats_lines.append(
-                f"MORE CONTENT BELOW: call extract_structured_data again with start_from_char={content_stats['next_start_char']} to read the next chunk"
+        # v0.9.0 content_stats envelope, gated in v0.9.1 (codex feedback):
+        # only emit when total_chunks > 1. The "chunk 1 of 1" line on
+        # single-chunk extracts (the common case for pages <30k chars)
+        # is useless control-plane text that may teach the agent
+        # extraction is paginated even when it isn't — likely
+        # contributor to v0.9.0's eager-pagination behavior on tasks
+        # whose answer was in the only chunk anyway.
+        if sel_chunk.total_chunks > 1:
+            stats_lines = [
+                f"chunk {sel_chunk.chunk_index + 1} of {sel_chunk.total_chunks}",
+                f"page total: {content_stats['total_markdown_chars']:,} chars",
+                f"this chunk: {content_stats['chunk_chars']:,} chars (source [{content_stats['char_offset_start']:,}..{content_stats['char_offset_end']:,}])",
+            ]
+            if sel_chunk.has_more:
+                stats_lines.append(
+                    f"MORE CONTENT BELOW: call extract_structured_data again with start_from_char={content_stats['next_start_char']} to read the next chunk"
+                )
+            else:
+                stats_lines.append("(this is the LAST chunk of the page)")
+            stats_clause = (
+                "\n\n<content_stats>\n" + "\n".join(stats_lines) + "\n</content_stats>"
             )
-        elif sel_chunk.total_chunks > 1:
-            stats_lines.append("(this is the LAST chunk of the page)")
-        stats_clause = "\n\n<content_stats>\n" + "\n".join(stats_lines) + "\n</content_stats>"
+        else:
+            stats_clause = ""
+
+        # Telemetry for v0.9.1 diagnosis (codex-requested). Logged at
+        # INFO so trace analysis can correlate chunker behavior with
+        # task outcomes. Per-call cost is tiny; cumulative log is one
+        # line per extract.
+        try:
+            import logging as _lg
+            _lg.getLogger(__name__).info(
+                "extract: url=%s md_len=%d chunks=%d sel_idx=%d sel_len=%d has_more=%s start_from=%d query=%r",
+                url[:80], len(full_md), sel_chunk.total_chunks,
+                sel_chunk.chunk_index, len(sel_chunk.content),
+                sel_chunk.has_more, start_from_char, query[:80],
+            )
+        except Exception:
+            pass
 
         # v0.8.12: split into proper SystemMessage + UserMessage. Was
         # passing the whole instruction block as a single user message
