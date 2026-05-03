@@ -1239,45 +1239,74 @@ def make_extra_tools(agent: Any) -> list:
         if not page or not page.strip():
             return "(page is empty — cannot extract)"
 
-        # v0.9.0: structure-aware chunking. Replaces the prior naive
-        # page[start:start+max_chars] slice that could split mid-list-
-        # item or mid-table-row, dropping context the LLM needed to
-        # extract items 6-10 of a long list. Now we slice at heading
-        # / list / table / paragraph boundaries and prepend the parent
-        # heading stack (and table header for split tables) to
-        # continuation chunks.
-        full_md = page  # keep the unbounded markdown for stats
-        chunks = chunk_markdown_by_structure(
-            full_md, max_chunk_chars=max_chars, start_from_char=start_from_char,
+        # v0.9.2 (codex bisection): two paths based on page size.
+        #
+        # FAST PATH (short page, no pagination): bypass the chunker
+        # entirely and use the EXACT pre-v0.9.0 prompt + cache shape.
+        # This is the dominant case on this benchmark (most pages are
+        # <30k chars, fit in one chunk). v0.9.0 added chunker codepath
+        # for ALL pages — even ones that didn't need it — and judge
+        # regressed -5 vs v0.8.30 mean despite operational gains.
+        # Codex hypothesis: the parser-rejoin or prompt-restructure
+        # changed the LLM's input on short pages even when chunker
+        # was a no-op. Fast path eliminates that variable.
+        #
+        # CHUNKER PATH (long page or paginating): full v0.9.0 logic
+        # — structure-aware chunks, overlap_prefix, content_stats
+        # envelope. Targets the Top-N tasks where chunker is
+        # genuinely needed.
+        full_md = page  # full markdown text, regardless of path
+        use_chunker_path = (
+            start_from_char > 0 or len(full_md) > max_chars
         )
-        if not chunks:
-            return (
-                f"(start_from_char={start_from_char} past end of page "
-                f"text len={len(full_md)})"
-            )
-        sel_chunk = chunks[0]
-        # Prepend the overlap_prefix (heading stack, table header) when
-        # present so the LLM sees the context. Empty for chunk 0 of a
-        # full-document extract.
-        if sel_chunk.overlap_prefix:
-            page = sel_chunk.overlap_prefix + "\n\n" + sel_chunk.content
-        else:
-            page = sel_chunk.content
 
-        # Build the content_stats envelope the LLM sees in the prompt
-        # so it knows whether to paginate. Mirrors upstream's
-        # tools/service.py extractor at lines 1099-1109.
-        content_stats: dict[str, Any] = {
-            "total_markdown_chars": len(full_md),
-            "chunk_index": sel_chunk.chunk_index,
-            "total_chunks": sel_chunk.total_chunks,
-            "chunk_chars": len(sel_chunk.content),
-            "char_offset_start": sel_chunk.char_offset_start,
-            "char_offset_end": sel_chunk.char_offset_end,
-        }
-        if sel_chunk.has_more:
-            content_stats["next_start_char"] = sel_chunk.char_offset_end
-            content_stats["truncated_at_char"] = sel_chunk.char_offset_end
+        if not use_chunker_path:
+            # FAST PATH — exact pre-v0.9.0 behavior on the prompt
+            # side (legacy cache key, no content_stats envelope, raw
+            # markdown).
+            sel_chunk = None
+            content_stats: dict[str, Any] = {}
+            page_fingerprint = ""
+            # Legacy cache key from v0.7.0: (url, query, offset_bucket).
+            # offset is always 0 on the fast path so the bucket is 0.
+            cache_key = (url, query.strip(), 0)
+            # page already == full_md; nothing to slice.
+        else:
+            # CHUNKER PATH — v0.9.0+ structure-aware
+            chunks = chunk_markdown_by_structure(
+                full_md, max_chunk_chars=max_chars, start_from_char=start_from_char,
+            )
+            if not chunks:
+                return (
+                    f"(start_from_char={start_from_char} past end of page "
+                    f"text len={len(full_md)})"
+                )
+            sel_chunk = chunks[0]
+            if sel_chunk.overlap_prefix:
+                page = sel_chunk.overlap_prefix + "\n\n" + sel_chunk.content
+            else:
+                page = sel_chunk.content
+
+            content_stats = {
+                "total_markdown_chars": len(full_md),
+                "chunk_index": sel_chunk.chunk_index,
+                "total_chunks": sel_chunk.total_chunks,
+                "chunk_chars": len(sel_chunk.content),
+                "char_offset_start": sel_chunk.char_offset_start,
+                "char_offset_end": sel_chunk.char_offset_end,
+            }
+            if sel_chunk.has_more:
+                content_stats["next_start_char"] = sel_chunk.char_offset_end
+                content_stats["truncated_at_char"] = sel_chunk.char_offset_end
+
+            # v0.9.0 cache key tied to the actual chunk selection.
+            page_fingerprint = hashlib.md5(
+                full_md[:2000].encode("utf-8")
+            ).hexdigest()[:12]
+            cache_key = (
+                url, page_fingerprint, query.strip(), max_chars,
+                sel_chunk.chunk_index, extract_links, extract_images,
+            )
 
         schema_clause = ""
         if output_schema_hint and output_schema_hint.strip():
@@ -1324,14 +1353,7 @@ def make_extra_tools(agent: Any) -> list:
             except Exception:
                 pass
 
-        # v0.9.0 cache key: tied to the actual chunk we selected, not a
-        # coarse char-bucket. Skip lookup entirely when already_collected
-        # is set (that param drives different output).
-        page_fingerprint = hashlib.md5(full_md[:2000].encode("utf-8")).hexdigest()[:12]
-        cache_key = (
-            url, page_fingerprint, query.strip(), max_chars,
-            sel_chunk.chunk_index, extract_links, extract_images,
-        )
+        # Cache lookup — key was built per-path above.
         if not cache_disabled and cache_key in extract_cache:
             return f"(cached) {extract_cache[cache_key]}"
 
@@ -1342,14 +1364,10 @@ def make_extra_tools(agent: Any) -> list:
                 f"answer; find NEW ones):\n{already_collected.strip()[:2000]}"
             )
 
-        # v0.9.0 content_stats envelope, gated in v0.9.1 (codex feedback):
-        # only emit when total_chunks > 1. The "chunk 1 of 1" line on
-        # single-chunk extracts (the common case for pages <30k chars)
-        # is useless control-plane text that may teach the agent
-        # extraction is paginated even when it isn't — likely
-        # contributor to v0.9.0's eager-pagination behavior on tasks
-        # whose answer was in the only chunk anyway.
-        if sel_chunk.total_chunks > 1:
+        # content_stats envelope only on the chunker path AND when
+        # total_chunks > 1 (v0.9.1 gating). On the fast path,
+        # stats_clause stays empty so the prompt matches pre-v0.9.0.
+        if sel_chunk is not None and sel_chunk.total_chunks > 1:
             stats_lines = [
                 f"chunk {sel_chunk.chunk_index + 1} of {sel_chunk.total_chunks}",
                 f"page total: {content_stats['total_markdown_chars']:,} chars",
@@ -1367,17 +1385,22 @@ def make_extra_tools(agent: Any) -> list:
         else:
             stats_clause = ""
 
-        # Telemetry for v0.9.1 diagnosis (codex-requested). Logged at
-        # INFO so trace analysis can correlate chunker behavior with
-        # task outcomes. Per-call cost is tiny; cumulative log is one
-        # line per extract.
+        # Telemetry for v0.9.2 bisection (codex-requested). Logs the
+        # path taken AND content hashes so trace analysis can answer
+        # "did this task hit the fast path or chunker path? did the
+        # markdown content change between v0.9.x ships?".
         try:
             import logging as _lg
+            md_hash = hashlib.md5(full_md.encode("utf-8")).hexdigest()[:8] if full_md else "-"
             _lg.getLogger(__name__).info(
-                "extract: url=%s md_len=%d chunks=%d sel_idx=%d sel_len=%d has_more=%s start_from=%d query=%r",
-                url[:80], len(full_md), sel_chunk.total_chunks,
-                sel_chunk.chunk_index, len(sel_chunk.content),
-                sel_chunk.has_more, start_from_char, query[:80],
+                "extract: url=%s md_len=%d md_hash=%s path=%s chunks=%d sel_idx=%d sel_len=%d has_more=%s start_from=%d query=%r",
+                url[:80], len(full_md), md_hash,
+                "fast" if not use_chunker_path else "chunker",
+                sel_chunk.total_chunks if sel_chunk else 1,
+                sel_chunk.chunk_index if sel_chunk else 0,
+                len(page),
+                sel_chunk.has_more if sel_chunk else False,
+                start_from_char, query[:80],
             )
         except Exception:
             pass
@@ -1424,9 +1447,16 @@ def make_extra_tools(agent: Any) -> list:
             "unless the answer requires structure.\n"
             "</output>"
         )
+        # v0.9.2: restore the pre-v0.9.0 `<page_offset>` line in the
+        # user prompt. v0.9.0 dropped it in favor of the content_stats
+        # envelope; codex bisection flagged that prompt-shape change
+        # as a possible cause of the short-page regression. Keeping
+        # both lines is harmless (`<page_offset>` was always there
+        # pre-v0.9.0; new envelope only appears for multi-chunk).
         extraction_user = (
             f"<query>\n{query}\n</query>\n\n"
-            f"<page_url>\n{url}\n</page_url>"
+            f"<page_url>\n{url}\n</page_url>\n\n"
+            f"<page_offset>{start_from_char}</page_offset>"
             + stats_clause + schema_clause + already_clause + "\n\n"
             f"<webpage_content>\n{page}{extras}\n</webpage_content>"
         )
