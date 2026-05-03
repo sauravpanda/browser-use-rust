@@ -196,7 +196,15 @@ class ChatAnthropic(BaseChatModel):
         if self.thinking:
             kwargs["thinking"] = self.thinking
         if self.effort:
-            kwargs["output_config"] = {"effort": self.effort}
+            # output_config is a newer Anthropic API surface that older
+            # versions of the python SDK don't recognise as a kwarg
+            # (TypeError: unexpected keyword argument 'output_config').
+            # Route through extra_body so the SDK forwards it untouched
+            # to the server, which always accepts it for models that
+            # support extended thinking effort.
+            kwargs.setdefault("extra_body", {})["output_config"] = {
+                "effort": self.effort,
+            }
         if self.temperature is not None:
             kwargs["temperature"] = self.temperature
 
