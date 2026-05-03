@@ -20,526 +20,14 @@ in `make_extra_tools(agent)` so they capture `agent` as a closure.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import os
 import re
 import tempfile
 import uuid
-from dataclasses import dataclass, field
 from typing import Any
 
 from browser_use_rs.tools import tool
-
-
-# ---------------------------------------------------------------------------
-# v0.9.0 — structure-aware markdown chunking for extract_structured_data.
-# Module-level so tests can hit it without spinning up an Agent. Codex-
-# reviewed design; targets the dominant Top-N failure pattern (items 6-10
-# of a long list landing in chunk 2 without context).
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class _MdBlock:
-    """One semantic block in the cleaned markdown stream."""
-    kind: str   # 'heading' | 'list' | 'table' | 'paragraph' | 'fence' | 'rule'
-    text: str   # raw block text (no surrounding blank lines)
-    level: int = 0  # heading level (1..6) or 0 for non-headings
-    src_start: int = 0  # byte offset of block start in original source md
-    src_end: int = 0    # byte offset of block end (exclusive)
-
-
-@dataclass
-class _MdChunk:
-    """A bounded slice of the markdown plus the context-prefix to render."""
-    content: str
-    overlap_prefix: str
-    char_offset_start: int
-    char_offset_end: int
-    chunk_index: int
-    total_chunks: int
-    has_more: bool
-
-
-_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
-_LIST_LINE_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\S")
-_TABLE_LINE_RE = re.compile(r"^\s*\|.*\|\s*$")
-_TABLE_SEP_RE = re.compile(r"^\s*\|?[\s:-]+\|[\s:|-]+\s*$")
-_FENCE_RE = re.compile(r"^\s*(```|~~~)")
-
-
-def _parse_md_blocks(md: str) -> list[_MdBlock]:
-    """Split cleaned markdown into semantic blocks.
-
-    Greedy paragraph-style parsing — each block is contiguous lines of
-    a single kind, with blank lines as separators. Headings are always
-    standalone (one block per heading line). Lists and tables consume
-    consecutive lines of the same kind.
-
-    Each block records its byte offsets in the *source* markdown
-    (src_start/src_end) so start_from_char pagination indexes into
-    real source text rather than a reconstructed approximation.
-    """
-    if not md:
-        return []
-    lines = md.splitlines(keepends=True)  # keep '\n' so cumulative offsets match source
-    line_starts: list[int] = []
-    pos = 0
-    for line in lines:
-        line_starts.append(pos)
-        pos += len(line)
-    line_starts.append(pos)  # sentinel for end-of-source
-
-    blocks: list[_MdBlock] = []
-    i = 0
-    n = len(lines)
-
-    def _block_text(start_idx: int, end_idx: int) -> str:
-        # Strip trailing newline on each line — the renderer joins with
-        # '\n' so we don't want double-line endings inside block.text.
-        return "\n".join(lines[k].rstrip("\n") for k in range(start_idx, end_idx))
-
-    def _src_range(start_idx: int, end_idx: int) -> tuple[int, int]:
-        # End offset = start of the line AFTER the last block line, but
-        # WITHOUT the trailing newline (so consecutive blocks don't overlap
-        # on source-newline characters). Trim trailing whitespace.
-        s = line_starts[start_idx]
-        e = line_starts[end_idx]
-        # Walk back over trailing newlines so end is exclusive of separator.
-        while e > s and md[e - 1] in "\n\r":
-            e -= 1
-        return s, e
-
-    while i < n:
-        line = lines[i].rstrip("\n")
-        stripped = line.strip()
-        if not stripped:
-            i += 1
-            continue
-        # Code fence — capture until closing fence (or EOF as fallback).
-        if _FENCE_RE.match(line):
-            start = i
-            i += 1
-            while i < n and not _FENCE_RE.match(lines[i].rstrip("\n")):
-                i += 1
-            if i < n:
-                i += 1  # consume closing fence
-            s, e = _src_range(start, i)
-            blocks.append(_MdBlock(kind="fence", text=_block_text(start, i), src_start=s, src_end=e))
-            continue
-        # Heading.
-        m = _HEADING_RE.match(line)
-        if m:
-            s, e = _src_range(i, i + 1)
-            blocks.append(
-                _MdBlock(kind="heading", text=line.rstrip(), level=len(m.group(1)),
-                         src_start=s, src_end=e)
-            )
-            i += 1
-            continue
-        # Horizontal rule (--- / *** / ___).
-        if re.match(r"^\s*([-*_])\1{2,}\s*$", line):
-            s, e = _src_range(i, i + 1)
-            blocks.append(_MdBlock(kind="rule", text=line.rstrip(), src_start=s, src_end=e))
-            i += 1
-            continue
-        # Table — header line then separator then body rows.
-        if _TABLE_LINE_RE.match(line):
-            start = i
-            while i < n and _TABLE_LINE_RE.match(lines[i].rstrip("\n")):
-                i += 1
-            s, e = _src_range(start, i)
-            blocks.append(_MdBlock(kind="table", text=_block_text(start, i), src_start=s, src_end=e))
-            continue
-        # List — consecutive list lines (allow nested indentation).
-        if _LIST_LINE_RE.match(line):
-            start = i
-            while i < n:
-                cur = lines[i].rstrip("\n")
-                if _LIST_LINE_RE.match(cur):
-                    i += 1
-                elif cur.startswith((" ", "\t")) and cur.strip():
-                    # continuation of a list item
-                    i += 1
-                else:
-                    break
-            s, e = _src_range(start, i)
-            blocks.append(_MdBlock(kind="list", text=_block_text(start, i), src_start=s, src_end=e))
-            continue
-        # Paragraph — non-empty lines until a blank line or block-start.
-        start = i
-        while i < n:
-            cur = lines[i].rstrip("\n")
-            if not cur.strip():
-                break
-            if (
-                _HEADING_RE.match(cur)
-                or _LIST_LINE_RE.match(cur)
-                or _TABLE_LINE_RE.match(cur)
-                or _FENCE_RE.match(cur)
-            ):
-                break
-            i += 1
-        s, e = _src_range(start, i)
-        blocks.append(_MdBlock(kind="paragraph", text=_block_text(start, i), src_start=s, src_end=e))
-    return blocks
-
-
-def _table_header(table_text: str) -> str | None:
-    """Return 'header_row + separator_row' from a table block, or None."""
-    lines = table_text.splitlines()
-    if len(lines) < 2:
-        return None
-    if _TABLE_SEP_RE.match(lines[1]):
-        return "\n".join(lines[:2])
-    return None
-
-
-def _hard_cut_fragments(b: _MdBlock, max_chars: int) -> list[_MdBlock]:
-    """Last-resort: char-cut a block whose text > max_chars into
-    pieces of exactly max_chars. Source offsets are derived from the
-    parent block (best-effort: we project sub-piece char-positions
-    proportionally onto the parent's src_start..src_end range).
-    """
-    if len(b.text) <= max_chars:
-        return [b]
-    out: list[_MdBlock] = []
-    parent_span = max(1, b.src_end - b.src_start)
-    text_len = max(1, len(b.text))
-    for i in range(0, len(b.text), max_chars):
-        chunk_text = b.text[i : i + max_chars]
-        # Project text-relative offsets onto source-relative offsets.
-        sub_start = b.src_start + (i * parent_span) // text_len
-        sub_end = b.src_start + ((i + len(chunk_text)) * parent_span) // text_len
-        out.append(
-            _MdBlock(
-                kind=b.kind, text=chunk_text, level=b.level,
-                src_start=sub_start, src_end=sub_end,
-            )
-        )
-    return out
-
-
-def _split_oversized_block(b: _MdBlock, max_chars: int) -> list[_MdBlock]:
-    """Sub-split a block that exceeds max_chars into smaller blocks.
-
-    Lists are split at item boundaries (each `- ` / `1.` line begins a
-    new fragment), preserving list-kind. Tables are split at row
-    boundaries with the header+separator carried into every fragment.
-    Paragraphs and fences fall back to line-grouping. Headings/rules
-    are tiny by definition; left untouched.
-
-    All paths feed any still-oversized fragment through
-    ``_hard_cut_fragments`` as a last resort, so every returned block
-    is bounded by max_chars (codex must-fix #4: list items longer
-    than max_chars used to escape this guarantee).
-    """
-    if len(b.text) <= max_chars:
-        return [b]
-    if b.kind in ("heading", "rule"):
-        return [b]
-    lines = b.text.splitlines()
-    parent_span = max(1, b.src_end - b.src_start)
-    text_len = max(1, len(b.text))
-
-    def _make(kind: str, text: str, text_offset_in_parent: int) -> _MdBlock:
-        # Derive source range from the position of `text` inside the
-        # parent block. text_offset_in_parent is the char-offset of
-        # this fragment's first char within b.text.
-        sub_start = b.src_start + (text_offset_in_parent * parent_span) // text_len
-        sub_end = b.src_start + ((text_offset_in_parent + len(text)) * parent_span) // text_len
-        return _MdBlock(kind=kind, text=text, src_start=sub_start, src_end=sub_end)
-
-    if b.kind == "table":
-        hdr_lines = lines[:2] if len(lines) >= 2 and _TABLE_SEP_RE.match(lines[1]) else []
-        body = lines[len(hdr_lines):]
-        out: list[_MdBlock] = []
-        cur: list[str] = list(hdr_lines)
-        cur_chars = sum(len(x) + 1 for x in cur)
-        cur_text_offset = 0  # offset of first body row in parent
-        body_offset_in_parent = sum(len(x) + 1 for x in hdr_lines)
-        offset_cursor = body_offset_in_parent
-        for row in body:
-            row_size = len(row) + 1
-            if cur_chars + row_size > max_chars and cur != hdr_lines:
-                frag_text = "\n".join(cur)
-                out.append(_make("table", frag_text, cur_text_offset))
-                cur_text_offset = offset_cursor
-                cur = list(hdr_lines) + [row]
-                cur_chars = sum(len(x) + 1 for x in cur)
-            else:
-                cur.append(row)
-                cur_chars += row_size
-            offset_cursor += row_size
-        if cur and cur != hdr_lines:
-            frag_text = "\n".join(cur)
-            out.append(_make("table", frag_text, cur_text_offset))
-        # Apply hard-cut fallback to any fragment that's still too big
-        # (e.g. a single body row with a massive cell).
-        final: list[_MdBlock] = []
-        for f in out:
-            final.extend(_hard_cut_fragments(f, max_chars))
-        return final or [b]
-
-    if b.kind == "list":
-        out = []
-        cur = []
-        cur_chars = 0
-        cur_text_offset = 0
-        offset_cursor = 0
-        for line in lines:
-            line_size = len(line) + 1
-            is_item_start = bool(_LIST_LINE_RE.match(line))
-            if cur and is_item_start and cur_chars + line_size > max_chars:
-                frag_text = "\n".join(cur)
-                out.append(_make("list", frag_text, cur_text_offset))
-                cur_text_offset = offset_cursor
-                cur = [line]
-                cur_chars = line_size
-            else:
-                cur.append(line)
-                cur_chars += line_size
-            offset_cursor += line_size
-        if cur:
-            frag_text = "\n".join(cur)
-            out.append(_make("list", frag_text, cur_text_offset))
-        # Hard-cut any list fragment that's still > max_chars (one big
-        # item with continuation lines). Codex must-fix #4.
-        final: list[_MdBlock] = []
-        for f in out:
-            final.extend(_hard_cut_fragments(f, max_chars))
-        return final or [b]
-
-    # paragraph / fence / fallback — line-group with hard char cap.
-    out = []
-    cur = []
-    cur_chars = 0
-    cur_text_offset = 0
-    offset_cursor = 0
-    for line in lines:
-        line_size = len(line) + 1
-        if cur and cur_chars + line_size > max_chars:
-            frag_text = "\n".join(cur)
-            out.append(_make(b.kind, frag_text, cur_text_offset))
-            cur_text_offset = offset_cursor
-            cur = [line]
-            cur_chars = line_size
-        else:
-            cur.append(line)
-            cur_chars += line_size
-        offset_cursor += line_size
-    if cur:
-        frag_text = "\n".join(cur)
-        out.append(_make(b.kind, frag_text, cur_text_offset))
-    final: list[_MdBlock] = []
-    for f in out:
-        final.extend(_hard_cut_fragments(f, max_chars))
-    return final or [b]
-
-
-def _build_overlap_prefix(
-    heading_stack: list[tuple[int, str]],
-    last_table_header: str | None,
-    cap_chars: int,
-    chunk_content: str = "",
-) -> str:
-    """Render the context prefix that precedes a continuation chunk.
-
-    Includes the active heading hierarchy and (when relevant) the
-    header row of a table whose body is continuing into this chunk.
-    Capped so the prefix can't dominate the chunk.
-
-    Codex must-fix #3: when the chunk's content already starts with
-    the table header (because _split_oversized_block carries it into
-    every fragment), don't duplicate it as overlap_prefix.
-    """
-    if not heading_stack and not last_table_header:
-        return ""
-    parts: list[str] = []
-    if heading_stack:
-        parts.append(
-            "\n".join(f"{'#' * lvl} {text}" for lvl, text in heading_stack)
-        )
-    # Skip table header in the prefix if the chunk already opens with it.
-    if last_table_header and not chunk_content.lstrip().startswith(
-        last_table_header.lstrip()
-    ):
-        parts.append(last_table_header)
-    pre = "\n\n".join(parts)
-    if len(pre) > cap_chars:
-        pre = pre[:cap_chars] + "..."
-    return pre
-
-
-def chunk_markdown_by_structure(
-    md: str,
-    max_chunk_chars: int,
-    start_from_char: int = 0,
-) -> list[_MdChunk]:
-    """Split markdown into structure-aware chunks.
-
-    Each chunk respects ``max_chunk_chars`` but breaks at block
-    boundaries (heading / list / table / paragraph) — never mid-line.
-    Continuation chunks get an ``overlap_prefix`` containing the
-    parent heading stack and (for table continuations) the table
-    header + separator row, so the LLM sees what context items
-    belong to.
-
-    ``start_from_char`` indexes into the *source* markdown; the
-    returned chunk starts at the first whole block whose source
-    range overlaps that offset.
-    """
-    raw_blocks = _parse_md_blocks(md)
-    if not raw_blocks:
-        return []
-
-    # Sub-split any block that exceeds max_chunk_chars on its own
-    # (long lists, big tables, single huge paragraphs). Without this
-    # the chunker would emit oversized chunks because greedy grouping
-    # only triggers when ADDING a block would overflow — a block that
-    # ALREADY overflows just gets emitted whole. Sub-splitting at
-    # natural boundaries (list items, table rows, lines) preserves
-    # readability and keeps each output chunk bounded. Source offsets
-    # propagate from the parent block.
-    blocks: list[_MdBlock] = []
-    for rb in raw_blocks:
-        blocks.extend(_split_oversized_block(rb, max_chunk_chars))
-
-    # Skip blocks that end before start_from_char (using SOURCE offsets,
-    # codex must-fix #2).
-    skip_until = 0
-    if start_from_char > 0:
-        for i, b in enumerate(blocks):
-            if b.src_end > start_from_char:
-                skip_until = i
-                break
-        else:
-            return []
-
-    # Group blocks into chunks. Track heading stack + last table header
-    # as we go so each chunk knows its context-prefix.
-    chunks: list[_MdChunk] = []
-    cur_blocks: list[_MdBlock] = []
-    cur_chars = 0
-    cur_start_off = blocks[skip_until].src_start if skip_until < len(blocks) else 0
-    heading_stack: list[tuple[int, str]] = []
-    last_table_header: str | None = None
-    prefix_cap = max(200, min(1500, int(max_chunk_chars * 0.15)))
-    # Track whether we're starting from a continuation point (codex
-    # must-fix #1). When start_from_char > 0, even the FIRST returned
-    # chunk is a continuation and needs its prefix.
-    is_continuation_start = start_from_char > 0
-
-    # Pre-walk to find the heading stack as it stood at skip_until.
-    for b in blocks[:skip_until]:
-        if b.kind == "heading":
-            heading_stack = [h for h in heading_stack if h[0] < b.level]
-            heading_stack.append((b.level, b.text.lstrip("#").strip()))
-        elif b.kind == "table":
-            hdr = _table_header(b.text)
-            if hdr is not None:
-                last_table_header = hdr
-
-    def _flush(end_offset: int) -> None:
-        nonlocal cur_blocks, cur_chars, cur_start_off
-        if not cur_blocks:
-            return
-        content = "\n\n".join(b.text for b in cur_blocks)
-        # Render prefix if this isn't the document's first chunk OR if
-        # we're starting from a pagination continuation point.
-        needs_prefix = bool(chunks) or is_continuation_start
-        prefix = (
-            _build_overlap_prefix(
-                heading_stack_snapshot, last_table_header_snapshot,
-                prefix_cap, chunk_content=content,
-            )
-            if needs_prefix
-            else ""
-        )
-        chunks.append(
-            _MdChunk(
-                content=content,
-                overlap_prefix=prefix,
-                char_offset_start=cur_start_off,
-                char_offset_end=end_offset,
-                chunk_index=len(chunks),
-                total_chunks=0,  # patched after loop
-                has_more=False,  # patched after loop
-            )
-        )
-        cur_blocks = []
-        cur_chars = 0
-        cur_start_off = end_offset
-
-    # Snapshots captured AT chunk-flush time so the prefix reflects
-    # the state when the chunk *starts*, not the state at parse end.
-    heading_stack_snapshot: list[tuple[int, str]] = list(heading_stack)
-    last_table_header_snapshot: str | None = last_table_header
-
-    for i in range(skip_until, len(blocks)):
-        b = blocks[i]
-        size = len(b.text)
-        sep = 2 if cur_blocks else 0  # "\n\n" between blocks within a chunk
-        if cur_chars + sep + size > max_chunk_chars and cur_blocks:
-            _flush(end_offset=b.src_start)
-            heading_stack_snapshot = list(heading_stack)
-            last_table_header_snapshot = last_table_header
-            cur_start_off = b.src_start
-        cur_blocks.append(b)
-        cur_chars += sep + size
-        # Update tracking state AFTER appending so the prefix snapshot
-        # captures what was active before this chunk grew.
-        if b.kind == "heading":
-            heading_stack = [h for h in heading_stack if h[0] < b.level]
-            heading_stack.append((b.level, b.text.lstrip("#").strip()))
-        elif b.kind == "table":
-            hdr = _table_header(b.text)
-            if hdr is not None:
-                last_table_header = hdr
-
-    if cur_blocks:
-        _flush(end_offset=blocks[-1].src_end)
-
-    # Post-pass: merge a tiny chunk (just a heading or two, < 120 chars)
-    # into the next one when their combined size doesn't exceed
-    # max_chunk_chars * 1.25. Avoids "stranded heading" chunks that
-    # waste a tool-call slot. The 25% over-budget tolerance is the
-    # smaller evil compared to forcing the agent to paginate just to
-    # get past 'a heading'.
-    if len(chunks) > 1:
-        merged: list[_MdChunk] = []
-        i = 0
-        while i < len(chunks):
-            cur = chunks[i]
-            if (
-                i + 1 < len(chunks)
-                and len(cur.content) < 120
-                and len(cur.content) + len(chunks[i + 1].content) + 2
-                <= int(max_chunk_chars * 1.25)
-            ):
-                nxt = chunks[i + 1]
-                cur = _MdChunk(
-                    content=cur.content + "\n\n" + nxt.content,
-                    overlap_prefix=cur.overlap_prefix,  # keep the EARLIER prefix
-                    char_offset_start=cur.char_offset_start,
-                    char_offset_end=nxt.char_offset_end,
-                    chunk_index=0,
-                    total_chunks=0,
-                    has_more=False,
-                )
-                i += 2
-            else:
-                i += 1
-            merged.append(cur)
-        chunks = merged
-
-    total = len(chunks)
-    for i, c in enumerate(chunks):
-        c.chunk_index = i
-        c.total_chunks = total
-        c.has_more = i < total - 1
-    return chunks
 
 
 # ---------------------------------------------------------------------------
@@ -1156,15 +644,10 @@ def make_extra_tools(agent: Any) -> list:
         listing items matching a criterion ("top 3 articles"), summarizing
         a section, or answering a question about the page.
 
-        Pagination (v0.9.0 structure-aware): when a page exceeds
-        max_chars the extractor splits at heading / list / table /
-        paragraph boundaries (NOT mid-line). Each result tells you
-        `chunk X of Y` and gives a `next_start_char` to continue with.
-        Continuation chunks include the parent heading stack as a
-        prefix so items 6-10 of a list don't lose their context.
-        For Top-N tasks crossing chunks, pass `already_collected`
-        with the items from prior chunks so the extractor doesn't
-        repeat them.
+        Pagination: when a page is longer than max_chars, call again
+        with start_from_char=max_chars to read the next chunk
+        (start_from_char=30000 starts the second slice). Repeat until
+        you find the answer or the chunk is empty.
 
         Structured output: pass output_schema_hint with a JSON-like
         sketch of the format you want. The extractor will try to match
@@ -1174,24 +657,22 @@ def make_extra_tools(agent: Any) -> list:
         Args:
             query: What to extract. Be specific.
             max_chars: Max page text per chunk. Default 30000.
-            start_from_char: Source-text offset to start reading from
-                (for paged long pages). Default 0. Pass the
-                `next_start_char` value from a prior call to continue.
+            start_from_char: Offset to start reading from (for paged
+                long pages). Default 0.
             output_schema_hint: Optional JSON-like template the answer
                 should follow. Default empty (free-form text answer).
-            already_collected: Comma- or newline-separated identifiers
-                (titles/names/URLs) from prior chunks of the same
-                page. The extractor will skip duplicates.
         """
-        # Per-task dedup cache (v0.9.0): keyed on the actual chunk
-        # selection, not a coarse char-bucket. Disable when
-        # already_collected is in play — that param is meant to drive
-        # different output across calls and the cache would mask it.
+        # Dedup memory (v0.7.0). If the agent calls extract with the
+        # exact same query+offset on the same URL we just answered, return
+        # the cached answer instead of re-running the LLM. Saves ~$0.005
+        # per duplicate call.
         try:
             url = await session.current_url()
         except Exception:
             url = ""
-        cache_disabled = bool(already_collected and already_collected.strip())
+        cache_key = (url, query.strip(), start_from_char // 5000)
+        if cache_key in extract_cache:
+            return f"(cached) {extract_cache[cache_key]}"
 
         # Markdown extraction (v0.7.1): pull the page DOM and convert
         # to a cleaned markdown-style text. Drops scripts/styles/nav/
@@ -1238,75 +719,12 @@ def make_extra_tools(agent: Any) -> list:
             page = await session.page_text(max_chars + start_from_char + 1000)
         if not page or not page.strip():
             return "(page is empty — cannot extract)"
-
-        # v0.9.2 (codex bisection): two paths based on page size.
-        #
-        # FAST PATH (short page, no pagination): bypass the chunker
-        # entirely and use the EXACT pre-v0.9.0 prompt + cache shape.
-        # This is the dominant case on this benchmark (most pages are
-        # <30k chars, fit in one chunk). v0.9.0 added chunker codepath
-        # for ALL pages — even ones that didn't need it — and judge
-        # regressed -5 vs v0.8.30 mean despite operational gains.
-        # Codex hypothesis: the parser-rejoin or prompt-restructure
-        # changed the LLM's input on short pages even when chunker
-        # was a no-op. Fast path eliminates that variable.
-        #
-        # CHUNKER PATH (long page or paginating): full v0.9.0 logic
-        # — structure-aware chunks, overlap_prefix, content_stats
-        # envelope. Targets the Top-N tasks where chunker is
-        # genuinely needed.
-        full_md = page  # full markdown text, regardless of path
-        use_chunker_path = (
-            start_from_char > 0 or len(full_md) > max_chars
-        )
-
-        if not use_chunker_path:
-            # FAST PATH — exact pre-v0.9.0 behavior on the prompt
-            # side (legacy cache key, no content_stats envelope, raw
-            # markdown).
-            sel_chunk = None
-            content_stats: dict[str, Any] = {}
-            page_fingerprint = ""
-            # Legacy cache key from v0.7.0: (url, query, offset_bucket).
-            # offset is always 0 on the fast path so the bucket is 0.
-            cache_key = (url, query.strip(), 0)
-            # page already == full_md; nothing to slice.
-        else:
-            # CHUNKER PATH — v0.9.0+ structure-aware
-            chunks = chunk_markdown_by_structure(
-                full_md, max_chunk_chars=max_chars, start_from_char=start_from_char,
-            )
-            if not chunks:
-                return (
-                    f"(start_from_char={start_from_char} past end of page "
-                    f"text len={len(full_md)})"
-                )
-            sel_chunk = chunks[0]
-            if sel_chunk.overlap_prefix:
-                page = sel_chunk.overlap_prefix + "\n\n" + sel_chunk.content
-            else:
-                page = sel_chunk.content
-
-            content_stats = {
-                "total_markdown_chars": len(full_md),
-                "chunk_index": sel_chunk.chunk_index,
-                "total_chunks": sel_chunk.total_chunks,
-                "chunk_chars": len(sel_chunk.content),
-                "char_offset_start": sel_chunk.char_offset_start,
-                "char_offset_end": sel_chunk.char_offset_end,
-            }
-            if sel_chunk.has_more:
-                content_stats["next_start_char"] = sel_chunk.char_offset_end
-                content_stats["truncated_at_char"] = sel_chunk.char_offset_end
-
-            # v0.9.0 cache key tied to the actual chunk selection.
-            page_fingerprint = hashlib.md5(
-                full_md[:2000].encode("utf-8")
-            ).hexdigest()[:12]
-            cache_key = (
-                url, page_fingerprint, query.strip(), max_chars,
-                sel_chunk.chunk_index, extract_links, extract_images,
-            )
+        if start_from_char > 0:
+            if start_from_char >= len(page):
+                return f"(start_from_char={start_from_char} is past end of page text len={len(page)})"
+            page = page[start_from_char : start_from_char + max_chars]
+        elif len(page) > max_chars:
+            page = page[:max_chars]
 
         schema_clause = ""
         if output_schema_hint and output_schema_hint.strip():
@@ -1353,57 +771,12 @@ def make_extra_tools(agent: Any) -> list:
             except Exception:
                 pass
 
-        # Cache lookup — key was built per-path above.
-        if not cache_disabled and cache_key in extract_cache:
-            return f"(cached) {extract_cache[cache_key]}"
-
         already_clause = ""
         if already_collected and already_collected.strip():
             already_clause = (
                 f"\n\nITEMS ALREADY COLLECTED (do NOT repeat in your "
                 f"answer; find NEW ones):\n{already_collected.strip()[:2000]}"
             )
-
-        # content_stats envelope only on the chunker path AND when
-        # total_chunks > 1 (v0.9.1 gating). On the fast path,
-        # stats_clause stays empty so the prompt matches pre-v0.9.0.
-        if sel_chunk is not None and sel_chunk.total_chunks > 1:
-            stats_lines = [
-                f"chunk {sel_chunk.chunk_index + 1} of {sel_chunk.total_chunks}",
-                f"page total: {content_stats['total_markdown_chars']:,} chars",
-                f"this chunk: {content_stats['chunk_chars']:,} chars (source [{content_stats['char_offset_start']:,}..{content_stats['char_offset_end']:,}])",
-            ]
-            if sel_chunk.has_more:
-                stats_lines.append(
-                    f"MORE CONTENT BELOW: call extract_structured_data again with start_from_char={content_stats['next_start_char']} to read the next chunk"
-                )
-            else:
-                stats_lines.append("(this is the LAST chunk of the page)")
-            stats_clause = (
-                "\n\n<content_stats>\n" + "\n".join(stats_lines) + "\n</content_stats>"
-            )
-        else:
-            stats_clause = ""
-
-        # Telemetry for v0.9.2 bisection (codex-requested). Logs the
-        # path taken AND content hashes so trace analysis can answer
-        # "did this task hit the fast path or chunker path? did the
-        # markdown content change between v0.9.x ships?".
-        try:
-            import logging as _lg
-            md_hash = hashlib.md5(full_md.encode("utf-8")).hexdigest()[:8] if full_md else "-"
-            _lg.getLogger(__name__).info(
-                "extract: url=%s md_len=%d md_hash=%s path=%s chunks=%d sel_idx=%d sel_len=%d has_more=%s start_from=%d query=%r",
-                url[:80], len(full_md), md_hash,
-                "fast" if not use_chunker_path else "chunker",
-                sel_chunk.total_chunks if sel_chunk else 1,
-                sel_chunk.chunk_index if sel_chunk else 0,
-                len(page),
-                sel_chunk.has_more if sel_chunk else False,
-                start_from_char, query[:80],
-            )
-        except Exception:
-            pass
 
         # v0.8.12: split into proper SystemMessage + UserMessage. Was
         # passing the whole instruction block as a single user message
@@ -1447,17 +820,11 @@ def make_extra_tools(agent: Any) -> list:
             "unless the answer requires structure.\n"
             "</output>"
         )
-        # v0.9.2: restore the pre-v0.9.0 `<page_offset>` line in the
-        # user prompt. v0.9.0 dropped it in favor of the content_stats
-        # envelope; codex bisection flagged that prompt-shape change
-        # as a possible cause of the short-page regression. Keeping
-        # both lines is harmless (`<page_offset>` was always there
-        # pre-v0.9.0; new envelope only appears for multi-chunk).
         extraction_user = (
             f"<query>\n{query}\n</query>\n\n"
             f"<page_url>\n{url}\n</page_url>\n\n"
             f"<page_offset>{start_from_char}</page_offset>"
-            + stats_clause + schema_clause + already_clause + "\n\n"
+            + schema_clause + already_clause + "\n\n"
             f"<webpage_content>\n{page}{extras}\n</webpage_content>"
         )
 
@@ -1487,8 +854,7 @@ def make_extra_tools(agent: Any) -> list:
             text = (completion.text or "").strip()
             if not text:
                 return "(extractor returned empty response)"
-            if not cache_disabled:
-                extract_cache[cache_key] = text
+            extract_cache[cache_key] = text  # cache for dedup
             return text
         except asyncio.TimeoutError:
             return "(extractor timed out — try a narrower query)"
