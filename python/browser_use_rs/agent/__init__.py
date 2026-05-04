@@ -14,9 +14,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import inspect
+import json
 import logging
+import os
 import time
+from dataclasses import asdict, is_dataclass
 from typing import Any, Awaitable, Callable
 
 logger = logging.getLogger(__name__)
@@ -45,6 +49,104 @@ from browser_use_rs.views import (
     BrowserStateSummary,
     StepMetadata,
 )
+
+
+def _json_fallback(obj: Any) -> Any:
+    if is_dataclass(obj) and not isinstance(obj, type):
+        return asdict(obj)
+    if hasattr(obj, "__dict__"):
+        return {k: v for k, v in obj.__dict__.items() if not k.startswith("_")}
+    return repr(obj)
+
+
+def _content_byte_len(content: Any) -> int:
+    """UTF-8 byte length of a message's content (str | list[Part]).
+    Image parts contribute their base64 payload length — same as what
+    flows over the wire to the provider.
+    """
+    if content is None:
+        return 0
+    if isinstance(content, str):
+        return len(content.encode("utf-8"))
+    if isinstance(content, list):
+        total = 0
+        for part in content:
+            if isinstance(part, TextPart):
+                total += len(part.text.encode("utf-8"))
+            elif isinstance(part, ImagePart):
+                total += len(part.data) if part.data else 0
+            else:
+                total += len(repr(part).encode("utf-8"))
+        return total
+    return len(str(content).encode("utf-8"))
+
+
+def _message_byte_len(msg: Message) -> int:
+    """Approximate wire size of a single message: content + tool_call
+    payloads if assistant. Used for per-role attribution in
+    _compute_call_metrics.
+    """
+    if isinstance(msg, AssistantMessage):
+        n = _content_byte_len(msg.text or "")
+        for tc in msg.tool_calls:
+            n += len(tc.name.encode("utf-8")) if tc.name else 0
+            args = getattr(tc, "arguments", None) or getattr(tc, "args", None)
+            if args is not None:
+                if isinstance(args, str):
+                    n += len(args.encode("utf-8"))
+                else:
+                    n += len(json.dumps(args, default=_json_fallback).encode("utf-8"))
+        return n
+    if isinstance(msg, ToolResultMessage):
+        return _content_byte_len(msg.content) + len(
+            (msg.name or "").encode("utf-8")
+        )
+    if isinstance(msg, (UserMessage,)):
+        return _content_byte_len(msg.content)
+    return _content_byte_len(getattr(msg, "content", ""))
+
+
+def _message_to_dict(msg: Message) -> dict[str, Any]:
+    """Serialize a message for trace dump. Lossy on image bytes —
+    images are replaced with a `<image:N bytes>` marker so JSON files
+    stay readable."""
+    base: dict[str, Any] = {"role": type(msg).__name__}
+    if isinstance(msg, ToolResultMessage):
+        base["tool_call_id"] = msg.tool_call_id
+        base["name"] = msg.name
+        base["is_error"] = msg.is_error
+        base["content"] = _content_to_dict(msg.content)
+    elif isinstance(msg, AssistantMessage):
+        base["text"] = msg.text
+        base["tool_calls"] = [
+            {
+                "id": getattr(tc, "id", None),
+                "name": tc.name,
+                "args": getattr(tc, "arguments", None) or getattr(tc, "args", None),
+            }
+            for tc in msg.tool_calls
+        ]
+    else:
+        base["content"] = _content_to_dict(getattr(msg, "content", ""))
+    return base
+
+
+def _content_to_dict(content: Any) -> Any:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        out: list[Any] = []
+        for part in content:
+            if isinstance(part, TextPart):
+                out.append({"type": "text", "text": part.text})
+            elif isinstance(part, ImagePart):
+                size = len(part.data) if part.data else 0
+                out.append({"type": "image", "media_type": part.media_type, "bytes": size})
+            else:
+                out.append(repr(part))
+        return out
+    return str(content)
+
 
 # Flash-mode prompt — terse variant matching upstream's
 # system_prompt_flash.md. Used when flash_mode=True is passed to the
@@ -613,8 +715,22 @@ class Agent:
             self.state.history.usage.model = getattr(llm, "model", None)
         # Compat: agents that tracked usage_log on the old Anthropic Agent
         # can keep reading it. Each entry: {step, input, output, cache_read}.
+        # v0.10.4: entries are enriched with prompt_hash, tools_hash,
+        # state_msg_bytes, etc. — see _compute_call_metrics.
         self.usage_log: list[dict[str, Any]] = []
         self.error_log: list[tuple[int, str]] = []
+        # v0.10.4 cache-stability instrumentation. Filled on the first
+        # _record_usage call; subsequent calls warn if either hash
+        # drifts within the session (= cache rebuild incoming).
+        self._initial_prompt_hash: str | None = None
+        self._initial_tools_hash: str | None = None
+        self._cache_warned: bool = False
+        # Opt-in trace dump. When set, writes one JSONL line per LLM
+        # call containing the full message list — used for offline
+        # token-construction replay. Off by default.
+        self._trace_dir: str | None = os.environ.get(
+            "BU_RS_INSTRUMENT_TRACE_DIR"
+        ) or None
 
         # Conversation messages live across run() calls so add_new_task()
         # can append a continuation without losing browser/page context.
@@ -2996,16 +3112,141 @@ class Agent:
         )
 
     def _record_usage(self, step_n: int, usage) -> None:
-        self.usage_log.append(
-            {
-                "step": step_n,
-                "input": usage.input,
-                "output": usage.output,
-                "cache_read": usage.cache_read,
-                "cache_creation": usage.cache_creation,
-            }
-        )
+        # v0.10.4: enrich usage_log with input-side metrics so we can
+        # detect cache regressions BEFORE running a full eval. The
+        # critical fields are prompt_hash + tools_hash: if either drifts
+        # within a session, we just invalidated the Anthropic prompt
+        # cache (10× cost penalty on the rebuild). See
+        # _compute_call_metrics + _check_cache_stability.
+        metrics = self._compute_call_metrics()
+        entry: dict[str, Any] = {
+            "step": step_n,
+            "input": usage.input,
+            "output": usage.output,
+            "cache_read": usage.cache_read,
+            "cache_creation": usage.cache_creation,
+            **metrics,
+        }
+        self.usage_log.append(entry)
         self.state.history.usage = self.state.history.usage + usage
+        self._check_cache_stability(entry)
+        if self._trace_dir is not None:
+            self._dump_trace(entry)
+
+    def _compute_call_metrics(self) -> dict[str, Any]:
+        """Snapshot the message list / tool schema / system prompt that
+        we just sent to the LLM. Pure-Python, no I/O. Cheap enough to
+        run on every call (~50µs for a 30-message list).
+        """
+        sys_text = self.system_prompt or ""
+        prompt_hash = hashlib.sha256(sys_text.encode("utf-8")).hexdigest()[:12]
+        tools_payload = self._tools_signature()
+        tools_hash = hashlib.sha256(tools_payload.encode("utf-8")).hexdigest()[:12]
+        # Per-role byte counts so we can attribute growth.
+        state_msg_bytes = 0
+        tool_results_bytes = 0
+        assistant_msgs_bytes = 0
+        user_msgs_bytes = 0
+        n_user = n_assistant = n_tool_result = 0
+        last_user_idx = -1
+        for i, msg in enumerate(self._messages):
+            if isinstance(msg, UserMessage):
+                last_user_idx = i
+        for i, msg in enumerate(self._messages):
+            blen = _message_byte_len(msg)
+            if isinstance(msg, UserMessage):
+                user_msgs_bytes += blen
+                n_user += 1
+                if i == last_user_idx:
+                    state_msg_bytes = blen
+            elif isinstance(msg, AssistantMessage):
+                assistant_msgs_bytes += blen
+                n_assistant += 1
+            elif isinstance(msg, ToolResultMessage):
+                tool_results_bytes += blen
+                n_tool_result += 1
+        return {
+            "prompt_hash": prompt_hash,
+            "tools_hash": tools_hash,
+            "system_bytes": len(sys_text.encode("utf-8")),
+            "tools_bytes": len(tools_payload.encode("utf-8")),
+            "n_messages": len(self._messages),
+            "n_user": n_user,
+            "n_assistant": n_assistant,
+            "n_tool_result": n_tool_result,
+            "state_msg_bytes": state_msg_bytes,
+            "user_msgs_bytes": user_msgs_bytes,
+            "assistant_msgs_bytes": assistant_msgs_bytes,
+            "tool_results_bytes": tool_results_bytes,
+        }
+
+    def _tools_signature(self) -> str:
+        """Stable JSON serialization of the tool schema. Used for hash
+        only — must be identical across calls if the schema is the same,
+        otherwise hash drift is a false positive.
+        """
+        sig: list[dict[str, Any]] = []
+        for tool in self.tools:
+            entry: dict[str, Any] = {"name": getattr(tool, "name", None)}
+            for attr in ("description", "parameters", "input_schema"):
+                if hasattr(tool, attr):
+                    entry[attr] = getattr(tool, attr)
+            sig.append(entry)
+        return json.dumps(sig, sort_keys=True, default=_json_fallback)
+
+    def _check_cache_stability(self, entry: dict[str, Any]) -> None:
+        """If prompt_hash or tools_hash drifts within a session, the
+        Anthropic prompt cache will rebuild from scratch on the next
+        call (~10× cost on the rebuilt tokens). Warn loudly so we
+        catch it before a full eval — this was the v0.10.0 trap.
+        """
+        if not self.usage_log or len(self.usage_log) < 2:
+            self._initial_prompt_hash = entry["prompt_hash"]
+            self._initial_tools_hash = entry["tools_hash"]
+            self._cache_warned = False
+            return
+        if self._cache_warned:
+            return
+        if entry["prompt_hash"] != self._initial_prompt_hash:
+            logger.warning(
+                "agent: CACHE BREAK — system_prompt_hash drifted at "
+                "step %d (was %s, now %s). Prompt cache will rebuild; "
+                "expect a one-call cost spike.",
+                entry["step"],
+                self._initial_prompt_hash,
+                entry["prompt_hash"],
+            )
+            self._cache_warned = True
+        elif entry["tools_hash"] != self._initial_tools_hash:
+            logger.warning(
+                "agent: CACHE BREAK — tools_hash drifted at step %d "
+                "(was %s, now %s). Prompt cache will rebuild; expect "
+                "a one-call cost spike.",
+                entry["step"],
+                self._initial_tools_hash,
+                entry["tools_hash"],
+            )
+            self._cache_warned = True
+
+    def _dump_trace(self, entry: dict[str, Any]) -> None:
+        """Opt-in: dump the full message list to JSONL when
+        BU_RS_INSTRUMENT_TRACE_DIR is set. Lets us replay token
+        construction offline without re-running the eval. Off by
+        default — has noticeable I/O cost on long tasks.
+        """
+        try:
+            os.makedirs(self._trace_dir, exist_ok=True)  # type: ignore[arg-type]
+            fname = f"step_{entry['step']:03d}_{entry['prompt_hash']}.jsonl"
+            path = os.path.join(self._trace_dir, fname)  # type: ignore[arg-type]
+            payload = {
+                "metrics": entry,
+                "system": self.system_prompt,
+                "messages": [_message_to_dict(m) for m in self._messages],
+            }
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(payload, default=_json_fallback) + "\n")
+        except Exception:
+            logger.exception("agent: trace dump failed (non-fatal)")
 
     async def _should_stop(self) -> bool:
         if self.register_should_stop_callback is None:
