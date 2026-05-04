@@ -2631,7 +2631,28 @@ class Agent:
     async def _run_tool(
         self, tc: ToolCall
     ) -> tuple[ActionResult, ToolResultMessage]:
+        # v0.10.0 safety net for the alias-registration drop in
+        # _browser_tools.py: aliases (`input` → `type_text`,
+        # `click_element_by_index` → `click`, etc.) are no longer
+        # registered as separate tool entries in the schema. If the
+        # LLM still emits the upstream/alias name, resolve it to the
+        # canonical name here BEFORE the unknown-tool error fires.
+        # Preserves backward compat for trace replays / model drift /
+        # any model trained on upstream's tool naming.
         tool = self.tools_by_name.get(tc.name)
+        if tool is None:
+            try:
+                from browser_use_rs._browser_tools import ALIAS_TO_CANONICAL
+                canonical = ALIAS_TO_CANONICAL.get(tc.name)
+                if canonical and canonical != tc.name:
+                    tool = self.tools_by_name.get(canonical)
+                    if tool is not None:
+                        logger.info(
+                            "agent: resolved tool alias %r → %r",
+                            tc.name, canonical,
+                        )
+            except ImportError:
+                pass
         if tool is None:
             err = f"unknown tool: {tc.name}"
             return (
