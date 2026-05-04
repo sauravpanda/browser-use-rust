@@ -854,6 +854,50 @@ def make_extra_tools(agent: Any) -> list:
             text = (completion.text or "").strip()
             if not text:
                 return "(extractor returned empty response)"
+            # v0.9.7 — file-system overflow for long extracts.
+            # Mirrors upstream's tools/service.py:1175-1182 pattern.
+            # Long extract results bloat the agent's context turn-by-
+            # turn (read-tool turns stay native indefinitely in our
+            # collapse policy). Spilling >10k-char results to a sandbox
+            # file and returning a one-line reference cuts ~5-30k
+            # tokens of cumulative context per long-list / long-doc
+            # task. The agent reads the file via read_file when it
+            # needs the full content, otherwise just keeps the
+            # reference in history. Targets the cost gap vs upstream
+            # (their extractor has the same overflow).
+            EXTRACT_OVERFLOW_THRESHOLD = 10000
+            if len(text) > EXTRACT_OVERFLOW_THRESHOLD:
+                try:
+                    # Sandbox path — agent has read access via read_file
+                    extracts_dir = os.path.join(sandbox, "extracts")
+                    os.makedirs(extracts_dir, exist_ok=True)
+                    # Stable name per (query, fingerprint) so re-asking the
+                    # same question doesn't pile up files.
+                    name_hash = hashlib.md5(
+                        f"{query}|{page_fingerprint}|{start_from_char}".encode()
+                    ).hexdigest()[:10]
+                    fname = f"extract_{name_hash}.txt"
+                    fpath = os.path.join(extracts_dir, fname)
+                    with open(fpath, "w", encoding="utf-8") as f:
+                        f.write(text)
+                    preview = text[:1500].rstrip()
+                    overflow_msg = (
+                        f"{preview}\n\n"
+                        f"[EXTRACT OVERFLOW — {len(text):,} chars total, "
+                        f"first 1500 shown above. Full content saved to "
+                        f"`extracts/{fname}` — call `read_file(\"extracts/"
+                        f"{fname}\")` if you need the rest.]"
+                    )
+                    extract_cache[cache_key] = overflow_msg
+                    return overflow_msg
+                except Exception as e:
+                    # Sandbox write failed — degrade to returning the
+                    # full text (pre-v0.9.7 behaviour).
+                    logger_inner = __import__("logging").getLogger(__name__)
+                    logger_inner.info(
+                        "extract: file overflow write failed (%s), "
+                        "falling back to full inline return", e,
+                    )
             extract_cache[cache_key] = text  # cache for dedup
             return text
         except asyncio.TimeoutError:
