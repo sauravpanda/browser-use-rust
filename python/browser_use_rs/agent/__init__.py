@@ -632,6 +632,21 @@ class Agent:
         self._recent_tool_names: list[tuple[str, ...]] = []
         # One-shot budget warning at step == max_steps - 5.
         self._budget_warning_fired = False
+        # v0.9.8 step-bloat reduction (codex-reviewed).
+        # Pattern A "early pivot": track step-of-last-meaningful-progress
+        # so we can detect agents stuck on the wrong domain. "Progress"
+        # means a URL path change, a non-empty/non-"NOT FOUND" extract,
+        # or a clicked search result. Reset to current step on any
+        # progress signal.
+        self._last_progress_step: int = 0
+        self._last_progress_url_path: str = ""  # eTLD+1 + path for change detection
+        self._pivot_nudged_domains: set[str] = set()  # fire ONCE per domain
+        # Pattern C "no-match streak": consecutive read-tool turns that
+        # returned a negative result ("no matches", "NOT FOUND", "(no
+        # such ...)") on the SAME url. Reset on URL change.
+        self._negative_read_streak: int = 0
+        self._negative_read_url: str = ""
+        self._abandon_page_nudged_urls: set[str] = set()  # fire once per URL
         # Set of [N] indices visible in the most recent snapshot we
         # showed the LLM. Populated by _capture_state, consulted by
         # _run_tool to reject hallucinated indices BEFORE we burn a CDP
@@ -1477,7 +1492,8 @@ class Agent:
                 return
 
             self._maybe_inject_loop_nudge(
-                state_summary, completion.tool_calls, step_n, max_steps
+                state_summary, completion.tool_calls, step_n, max_steps,
+                tool_results=tool_results,
             )
 
             # Single-action fallback: if a multi-action turn produced a
@@ -1662,24 +1678,26 @@ class Agent:
         tool_calls: list[ToolCall],
         step_n: int,
         max_steps: int,
+        tool_results: list[ActionResult] | None = None,
     ) -> None:
-        """Detect three classes of stall and inject a one-shot nudge.
+        """Detect five classes of stall and inject a one-shot nudge.
 
         1. **Tight loop** — same canonical (name+args) signature emitted
-           3+ times in the last 6 turns. The URL guard from earlier
-           versions was dropped (v0.4.13) because the dominant eval
-           failure was search-bouncing where the URL changes every
-           turn but the same `[type, click, click]` cycle repeats. We
-           now match OpenCode's doom-loop semantics: identical args
-           three times wins regardless of URL.
+           3+ times in the last 6 turns.
         2. **No extract** — fewer than 25% of recent turns called a
-           read tool (`get_text`, `page_text`, `get_links`, `done`)
-           AND the agent has used >1/3 of its step budget. Catches
-           agents that nav/click/scroll endlessly with only token
-           extracts. Was "zero extracts" — too lenient.
-        3. **Budget warning** — at `step == max_steps - 5`, fire a
-           one-shot "wrap up now" reminder so the agent commits to a
-           best-effort answer instead of silently maxing out.
+           read tool AND >1/3 of step budget used.
+        3. **Budget warning** — at step == max_steps - 5.
+        4. **Early pivot (v0.9.8)** — 5+ consecutive steps on the same
+           eTLD+1 with NO meaningful progress (no URL/path change, no
+           successful extract). Codex-reviewed scoping: requires both
+           the same-domain count AND zero-progress signals together;
+           exempts login/form flows where multi-step same-domain is
+           legitimate. Fires once per domain.
+        5. **No-match streak (v0.9.8)** — 3+ consecutive read-tool
+           turns on the SAME url returning negative results ("no
+           matches", "NOT FOUND", "(no such ...)"). Streak resets on
+           any URL change, any positive read result, or any non-read
+           tool. Fires once per URL.
 
         Each nudge engages a 3-step cooldown so we don't spam, but the
         budget warning is a separate one-shot independent of cooldown.
@@ -1815,6 +1833,169 @@ class Agent:
                     len(domains),
                 )
                 self._loop_nudge_cooldown = COOLDOWN_STEPS
+                return
+
+        # ---- v0.9.8 progress tracking + Patterns 4 & 5 ----
+        # Update progress signals based on this turn's results. We need
+        # tool_results to determine if a read was negative (NOT FOUND /
+        # no matches) or positive.
+        self._update_progress_signals(state, tool_calls, tool_results, step_n)
+
+        # ---- 4. EARLY PIVOT (codex Pattern A) ----
+        # If we've been on the same eTLD+1 for 5+ steps with no progress,
+        # nudge to web_search. Fire ONCE per domain — repeating wastes
+        # budget. Skip if the agent's been doing typing or form work
+        # (those legitimately stay on one domain).
+        EARLY_PIVOT_STALE_STEPS = 5
+        cur_domain = self._domain_of(state.url or "")
+        if (
+            cur_domain
+            and cur_domain not in self._pivot_nudged_domains
+            and self._last_progress_step
+            and step_n - self._last_progress_step >= EARLY_PIVOT_STALE_STEPS
+            # Only fire if recent turns ARE same-domain (not just
+            # carrying forward from earlier).
+            and sum(
+                1 for u in self._recent_urls
+                if self._domain_of(u) == cur_domain
+            ) >= EARLY_PIVOT_STALE_STEPS
+            # Skip if we've recently typed (login/form flow exemption).
+            and not any(
+                "type_text" in names or "press_keys" in names
+                for names in self._recent_tool_names[-3:]
+            )
+        ):
+            nudge = (
+                f"[EARLY_PIVOT] You've been on `{cur_domain}` for "
+                f"{step_n - self._last_progress_step} steps without "
+                f"meaningful progress (no URL change, no successful "
+                f"extract). The site likely doesn't have what you need "
+                f"in an accessible form. Try `web_search(query=...)` "
+                f"with a SPECIFIC query for the information needed — "
+                f"search-engine snippets often answer the question "
+                f"directly. If web_search has already been tried, try "
+                f"a different SITE (mobile.* / m.* / amp / RSS, or a "
+                f"competitor). Do NOT keep clicking/scrolling on this "
+                f"page."
+            )
+            self._messages.append(UserMessage(content=nudge))
+            logger.info(
+                "agent: EARLY_PIVOT fired at step %d (domain=%s, "
+                "stale_for=%d steps)",
+                step_n, cur_domain, step_n - self._last_progress_step,
+            )
+            self._pivot_nudged_domains.add(cur_domain)
+            self._loop_nudge_cooldown = COOLDOWN_STEPS
+            return
+
+        # ---- 5. NO-MATCH STREAK (codex Pattern C) ----
+        # 3+ consecutive read tools on the SAME url returning negative
+        # results → nudge to abandon this page. Tracked in
+        # _update_progress_signals; here we just consume the streak.
+        NO_MATCH_THRESHOLD = 3
+        if (
+            self._negative_read_streak >= NO_MATCH_THRESHOLD
+            and self._negative_read_url
+            and self._negative_read_url not in self._abandon_page_nudged_urls
+        ):
+            nudge = (
+                f"[ABANDON_PAGE] Your last {self._negative_read_streak} "
+                f"read attempts on this page returned negative results "
+                f"(no matches / NOT FOUND / empty). The page does not "
+                f"contain what you're looking for. Stop reading from "
+                f"`{self._negative_read_url[:80]}` — navigate to a "
+                f"different page (search the site for the topic, try "
+                f"web_search, or load a different section)."
+            )
+            self._messages.append(UserMessage(content=nudge))
+            logger.info(
+                "agent: ABANDON_PAGE fired at step %d "
+                "(neg_streak=%d, url=%s)",
+                step_n, self._negative_read_streak,
+                self._negative_read_url[:80],
+            )
+            self._abandon_page_nudged_urls.add(self._negative_read_url)
+            self._loop_nudge_cooldown = COOLDOWN_STEPS
+            self._negative_read_streak = 0  # reset after nudge
+
+    def _update_progress_signals(
+        self,
+        state: BrowserStateSummary,
+        tool_calls: list[ToolCall],
+        tool_results: list[ActionResult] | None,
+        step_n: int,
+    ) -> None:
+        """Update progress + no-match-streak counters used by Patterns 4/5.
+
+        "Progress" = URL path change OR a successful (non-negative)
+        read result. Resets _last_progress_step to current step.
+        Also maintains the consecutive-negative-read streak per URL.
+        """
+        cur_url_path = state.url or ""
+        # Drop query string for path-change detection — URLs that only
+        # differ in tracking params don't count as progress.
+        if "?" in cur_url_path:
+            cur_url_path = cur_url_path.split("?", 1)[0]
+
+        url_changed = cur_url_path != self._last_progress_url_path
+
+        # Detect any positive read result this turn. A "positive read"
+        # is a read-tool that returned non-empty, non-"NOT FOUND",
+        # non-"(no ...)" content.
+        NEGATIVE_MARKERS = (
+            "NOT FOUND", "(no matches", "(no such", "(empty page",
+            "(start_from_char=", "is past end",
+            "(no tabs)", "(no elements match", "(no occurrences",
+        )
+        had_positive_read = False
+        had_negative_read = False
+        had_any_read = False
+        if tool_results:
+            for tc, res in zip(tool_calls, tool_results):
+                if tc.name not in self._READ_ONLY_TOOLS:
+                    continue
+                had_any_read = True
+                content = (res.extracted_content or "").strip()
+                if not content:
+                    had_negative_read = True
+                    continue
+                # Negative if it starts with NOT FOUND, "(no ...", etc.
+                lc_head = content[:60]
+                if any(m in lc_head for m in NEGATIVE_MARKERS):
+                    had_negative_read = True
+                else:
+                    had_positive_read = True
+
+        # Initialize on first turn.
+        if not self._last_progress_url_path:
+            self._last_progress_url_path = cur_url_path
+            self._last_progress_step = step_n
+            self._negative_read_url = cur_url_path
+            return
+
+        # Pattern 4 progress: URL change OR positive read = progress.
+        if url_changed or had_positive_read:
+            self._last_progress_step = step_n
+            self._last_progress_url_path = cur_url_path
+
+        # Pattern 5 streak: count consecutive negative reads on same URL.
+        # Reset on URL change (we're on a new page) OR on any positive
+        # read OR on any non-read tool that mutates state (click,
+        # type_text, etc).
+        had_state_mutation = any(
+            tc.name not in self._READ_ONLY_TOOLS for tc in tool_calls
+        )
+        if url_changed or had_positive_read or had_state_mutation:
+            # Reset streak; new context.
+            self._negative_read_streak = 0
+            self._negative_read_url = cur_url_path
+        elif had_negative_read and not had_positive_read and had_any_read:
+            # Pure-negative read turn on same URL → tick streak.
+            if self._negative_read_url != cur_url_path:
+                self._negative_read_url = cur_url_path
+                self._negative_read_streak = 1
+            else:
+                self._negative_read_streak += 1
 
     def _maybe_inject_single_action_hint(
         self,
