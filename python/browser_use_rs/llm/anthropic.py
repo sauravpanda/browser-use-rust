@@ -103,6 +103,30 @@ def _to_anthropic_messages(messages: list[Message]) -> list[dict]:
 class ChatAnthropic(BaseChatModel):
     name = "anthropic"
 
+    @staticmethod
+    def _model_supports_adaptive_thinking(model: str) -> bool:
+        """Whether Anthropic's `thinking={"type": "adaptive"}` extended-
+        thinking config is accepted on this model.
+
+        Conservative allow-list: only enable on Opus 4.x and Sonnet 4.5+.
+        Anthropic returns 400 "adaptive thinking is not supported on this
+        model" for everything else (Haiku 4.5, Claude 3.x, older Sonnet).
+        Caller can always force the kwarg via `thinking={...}` explicitly.
+        """
+        if not model:
+            return False
+        m = model.lower()
+        # Opus 4.x family — all currently support adaptive
+        if "opus-4" in m:
+            return True
+        # Sonnet 4.5 / 4.6 / 4.7+ — adaptive supported. 4.0 is a grey area;
+        # err conservative and only enable on 4.5+.
+        if "sonnet-4-5" in m or "sonnet-4-6" in m or "sonnet-4-7" in m:
+            return True
+        # Everything else (Haiku, Claude 3.x, plain sonnet-4 / opus-3,
+        # bedrock variants without versioned suffix) → no adaptive.
+        return False
+
     def __init__(
         self,
         model: str = "claude-opus-4-7",
@@ -119,9 +143,18 @@ class ChatAnthropic(BaseChatModel):
         self.model = model
         self.max_tokens = max_tokens
         self.temperature = temperature
-        # Adaptive thinking is on by default for Opus 4.7 — the agent
-        # benefits from elastic reasoning budgets per turn.
-        self.thinking = thinking if thinking is not None else {"type": "adaptive"}
+        # Adaptive thinking is enabled per-default ONLY for models that
+        # support it. Anthropic returns 400
+        # "adaptive thinking is not supported on this model" for models
+        # outside Opus 4.x and Sonnet 4.5+. Caller can always override
+        # by passing `thinking=...` explicitly, including
+        # `thinking=False` / `thinking={}` to force-disable.
+        if thinking is not None:
+            self.thinking = thinking
+        elif self._model_supports_adaptive_thinking(model):
+            self.thinking = {"type": "adaptive"}
+        else:
+            self.thinking = None
         self.effort = effort
         self.timeout = timeout
         if client is not None:
