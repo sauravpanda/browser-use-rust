@@ -51,19 +51,6 @@ from browser_use_rs.views import (
 )
 
 
-# v0.11.0 hard caps on per-message content. Mirror upstream's
-# message_manager limits (60k for read_state / action results, 40k for
-# clickable-element serialization). They fire post-cache-prefix on
-# tool_result and the latest user state message — no impact on the
-# Anthropic prompt cache because they only modify content that's new
-# this turn. The caps put a ceiling on tail-of-distribution cost
-# growth (a 200k-char extract no longer drags the whole conversation
-# along forever). When a cap fires, the marker tells the LLM how to
-# narrow the request.
-MAX_TOOL_RESULT_CHARS = 60_000
-MAX_DOM_SNAPSHOT_CHARS = 40_000
-
-
 def _json_fallback(obj: Any) -> Any:
     if is_dataclass(obj) and not isinstance(obj, type):
         return asdict(obj)
@@ -2534,15 +2521,6 @@ class Agent:
             state_block = "<agent_state>\n" + "\n".join(parts) + "\n</agent_state>\n\n"
 
         dom_text = state.elements_text or ""
-        if dom_text and len(dom_text) > MAX_DOM_SNAPSHOT_CHARS:
-            original_dom_len = len(dom_text)
-            dom_text = (
-                dom_text[:MAX_DOM_SNAPSHOT_CHARS]
-                + f"\n\n[DOM TRUNCATED at {MAX_DOM_SNAPSHOT_CHARS:,} "
-                f"chars — page had {original_dom_len:,} chars total. "
-                f"Scroll to access elements past the cutoff, or use "
-                f"find_elements/find_text to target a specific region.]"
-            )
         if not dom_text:
             body = (
                 f"{_PAGE_STATE_TAG}\n{state_block}URL: {state.url}\n"
@@ -3429,16 +3407,6 @@ def _format_tool_return(
         )
     text = raw if isinstance(raw, str) else str(raw)
     text = _redact_secrets(text, secrets)
-    if len(text) > MAX_TOOL_RESULT_CHARS:
-        original_len = len(text)
-        text = (
-            text[:MAX_TOOL_RESULT_CHARS]
-            + f"\n\n[TRUNCATED at {MAX_TOOL_RESULT_CHARS:,} chars — "
-            f"original was {original_len:,} chars. To get more, narrow "
-            f"the request: use extract_structured_data with a specific "
-            f"query, scroll to a smaller region, or call again with a "
-            f"tighter selector.]"
-        )
     return ([TextPart(text=text)], text)
 
 
