@@ -570,23 +570,11 @@ for _t in BROWSER_TOOLS:
 for _alias_name, _canon in _UPSTREAM_NAME_ALIASES.items():
     ALIAS_TO_CANONICAL[_alias_name] = _canon
 
-# v0.10.0: stop registering aliases as separate tools. Each alias was
-# adding ~80 tokens of JSON schema overhead per turn (25 aliases × 80 ≈
-# 2000 tokens of pure bloat on every LLM call). The agent's _run_tool
-# resolves aliases via ALIAS_TO_CANONICAL at dispatch time instead, so
-# if the LLM emits `input(...)` we still route it to `type_text` — just
-# without paying for it in the tool schema sent on every turn.
-#
-# Effect: tool count drops from 67 (with aliases) to 42 in the schema,
-# while behavioural compat is preserved. Verified via _run_tool dispatch
-# path in agent/__init__.py.
-#
-# Original alias registration kept here as a comment for traceability:
-# _by_name = {t.name: t for t in BROWSER_TOOLS}
-# for upstream_name, our_name in _UPSTREAM_NAME_ALIASES.items():
-#     if upstream_name in _by_name:
-#         continue
-#     target = _by_name.get(our_name)
-#     if target is None:
-#         continue
-#     BROWSER_TOOLS.append(_alias(target, upstream_name))
+_by_name = {t.name: t for t in BROWSER_TOOLS}
+for upstream_name, our_name in _UPSTREAM_NAME_ALIASES.items():
+    if upstream_name in _by_name:
+        continue  # already registered (don't double-register)
+    target = _by_name.get(our_name)
+    if target is None:
+        continue
+    BROWSER_TOOLS.append(_alias(target, upstream_name))
