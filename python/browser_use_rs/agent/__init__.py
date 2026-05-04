@@ -51,6 +51,40 @@ from browser_use_rs.views import (
 )
 
 
+# v0.11.2 read-state ephemeral lifecycle. Mirrors upstream
+# browser_use's `include_extracted_content_only_once` pattern (see
+# upstream tools/service.py:1175-1182 and message_manager/service.py:317-330).
+#
+# Goal: bound context growth from large read-tool results without
+# truncating LIVE perception (the v0.11.0 mistake). Full content is
+# visible to the LLM for ONE step (the step after the action). After
+# that, only a small reference stub remains in the conversation; the
+# full text is on disk for read_file recovery.
+#
+# Cache safety: ToolResultMessage content is fixed at creation and
+# never mutated → cached forever. The full content lives only in the
+# per-step page-state UserMessage, which we already remove + re-append
+# every step (see _inject_page_state). Old page-state UserMessages are
+# the cache breakpoint anyway, so the lifecycle does not invalidate
+# the cached prefix.
+#
+# Loop safety: codex-reviewed. The v0.10.2 failure (one-line summaries
+# with no scratchpad culture) doesn't apply because (a) the full text
+# is in <read_state> on the IMMEDIATELY next step, (b) the prompt
+# explicitly tells the LLM to memorize before proceeding, (c) a file
+# fallback exists for retrieval.
+EPHEMERAL_RESULT_THRESHOLD = 10_000
+# evaluate_js is intentionally excluded — it truncates internally at 5k
+# chars in _extra_tools.py, so it can never cross the 10k threshold.
+# Including it would over-promise in the prompt.
+EPHEMERAL_RESULT_TOOLS: frozenset[str] = frozenset({
+    "page_text",
+    "get_text",
+    "get_links",
+    "read_file",
+})
+
+
 def _json_fallback(obj: Any) -> Any:
     if is_dataclass(obj) and not isinstance(obj, type):
         return asdict(obj)
@@ -186,6 +220,10 @@ On every turn that calls a tool, prefix your message with three short XML blocks
 These blocks are automatically extracted and re-injected on subsequent turns so you don't lose context when older messages get collapsed. Skip them only on the final-answer turn.
 </state_emission>
 
+<read_state_lifecycle>
+Large results from page_text, get_text, get_links, and read_file appear in <read_state> for ONE step only. Before taking any other action, you MUST save all information you'll need later into <memory>. The full result is retrievable via read_file("results/<filename>.txt") using the path from the result's reference stub (offset/max_chars supported for paging), but each retrieval costs a step. Do not assume <read_state> will remain visible on the next step.
+</read_state_lifecycle>
+
 <output>
 Before finalizing your answer, re-read the user request, verify every requirement is met (correct count, filters applied, format matched), confirm actions actually completed via page state/screenshot, and ensure no data was fabricated.
 
@@ -244,6 +282,14 @@ Strategy:
   path, the full content was too long to inline. Use `grep_scratchpad`
   with a specific pattern, or `read_scratchpad` with offset to page
   through it. Re-running `page_text` will just truncate again.
+- READ-STATE LIFECYCLE: large results from page_text, get_text,
+  get_links, and read_file appear in <read_state> for ONE step only.
+  Before taking any other action, you MUST save all information you'll
+  need later into <memory>. The full result is retrievable via
+  read_file("results/<filename>.txt") using the path from the result's
+  reference stub (offset/max_chars supported for paging), but each
+  retrieval costs a step. Do not assume <read_state> will remain
+  visible on the next step.
 - When the task is complete, finalize via `done(text="<your answer>",
   success=true|false)`. Set `success=true` only if you completed the
   task with observed page evidence; `success=false` if blocked, data
@@ -722,15 +768,28 @@ class Agent:
         # v0.10.4 cache-stability instrumentation. Filled on the first
         # _record_usage call; subsequent calls warn if either hash
         # drifts within the session (= cache rebuild incoming).
+        # v0.11.2 added _peak_cache_read + _cache_read_warned so we can
+        # also detect mid-session drops with stable hashes (catches
+        # message-list mutations).
         self._initial_prompt_hash: str | None = None
         self._initial_tools_hash: str | None = None
         self._cache_warned: bool = False
+        self._cache_read_warned: bool = False
+        self._peak_cache_read: int = 0
         # Opt-in trace dump. When set, writes one JSONL line per LLM
         # call containing the full message list — used for offline
         # token-construction replay. Off by default.
         self._trace_dir: str | None = os.environ.get(
             "BU_RS_INSTRUMENT_TRACE_DIR"
         ) or None
+        # v0.11.2 read-state ephemeral lifecycle: pending entries get
+        # drained into the next page-state UserMessage's <read_state>
+        # block, then cleared. Each entry: {tool_name, content, file_path}.
+        # See _apply_ephemeral_lifecycle and _inject_page_state.
+        self._read_state_for_next_turn: list[dict[str, Any]] = []
+        # Lazy-initialized on first ephemeral spill; lives under the
+        # scratchpad root so the agent can read_file() it back.
+        self._results_dir: str | None = None
 
         # Conversation messages live across run() calls so add_new_task()
         # can append a continuation without losing browser/page context.
@@ -2504,6 +2563,32 @@ class Agent:
             msg for msg in self._messages if not _is_old_page_state(msg)
         ]
 
+        # v0.11.2 read-state ephemeral lifecycle: drain pending entries
+        # from the prior step's large read tools into a one-time
+        # <read_state> block. After this turn, the queue is empty and
+        # the next state UserMessage will not include the full content.
+        # The corresponding ToolResultMessages already carry the
+        # reference stub permanently. See EPHEMERAL_RESULT_TOOLS.
+        read_state_block = ""
+        if self._read_state_for_next_turn:
+            sections: list[str] = []
+            for entry in self._read_state_for_next_turn:
+                rel = f"results/{os.path.basename(entry['file_path'])}"
+                sections.append(
+                    f'<result tool="{entry["tool_name"]}" file="{rel}">\n'
+                    f'{entry["content"]}\n'
+                    f'</result>'
+                )
+            read_state_block = (
+                "<read_state>\n" + "\n".join(sections) + "\n</read_state>\n\n"
+            )
+            logger.info(
+                "agent: injected <read_state> with %d entries (%d total chars)",
+                len(self._read_state_for_next_turn),
+                sum(len(e["content"]) for e in self._read_state_for_next_turn),
+            )
+            self._read_state_for_next_turn.clear()
+
         # Persistent agent state (v0.8.0): surface prior turn's
         # memory + next_goal + evaluation so the LLM has continuity
         # without rebuilding from collapsed history. Mirrors upstream's
@@ -2523,7 +2608,7 @@ class Agent:
         dom_text = state.elements_text or ""
         if not dom_text:
             body = (
-                f"{_PAGE_STATE_TAG}\n{state_block}URL: {state.url}\n"
+                f"{_PAGE_STATE_TAG}\n{read_state_block}{state_block}URL: {state.url}\n"
                 "(no DOM snapshot available — page not ready)"
             )
         else:
@@ -2547,9 +2632,15 @@ class Agent:
                     f"in range [{lo}..{hi}]. Use ONLY indices listed "
                     f"below; do not invent numbers."
                 )
-                body = f"{_PAGE_STATE_TAG}\n{state_block}{hint}\n\n{dom_text}"
+                body = (
+                    f"{_PAGE_STATE_TAG}\n{read_state_block}"
+                    f"{state_block}{hint}\n\n{dom_text}"
+                )
             else:
-                body = f"{_PAGE_STATE_TAG}\n{state_block}{dom_text}"
+                body = (
+                    f"{_PAGE_STATE_TAG}\n{read_state_block}"
+                    f"{state_block}{dom_text}"
+                )
 
         if self.use_vision and state.screenshot:
             self._messages.append(
@@ -3031,6 +3122,21 @@ class Agent:
         # Map return value into ContentParts the LLM layer understands.
         content_parts, summary_text = _format_tool_return(raw, self.sensitive_data)
 
+        # v0.11.2: ephemeral lifecycle for whitelisted read tools. If
+        # this fires (text > 10k for a whitelisted tool name),
+        # content_parts becomes a small reference stub and the full
+        # content is queued for the next page-state UserMessage's
+        # <read_state> block. Skips the scratchpad spill below since
+        # the lifecycle already handled it.
+        ephemeral_applied = False
+        if tc.name in EPHEMERAL_RESULT_TOOLS:
+            new_parts, new_summary = self._apply_ephemeral_lifecycle(
+                tc.name, content_parts, summary_text,
+            )
+            if new_parts is not content_parts:
+                ephemeral_applied = True
+                content_parts, summary_text = new_parts, new_summary
+
         # Long-output spill: if the formatted text is large enough to
         # bloat the conversation, write the full content to a scratchpad
         # file and replace what the LLM sees with a head+tail preview
@@ -3039,7 +3145,8 @@ class Agent:
         # without re-running the original tool. Image-only returns
         # (single ImagePart, no text) are passed through unchanged.
         if (
-            self.scratchpad_enabled
+            not ephemeral_applied
+            and self.scratchpad_enabled
             and summary_text
             and len(content_parts) == 1
             and isinstance(content_parts[0], TextPart)
@@ -3110,6 +3217,96 @@ class Agent:
         self.state.history.history.append(
             AgentHistory(state=state, output=output, result=results, metadata=metadata)
         )
+
+    def _apply_ephemeral_lifecycle(
+        self,
+        tool_name: str,
+        content_parts: list[ContentPart],
+        summary_text: str,
+    ) -> tuple[list[ContentPart], str]:
+        """v0.11.2: replace large read-tool result content with a small
+        stub, queue full content for the next state message's <read_state>.
+
+        Returns (possibly modified) content_parts + summary_text.
+        Mutates self._read_state_for_next_turn as a side effect.
+
+        Skipped silently when:
+          - tool_name not in EPHEMERAL_RESULT_TOOLS
+          - summary_text under threshold
+          - content_parts contains anything non-text (image returns)
+          - BU_RS_DISABLE_EPHEMERAL_LIFECYCLE is truthy in env (kill switch)
+        """
+        if os.environ.get("BU_RS_DISABLE_EPHEMERAL_LIFECYCLE"):
+            return content_parts, summary_text
+        if tool_name not in EPHEMERAL_RESULT_TOOLS:
+            return content_parts, summary_text
+        if not summary_text or len(summary_text) <= EPHEMERAL_RESULT_THRESHOLD:
+            return content_parts, summary_text
+        if len(content_parts) != 1 or not isinstance(content_parts[0], TextPart):
+            return content_parts, summary_text
+        try:
+            file_path = self._spill_to_results(tool_name, summary_text)
+        except Exception:
+            logger.exception(
+                "agent: ephemeral spill failed for %s — falling back to "
+                "full inline return", tool_name,
+            )
+            return content_parts, summary_text
+        # Record full content for next-turn <read_state> block.
+        self._read_state_for_next_turn.append(
+            {
+                "tool_name": tool_name,
+                "content": summary_text,
+                "file_path": file_path,
+            }
+        )
+        # Stub format approved by codex: short, self-contained, includes
+        # path. Stays in the conversation forever; the per-turn cost is
+        # ~200 chars instead of N,000.
+        rel_path = f"results/{os.path.basename(file_path)}"
+        stub = (
+            f"[Large result from {tool_name}: {len(summary_text):,} chars. "
+            f"Full text appears once in the next <read_state>; saved at "
+            f"{rel_path} for read_file.]"
+        )
+        return [TextPart(text=stub)], stub
+
+    def _spill_to_results(self, tool_name: str, content: str) -> str:
+        """Write `content` to a stable per-(tool, hash) path under the
+        agent's file sandbox results/ subdir. Returns absolute path.
+
+        Lives inside `_file_sandbox` (initialized by make_extra_tools in
+        agent.__init__) so the existing read_file tool resolves
+        'results/<name>.txt' correctly via its sandbox-relative
+        _resolve(). If _file_sandbox isn't set yet (extra tools were
+        not registered for some reason), raise — caller will catch and
+        fall back to inline return.
+        """
+        sandbox = getattr(self, "_file_sandbox", None)
+        if not sandbox:
+            raise RuntimeError(
+                "ephemeral spill needs _file_sandbox; not registered"
+            )
+        if self._results_dir is None:
+            self._results_dir = os.path.join(sandbox, "results")
+            os.makedirs(self._results_dir, exist_ok=True)
+        # Stable name keyed on (tool, full content + length) so two
+        # reads of the same content reuse the same file (cheap dedup),
+        # but two DIFFERENT large results that happen to share a prefix
+        # don't collide. v0.11.2 codex review: hashing only the first
+        # 512 chars caused content-shadowing — second read would read
+        # the wrong file. Use sha256 of full content + length sentinel.
+        encoded = content.encode("utf-8", errors="replace")
+        digest = hashlib.sha256(
+            f"{tool_name}|{len(encoded)}|".encode("utf-8") + encoded
+        ).hexdigest()[:16]
+        path = os.path.join(
+            self._results_dir, f"{tool_name}_{digest}.txt"
+        )
+        if not os.path.exists(path):
+            with open(path, "w", encoding="utf-8", errors="replace") as f:
+                f.write(content)
+        return path
 
     def _record_usage(self, step_n: int, usage) -> None:
         # v0.10.4: enrich usage_log with input-side metrics so we can
@@ -3199,12 +3396,38 @@ class Agent:
         Anthropic prompt cache will rebuild from scratch on the next
         call (~10× cost on the rebuilt tokens). Warn loudly so we
         catch it before a full eval — this was the v0.10.0 trap.
+
+        v0.11.2 also flags large cache_read drops with stable hashes
+        — that's the v0.10.2 / v0.11.0 fingerprint where prefix bytes
+        shifted in a way the hash didn't catch (e.g. mid-conversation
+        message mutation).
         """
         if not self.usage_log or len(self.usage_log) < 2:
             self._initial_prompt_hash = entry["prompt_hash"]
             self._initial_tools_hash = entry["tools_hash"]
             self._cache_warned = False
+            self._cache_read_warned = False
+            self._peak_cache_read = entry.get("cache_read", 0) or 0
             return
+        # Track peak to detect mid-session drops.
+        cur_cache = entry.get("cache_read", 0) or 0
+        if cur_cache > self._peak_cache_read:
+            self._peak_cache_read = cur_cache
+        if (
+            not getattr(self, "_cache_read_warned", False)
+            and self._peak_cache_read >= 5_000  # warmed up
+            and cur_cache < self._peak_cache_read * 0.5
+            and entry["prompt_hash"] == self._initial_prompt_hash
+            and entry["tools_hash"] == self._initial_tools_hash
+        ):
+            logger.warning(
+                "agent: CACHE READ DROP — cache_read fell from peak %d "
+                "to %d at step %d while prompt+tools hashes are stable. "
+                "Likely cause: an old message was mutated mid-session. "
+                "Investigate _collapse_old_history / _inject_page_state.",
+                self._peak_cache_read, cur_cache, entry["step"],
+            )
+            self._cache_read_warned = True
         if self._cache_warned:
             return
         if entry["prompt_hash"] != self._initial_prompt_hash:

@@ -536,20 +536,46 @@ def make_extra_tools(agent: Any) -> list:
         return full
 
     @tool
-    async def read_file(session, path: str) -> str:
+    async def read_file(
+        session, path: str, offset: int = 0, max_chars: int = 50_000,
+    ) -> str:
         """Read a file from the agent's sandbox directory. Use to recall
-        notes, partial extractions, or todo items written earlier in the
-        run.
+        notes, partial extractions, todo items, or large tool results
+        (under `results/`) spilled by the read-state lifecycle.
 
         Args:
-            path: Relative path in the agent sandbox (e.g. "notes.md").
+            path: Relative path in the agent sandbox (e.g. "notes.md"
+                or "results/page_text_abc123.txt").
+            offset: Character offset to start reading from (default 0).
+                Use this to page through files larger than max_chars.
+            max_chars: Max chars to return per call (default 50,000;
+                hard cap 200,000). Lower for cheaper reads.
+
+        Returns the requested slice plus a "[bytes K..L of N]" tail
+        marker so paging is observable. v0.11.2: pagination added so
+        the read-state lifecycle's "full result retrievable" promise
+        is honored for spilled results > 50k chars.
         """
         full = _resolve(path)
         if not full or not os.path.isfile(full):
             return f"(no such file: {path})"
         try:
+            offset = max(0, int(offset or 0))
+            cap = max(1, min(int(max_chars or 50_000), 200_000))
             with open(full, "r", encoding="utf-8") as f:
-                return f.read()[:50000]
+                data = f.read()
+            total = len(data)
+            slice_ = data[offset : offset + cap]
+            end = offset + len(slice_)
+            if total > end or offset > 0:
+                marker = (
+                    f"\n\n[chars {offset:,}..{end:,} of {total:,}; "
+                    f"pass offset={end} to continue]"
+                    if end < total
+                    else f"\n\n[chars {offset:,}..{end:,} of {total:,}; end of file]"
+                )
+                return slice_ + marker
+            return slice_
         except Exception as e:
             return f"(read error: {e})"
 
