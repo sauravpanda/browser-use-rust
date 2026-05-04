@@ -1967,10 +1967,24 @@ class Agent:
             if ec.startswith("[SCRATCHPAD]") or "[SCRATCHPAD]" in ec[:200]:
                 outcome = "→ ok (long output spilled to scratchpad)"
             elif ec:
-                # Trim long extracts; the LLM doesn't need the full
-                # blob in history — it has the most recent results
-                # natively in context.
-                outcome = f"→ {ec[:120].replace(chr(10), ' ')}"
+                # v0.10.2: read tools get a LONGER preview (300 chars vs
+                # 120) so the LLM keeps grounding when their old turn is
+                # collapsed. Codex-recommended: "Preserve enough text for
+                # grounding; don't compact the most recent read turn."
+                # Most-recent-read protection is enforced upstream in
+                # _collapse_old_history (READ_HISTORY_WINDOW=3 retained
+                # native); here we just make the summary itself richer
+                # for the read turns that DO get collapsed.
+                if tc.name in self._READ_ONLY_TOOLS:
+                    preview_len = 300
+                    label = "(content)"
+                else:
+                    preview_len = 120
+                    label = ""
+                preview = ec[:preview_len].replace(chr(10), " ")
+                if len(ec) > preview_len:
+                    preview += f"... ({len(ec):,} chars total)"
+                outcome = f"→ {label}{preview}" if label else f"→ {preview}"
             else:
                 outcome = "→ ok"
 
@@ -2166,19 +2180,48 @@ class Agent:
             return
         # `_recent_turn_records` is per-turn; the live message list
         # holds 1 AssistantMessage + N ToolResultMessage(s) per turn.
-        # Only count action-only turns toward the window (read-tool
-        # turns are exempt and stay native), so we skip ahead through
-        # records that contain reads.
+        #
+        # v0.10.2 (codex-reviewed): two-tier collapse
+        #
+        # 1) ACTION-only turns collapse after `history_window_steps`
+        #    (default 3) — same as v0.5.1+ behavior.
+        # 2) READ turns (page_text, get_text, extract_structured_data,
+        #    etc.) get compacted after a LONGER window — codex
+        #    recommended "preserve enough text for grounding; don't
+        #    compact the most recent read turn." We keep the last
+        #    READ_HISTORY_WINDOW (default 3) read turns native,
+        #    compact older ones with a smart summary line that
+        #    includes a 200-char preview of the result.
+        #
+        # The compaction is CACHE-SAFE because we only mutate messages
+        # that come AFTER the cacheable prefix (system + tools +
+        # initial state) — old turns past the cache window are
+        # already uncached suffix on every call. Shrinking that
+        # suffix is pure savings.
+        READ_HISTORY_WINDOW = 3
+
         action_only_indices = [
             i
             for i, (_, tcs, _) in enumerate(self._recent_turn_records)
             if not any(tc.name in self._READ_ONLY_TOOLS for tc in tcs)
         ]
-        excess = len(action_only_indices) - self.history_window_steps
-        if excess <= 0:
+        read_indices = [
+            i
+            for i, (_, tcs, _) in enumerate(self._recent_turn_records)
+            if any(tc.name in self._READ_ONLY_TOOLS for tc in tcs)
+        ]
+        excess_action = len(action_only_indices) - self.history_window_steps
+        excess_read = len(read_indices) - READ_HISTORY_WINDOW
+
+        # Combine collapse-target indices from BOTH categories. Read
+        # turns get the smart-summary treatment with content preview;
+        # action turns get the existing one-liner.
+        collapse_action = action_only_indices[:excess_action] if excess_action > 0 else []
+        collapse_read = read_indices[:excess_read] if excess_read > 0 else []
+        collapse_indices = sorted(set(collapse_action) | set(collapse_read))
+
+        if not collapse_indices:
             return
-        # Indices into _recent_turn_records that we'll actually collapse.
-        collapse_indices = action_only_indices[:excess]
         records_to_collapse = [self._recent_turn_records[i] for i in collapse_indices]
 
         for record in records_to_collapse:
