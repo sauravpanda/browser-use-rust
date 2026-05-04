@@ -73,7 +73,13 @@ from browser_use_rs.views import (
 # is in <read_state> on the IMMEDIATELY next step, (b) the prompt
 # explicitly tells the LLM to memorize before proceeding, (c) a file
 # fallback exists for retrieval.
-EPHEMERAL_RESULT_THRESHOLD = 10_000
+# v0.11.3: raised 10_000 → 25_000 after v0.11.2 eval showed -6pp
+# accuracy regression. Codex postmortem: "10k catches medium evidence
+# pages the agent may still need to reason over. The wins you care
+# about are the pathological 300k-800k token trajectories." 25k still
+# triggers on the long-tail bloat tasks (60-step / 800k-token cases)
+# without disturbing ordinary reads.
+EPHEMERAL_RESULT_THRESHOLD = 25_000
 # evaluate_js is intentionally excluded — it truncates internally at 5k
 # chars in _extra_tools.py, so it can never cross the 10k threshold.
 # Including it would over-promise in the prompt.
