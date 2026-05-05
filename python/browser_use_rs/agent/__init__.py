@@ -2952,6 +2952,33 @@ class Agent:
                     ),
                 )
 
+        # v0.11.12: smart scroll arg-rewrite. scroll_down / scroll_up
+        # are aliased to scroll_to_bottom / scroll_to_top (no kwargs in
+        # schema → cache stays byte-identical). But Gemini-3 was trained
+        # against upstream's `scroll_down(pages=N)` signature and sends
+        # `pages=N` in args. The previous v0.11.5/v0.11.7 baseline
+        # TypeError'd; v0.11.10 fixed it by adding new @tool defs (which
+        # invalidated tool-schema cache and correlated with -7pp accuracy
+        # in eval). This dispatch-time rewrite gets the bug fix without
+        # the schema change: detect pages kwarg on scroll_down/up call
+        # and route to scroll(direction=..., pages=...) instead.
+        if (
+            tc.name in ("scroll_down", "scroll_up")
+            and isinstance(real_args, dict)
+            and "pages" in real_args
+        ):
+            scroll_tool = self.tools_by_name.get("scroll")
+            if scroll_tool is not None:
+                rewritten_args = {
+                    "direction": "down" if tc.name == "scroll_down" else "up",
+                    "pages": real_args["pages"],
+                }
+                # Forward through to the scroll tool with the rewritten
+                # args; everything else (timeout, error handling, format)
+                # is handled below by reusing the same code path.
+                tool = scroll_tool
+                real_args = rewritten_args
+
         try:
             # Per-tool timeout. Without it, a single hung CDP op (e.g.
             # `scroll` against a page stuck on a network request) can
