@@ -175,7 +175,17 @@ impl DomState {
             if el.text.is_empty() {
                 out.push_str(" />\n");
             } else {
-                out.push_str(&format!(">{}</{}>\n", el.text, el.tag));
+                // v0.11.15: drop closing </tag> for elements with
+                // text. The newline terminates the element line, so
+                // the closing tag is redundant for the LLM (line-based
+                // parsing). Per-element saves ~5-10 chars × ~100-200
+                // elements per snapshot × ~16 median steps ≈ 8-32k
+                // chars/task uncached input. Pure format change with
+                // no information loss. Median attack — every task
+                // benefits uniformly. Void elements keep self-closing
+                // `/>` (line above) to disambiguate empty-text vs
+                // whitespace-only.
+                out.push_str(&format!(">{}\n", el.text));
             }
         }
         out
