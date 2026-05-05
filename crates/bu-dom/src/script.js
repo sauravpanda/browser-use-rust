@@ -25,12 +25,7 @@
         'blockquote', 'figcaption', 'time',
     ]);
     const STATIC_TEXT_BLOCK_THRESHOLD = 2;
-    // v0.11.6: trimmed 280 → 100 to match upstream's cap_text_length.
-    // Per-snapshot bytes were 1.4-1.8× upstream's; static text was a
-    // contributor (we allowed 2.8× longer text per element). 100 chars
-    // covers most headlines / list-item text without tail bloat. Long
-    // articles still surface via extract_structured_data + read_file.
-    const STATIC_TEXT_MAX_LEN = 100;
+    const STATIC_TEXT_MAX_LEN = 280;
 
     const INTERACTIVE_ROLES = new Set([
         'button', 'link', 'checkbox', 'radio', 'menuitem', 'menuitemcheckbox',
