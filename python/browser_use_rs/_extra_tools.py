@@ -490,18 +490,34 @@ async def evaluate_js(session, expression: str) -> str:
     custom DOM queries (shadow DOM traversal, computed style reads,
     custom widgets) that the structured tools can't reach.
 
+    IMPORTANT: handle null in your expression. Use `el?.click()` not
+    `el.click()` — calling a method on null will throw. The wrapper
+    catches throws and returns "JS_ERROR: <message>" so you can
+    recover, but a clean expression is cheaper.
+
     Args:
         expression: A JS expression. Can be wrapped in `(() => {...})()`
             for multi-statement bodies.
     """
-    # v0.11.11: reverted v0.11.10's try/catch wrap. Wrapping changed
-    # return-value serialization (raw return → String/JSON-stringify)
-    # and correlated with a -7pp accuracy hit in the 198-task eval.
-    # Bisecting v0.11.10's three fixes by reverting only this one;
-    # keeping scroll_down/up real-tool fix and CDP -32001 retry which
-    # were independently sound and contributed to the -40% action
-    # error reduction.
-    raw = await session.evaluate(expression)
+    # v0.11.13: re-added the try/catch shim from v0.11.10 (Fix 3).
+    # The v0.11.11 → v0.11.12 bisect proved the apparent -7pp accuracy
+    # hit in v0.11.10 was NOT caused by Fix 3 — it was within the
+    # ±5pp eval variance. Meanwhile Fix 3 demonstrably reduced
+    # action errors (v0.11.10: 33 errors vs v0.11.11: 78, =13 errors
+    # attributable to JS exceptions catching). Restoring it on top of
+    # the v0.11.12 substrate (smart Fix 1 arg-rewrite + Fix 2 CDP
+    # retry).
+    #
+    # The wrap converts thrown JS exceptions into normal "JS_ERROR:"
+    # return strings the agent can read on its next turn instead of
+    # surfacing as RuntimeError → tracked-error escalation.
+    wrapped = (
+        "(() => { try { "
+        f"const __r = ({expression});"
+        " return __r === undefined ? '(undefined)' : (typeof __r === 'object' ? JSON.stringify(__r) : String(__r));"
+        " } catch (e) { return 'JS_ERROR: ' + (e && e.message ? e.message : String(e)); } })()"
+    )
+    raw = await session.evaluate(wrapped)
     if not raw:
         return "(no result)"
     return raw[:5000] + ("…" if len(raw) > 5000 else "")
