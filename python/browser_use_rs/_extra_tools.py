@@ -490,11 +490,27 @@ async def evaluate_js(session, expression: str) -> str:
     custom DOM queries (shadow DOM traversal, computed style reads,
     custom widgets) that the structured tools can't reach.
 
+    IMPORTANT: handle null in your expression. Use `el?.click()` not
+    `el.click()` — calling a method on null will throw and waste a
+    step. Returning null/undefined is fine and shows up as "(no result)".
+
     Args:
         expression: A JS expression. Can be wrapped in `(() => {...})()`
             for multi-statement bodies.
     """
-    raw = await session.evaluate(expression)
+    # v0.11.10: wrap user JS in a try/catch shim so exceptions inside
+    # the expression (e.g. `document.querySelector('...').click()`
+    # where the selector returns null) come back as a normal error
+    # string the agent can read and recover from. Previously these
+    # surfaced as RuntimeError up through _run_tool, which counted as
+    # an action error and burned the consecutive-error budget.
+    wrapped = (
+        "(() => { try { "
+        f"const __r = ({expression});"
+        " return __r === undefined ? '(undefined)' : (typeof __r === 'object' ? JSON.stringify(__r) : String(__r));"
+        " } catch (e) { return 'JS_ERROR: ' + (e && e.message ? e.message : String(e)); } })()"
+    )
+    raw = await session.evaluate(wrapped)
     if not raw:
         return "(no result)"
     return raw[:5000] + ("…" if len(raw) > 5000 else "")

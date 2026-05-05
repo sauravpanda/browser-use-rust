@@ -2983,6 +2983,68 @@ class Agent:
             )
         except Exception as e:
             err_str = str(e)
+            # v0.11.10: CDP session-staleness retry. The Rust session
+            # cache holds (target_id → session_id) entries that go bad
+            # when Chrome destroys a target out-from-under us (popup
+            # close, redirect, OOM). First call surfaces as -32001
+            # ("Session with given id not found") or "unknown tab
+            # target_id"; calling list_tabs() forces fresh
+            # Target.getTargets discovery, then a single retry usually
+            # succeeds. v0.11.5 eval showed 4 unique crashes
+            # (OTHER_ERROR/Crash, no judgement) and 403 total action
+            # errors — this family was a major contributor. ONE retry
+            # only; if it fails again we fall through to existing error
+            # handling.
+            is_cdp_stale = (
+                "-32001" in err_str
+                or "Session with given id not found" in err_str
+                or "unknown tab target_id" in err_str
+            )
+            if is_cdp_stale and not getattr(tc, "_cdp_stale_retried", False):
+                try:
+                    tc._cdp_stale_retried = True  # type: ignore[attr-defined]
+                    # Force target re-discovery; this re-attaches stale
+                    # session ids in the rust BrowserSession's `attached`
+                    # map and prunes dead targets.
+                    await asyncio.wait_for(self.session.list_tabs(), timeout=5.0)
+                    raw = await asyncio.wait_for(
+                        tool.func(self.session, **real_args),
+                        timeout=self.tool_timeout,
+                    )
+                    logger.info(
+                        "agent: CDP-staleness retry succeeded for %s",
+                        tc.name,
+                    )
+                    content_parts, summary_text = _format_tool_return(
+                        raw, self.sensitive_data
+                    )
+                    ar = ActionResult(extracted_content=summary_text)
+                    if isinstance(real_args, dict) and isinstance(
+                        real_args.get("index"), int
+                    ):
+                        ar._selector_used = self._index_to_selector.get(  # type: ignore[attr-defined]
+                            real_args["index"]
+                        )
+                    return (
+                        ar,
+                        ToolResultMessage(
+                            tool_call_id=tc.id, name=tc.name,
+                            content=content_parts,
+                        ),
+                    )
+                except Exception as retry_e:
+                    logger.info(
+                        "agent: CDP-staleness retry FAILED for %s: %s: %s",
+                        tc.name, type(retry_e).__name__, str(retry_e)[:120],
+                    )
+                    # fall through to existing handling — convert to a
+                    # readable error string the LLM can react to instead
+                    # of letting the original RuntimeError bubble.
+                    err_str = (
+                        f"CDP session was stale and re-attach retry "
+                        f"failed: {type(retry_e).__name__}: "
+                        f"{str(retry_e)[:200]}"
+                    )
             # Stale-element / unknown-index errors are EXPECTED on a busy
             # page — the LLM picked an index that was valid at snapshot
             # time but the DOM has since changed. Treat them as

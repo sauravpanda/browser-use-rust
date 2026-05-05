@@ -228,6 +228,37 @@ async def scroll_to_top(session) -> str:
     return "scrolled to top"
 
 
+# v0.11.10: real scroll_down / scroll_up tools that accept the same
+# kwargs upstream uses (`pages: float = 1.0`). Previously these were
+# aliased to scroll_to_bottom / scroll_to_top via _UPSTREAM_NAME_ALIASES,
+# which take no kwargs — every Gemini-3 call of `scroll_down(pages=2)`
+# (the upstream-trained signature) raised a TypeError. v0.11.5 eval
+# showed 403 action errors vs upstream's 79 (5×); this alias mismatch
+# was a major contributor. Now scroll_down/up route through the real
+# scroll() with direction set, mirroring upstream's signature exactly.
+@tool
+async def scroll_down(session, pages: float = 1.0) -> str:
+    """Scroll the page DOWN by N viewport-heights. Mirrors upstream
+    browser_use's `scroll_down(pages=N)` exactly so Gemini-trained
+    agents call this without arg-name confusion.
+
+    Args:
+        pages: Number of viewport-heights to scroll down. Default 1.0.
+    """
+    return await scroll.func(session, direction="down", pages=pages)  # type: ignore[attr-defined]
+
+
+@tool
+async def scroll_up(session, pages: float = 1.0) -> str:
+    """Scroll the page UP by N viewport-heights. Mirrors upstream
+    browser_use's `scroll_up(pages=N)` exactly.
+
+    Args:
+        pages: Number of viewport-heights to scroll up. Default 1.0.
+    """
+    return await scroll.func(session, direction="up", pages=pages)  # type: ignore[attr-defined]
+
+
 @tool
 async def scroll_to_bottom(session) -> str:
     """Scroll to the very bottom of the page."""
@@ -485,6 +516,8 @@ BROWSER_TOOLS = [
     scroll_to,
     scroll_to_top,
     scroll_to_bottom,
+    scroll_down,  # v0.11.10: real wrapper accepting `pages` kwarg
+    scroll_up,    # v0.11.10: real wrapper accepting `pages` kwarg
     screenshot,
     save_pdf,
     get_text,
@@ -538,8 +571,12 @@ _UPSTREAM_NAME_ALIASES = {
     "input": "type_text",
     "input_text": "type_text",
     "click_element_by_index": "click",
-    "scroll_down": "scroll_to_bottom",
-    "scroll_up": "scroll_to_top",
+    # v0.11.10: scroll_down / scroll_up REMOVED from alias map.
+    # Previously aliased to scroll_to_bottom / scroll_to_top, both of
+    # which take no kwargs. Gemini-3 calls scroll_down(pages=N) per
+    # upstream's signature → TypeError. Now scroll_down / scroll_up are
+    # real @tool functions (see top of this file) that accept `pages`
+    # and route through scroll() with direction set.
     "wait": "sleep",
     "search": "web_search",  # was search_page — fixed v0.7.2
     "search_google": "web_search",
