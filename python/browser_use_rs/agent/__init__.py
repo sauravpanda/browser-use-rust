@@ -805,6 +805,12 @@ class Agent:
         # Lazy-initialized on first ephemeral spill; lives under the
         # scratchpad root so the agent can read_file() it back.
         self._results_dir: str | None = None
+        # v0.11.5: first qualifying read in this session bypasses the
+        # lifecycle and stays full-content in the tool_result forever.
+        # Codex tune: "the first substantial page read often
+        # establishes task grounding. Subsequent large reads are more
+        # likely to be bloat." Set to True after the first bypass.
+        self._has_durable_read: bool = False
 
         # Conversation messages live across run() calls so add_new_task()
         # can append a continuation without losing browser/page context.
@@ -3268,6 +3274,19 @@ class Agent:
         if not summary_text or len(summary_text) <= EPHEMERAL_RESULT_THRESHOLD:
             return content_parts, summary_text
         if len(content_parts) != 1 or not isinstance(content_parts[0], TextPart):
+            return content_parts, summary_text
+        # v0.11.5: first qualifying read in this session stays durable
+        # — full content remains in the ToolResultMessage forever to
+        # establish task grounding. Only subsequent large reads use
+        # the lifecycle (where they're more likely to be bloat /
+        # alternative searches / repeat extraction).
+        if not self._has_durable_read:
+            self._has_durable_read = True
+            logger.info(
+                "agent: first large read (%s, %d chars) stays durable "
+                "(grounding); subsequent large reads will use lifecycle",
+                tool_name, len(summary_text),
+            )
             return content_parts, summary_text
         try:
             file_path = self._spill_to_results(tool_name, summary_text)
