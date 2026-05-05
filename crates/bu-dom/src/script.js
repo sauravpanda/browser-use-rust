@@ -311,11 +311,22 @@
                 // text repeatedly.
                 const txt = directText(el);
                 if (!txt || txt.length < STATIC_TEXT_BLOCK_THRESHOLD) continue;
+                // v0.11.8: paint-order port (lite). Apply the same
+                // occlusion check we use for interactive elements
+                // (line ~331). Static text under cookie banners /
+                // modals / login overlays / promotional popups was
+                // previously emitted unconditionally — now it gets
+                // culled when something paints on top of it. Mirror
+                // of upstream's PaintOrderRemover effect on the
+                // static-text path. Skipping cost: an elementFromPoint
+                // call per static-text candidate (cheap relative to
+                // the whole walk).
+                const r = el.getBoundingClientRect();
+                if (!isTopAtCenter(el, r, doc)) continue;
                 const trimmed = txt.length > STATIC_TEXT_MAX_LEN
                     ? txt.slice(0, STATIC_TEXT_MAX_LEN) + '…'
                     : txt;
                 seen.add(el);
-                const r = el.getBoundingClientRect();
                 elements.push({
                     index: 0,  // sentinel: non-interactive
                     tag: tag,
