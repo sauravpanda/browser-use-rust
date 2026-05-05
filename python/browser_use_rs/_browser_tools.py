@@ -131,14 +131,11 @@ async def type_text(session, index: int, text: str, clear: bool = True) -> str:
 
 @tool
 async def upload_file(session, index: int, path: str) -> str:
-    """Attach a file to an `<input type="file">` element by its [N] index.
-
-    The file path must be absolute. Use this for forms that need a real file
-    selection (resume upload, profile picture, etc).
+    """Attach a file to a [N]-indexed <input type="file"> (e.g. resume, profile pic).
 
     Args:
-        index: The [N] index of the file input element.
-        path: Absolute path to the file to attach.
+        index: [N] of the file input.
+        path: Absolute file path.
     """
     await session.upload_file(index, [path])
     return f"attached {path} to [{index}]"
@@ -262,14 +259,10 @@ async def save_pdf(session) -> str:
 
 @tool
 async def get_text(session, selector: str) -> str:
-    """Read the visible text of the first element matching a CSS selector.
-
-    Use when you need the content of a specific element you can describe
-    with a CSS selector (id, class, tag, attribute) — faster than reading
-    the whole page.
+    """Read visible text of the first element matching a CSS selector.
 
     Args:
-        selector: A CSS selector, e.g. "#main h1" or "article.story .title".
+        selector: CSS selector (e.g. "#main h1", "article .title").
     """
     text = await session.get_text(selector)
     return text or "(no element matched, or element has no text)"
@@ -277,14 +270,10 @@ async def get_text(session, selector: str) -> str:
 
 @tool
 async def page_text(session, max_chars: int = 10000) -> str:
-    """Read the rendered text of the entire page body.
-
-    Use when you need to read prose / article content that isn't well
-    addressed by interactive-element indices. Capped at max_chars to keep
-    the context window in check.
+    """Read rendered page-body text. Capped at max_chars.
 
     Args:
-        max_chars: Maximum characters to return. Default 10000.
+        max_chars: Max chars returned. Default 10000.
     """
     return await session.page_text(max_chars)
 
@@ -300,12 +289,10 @@ async def get_links(session) -> str:
 
 @tool
 async def sleep(session, seconds: float) -> str:
-    """Pause for the given number of seconds. Use for short waits when no
-    selector or event reliably signals readiness (animations, debounced
-    inputs). Prefer wait_for or wait_for_navigation when a real signal exists.
+    """Pause N seconds. Prefer wait_for/wait_for_navigation when a real signal exists.
 
     Args:
-        seconds: Wait duration. Capped at 30 to keep loops responsive.
+        seconds: Wait duration. Capped at 30s.
     """
     capped = max(0.0, min(seconds, 30.0))
     await asyncio.sleep(capped)
@@ -314,13 +301,10 @@ async def sleep(session, seconds: float) -> str:
 
 @tool
 async def wait_for_navigation(session, timeout_ms: int = 10000) -> str:
-    """Wait for the active tab to fire its next page-load event.
-
-    Use after a click that triggers a full navigation (vs an SPA route
-    change). Returns whether the event fired before the timeout.
+    """Wait for the active tab's next page-load event (after full navigation).
 
     Args:
-        timeout_ms: Max milliseconds to wait. Default 10000.
+        timeout_ms: Max ms to wait. Default 10000.
     """
     fired = await session.wait_for_navigation(timeout_ms)
     return "navigation complete" if fired else f"timeout — no load event in {timeout_ms}ms"
@@ -328,15 +312,11 @@ async def wait_for_navigation(session, timeout_ms: int = 10000) -> str:
 
 @tool
 async def wait_for(session, selector: str, timeout_ms: int = 5000) -> str:
-    """Wait for an element matching the CSS selector to appear in the DOM.
-
-    Use after a click or navigation that triggers async content (SPAs,
-    lazy-loaded sections). Returns whether the element appeared before the
-    timeout. Same-origin iframes are searched.
+    """Wait for a CSS-selector element to appear (incl. same-origin iframes).
 
     Args:
-        selector: A CSS selector to wait for, e.g. ".search-result" or "#login-success".
-        timeout_ms: Max milliseconds to wait. Default 5000.
+        selector: CSS selector to wait for.
+        timeout_ms: Max ms to wait. Default 5000.
     """
     found = await session.wait_for_selector(selector, timeout_ms)
     return f"appeared: {selector!r}" if found else f"timeout — {selector!r} not found in {timeout_ms}ms"
@@ -344,11 +324,7 @@ async def wait_for(session, selector: str, timeout_ms: int = 5000) -> str:
 
 @tool
 async def list_tabs(session) -> str:
-    """List all attachable contexts — top-level tabs and cross-origin
-    iframes. Each line is `* [type:target_id] url — title`, where `*`
-    marks the active context. Use the target_id with switch_tab. Switching
-    to an iframe target lets you snapshot/click inside that frame.
-    """
+    """List tabs + cross-origin iframes as `* [type:target_id] url — title`. Use target_id with switch_tab."""
     tabs = await session.list_tabs()
     if not tabs:
         return "(no tabs)"
@@ -360,12 +336,10 @@ async def list_tabs(session) -> str:
 
 @tool
 async def switch_tab(session, target_id: str) -> str:
-    """Make a different tab active. All subsequent click/snapshot/navigate
-    target this tab. The cached snapshot is cleared — call dom_snapshot
-    after switching.
+    """Activate a different tab; cached snapshot is cleared.
 
     Args:
-        target_id: The target_id of the tab (from list_tabs).
+        target_id: From list_tabs.
     """
     await session.switch_tab(target_id)
     return f"switched to tab {target_id}"
@@ -424,10 +398,7 @@ async def clear_cookies(session) -> str:
 
 @tool
 async def list_downloads(session) -> str:
-    """List downloads triggered during this session. Each line includes the
-    state (inProgress / completed / canceled), the suggested filename, and
-    the on-disk path. Read completed files from disk to inspect them.
-    """
+    """List session downloads as `[state] filename (bytes) -> path  src: url`."""
     rows = await session.list_downloads()
     if not rows:
         return "(no downloads)"
@@ -440,15 +411,11 @@ async def list_downloads(session) -> str:
 
 @tool
 async def grep_scratchpad(session, path: str, pattern: str) -> str:
-    """Search a scratchpad file (full text saved when a tool result was too
-    long to inline) for matching lines. Use this when an earlier tool call
-    returned a `[SCRATCHPAD]` banner pointing at a file path — pass that
-    path here with a regex or substring pattern to drill into the content
-    without re-running the original tool.
+    """Regex/substring search in a scratchpad file (path from prior [SCRATCHPAD] banner).
 
     Args:
-        path: Absolute path to the scratchpad file (from a prior `[SCRATCHPAD]` banner).
-        pattern: Python regex (preferred) or substring to search for.
+        path: Scratchpad file path.
+        pattern: Python regex or literal substring.
     """
     from browser_use_rs._scratchpad import grep as _grep
 
@@ -457,14 +424,12 @@ async def grep_scratchpad(session, path: str, pattern: str) -> str:
 
 @tool
 async def read_scratchpad(session, path: str, offset: int = 1, limit: int = 100) -> str:
-    """Read a chunk of a scratchpad file by line offset. Use when grep
-    isn't precise enough — e.g. to see the next page of a long article
-    after locating an interesting region with grep_scratchpad.
+    """Read N lines of a scratchpad file from a 1-based offset.
 
     Args:
-        path: Absolute path to the scratchpad file.
-        offset: 1-based starting line number. Default 1.
-        limit: Number of lines to return. Default 100.
+        path: Scratchpad file path.
+        offset: 1-based start line.
+        limit: Lines to return.
     """
     from browser_use_rs._scratchpad import read_offset
 

@@ -36,15 +36,11 @@ from browser_use_rs.tools import tool
 
 @tool
 async def search_page(session, pattern: str, max_results: int = 10) -> str:
-    """Search the current page text for a regex pattern. Returns matching
-    lines with their character offsets. Zero LLM calls.
-
-    Use this for "is X on this page" / "find the section about Y" without
-    paying for a full page_text + reasoning round.
+    """Regex-search the page text. Cheaper than page_text + reasoning.
 
     Args:
-        pattern: Regex (Python flavor). Use simple substrings if unsure.
-        max_results: Cap on returned matches. Default 10.
+        pattern: Python regex (or plain substring).
+        max_results: Max matches to return.
     """
     try:
         rx = re.compile(pattern, re.IGNORECASE | re.MULTILINE)
@@ -70,19 +66,12 @@ async def search_page(session, pattern: str, max_results: int = 10) -> str:
 async def find_elements(
     session, selector: str, attributes: str = "", limit: int = 20
 ) -> str:
-    """Query the page by CSS selector. Returns matched elements as
-    `<tag attr1="v1" ...>text</tag>` lines.
-
-    Use to enumerate things the indexed snapshot doesn't show — e.g.
-    `find_elements("article h2")` for headlines, or
-    `find_elements(".price", "data-product-id")` for prices with their
-    product IDs.
+    """Query page by CSS selector. Returns matched elements as <tag>text</tag>.
 
     Args:
-        selector: CSS selector string (`.price`, `article h2`, `[data-x]`).
-        attributes: Comma-separated attribute names to extract per
-            element (e.g. `"href,title"`). Empty = just text.
-        limit: Cap on results. Default 20.
+        selector: CSS selector (`.price`, `article h2`, `[data-x]`).
+        attributes: Comma-separated attrs to include (e.g. `"href,title"`).
+        limit: Max matches.
     """
     attrs_list = [a.strip() for a in attributes.split(",") if a.strip()]
     js = (
@@ -131,14 +120,10 @@ async def find_elements(
 
 @tool
 async def find_text(session, text: str) -> str:
-    """Scroll the page so a visible occurrence of `text` is in view.
-    Returns the new scroll position or "(text not found)" if not present.
-
-    Use when you know a word or phrase appears on the page but it's
-    above/below the fold and you need to read its surroundings.
+    """Scroll the page so `text` is in view. Returns new y position or "(not found)".
 
     Args:
-        text: Substring to locate (case-insensitive).
+        text: Case-insensitive substring to locate.
     """
     needle = text.lower()
     js = (
@@ -168,12 +153,10 @@ async def find_text(session, text: str) -> str:
 
 @tool
 async def get_dropdown_options(session, index: int) -> str:
-    """List the options of a `<select>` or `[role=listbox]` element by
-    its [N] index from the most recent dom_snapshot. Returns one
-    `value | label` line per option.
+    """List <select>/[role=listbox] options at [N] as `value | label` lines.
 
     Args:
-        index: The [N] index of the dropdown element.
+        index: [N] of the dropdown.
     """
     js = (
         "(() => {"
@@ -215,31 +198,12 @@ async def select_dropdown(
     value: str = "",
     text: str = "",
 ) -> str:
-    """Select an option in a `<select>` element or an ARIA dropdown
-    (combobox / listbox / menu / Semantic UI custom) by its visible
-    label or value.
+    """Select an option in a <select> or ARIA dropdown by label or value (case-insensitive).
 
     Args:
-        index: The [N] index of the dropdown element.
-        value: The visible label (preferred) or the option's value attr.
-        text: Alias for `value` matching upstream browser_use's
-            `select_dropdown(text=...)` parameter. If both are given,
-            `value` wins. Case-insensitive matching.
-
-    v0.8.12: ported the JS from upstream
-    `default_action_watchdog.on_SelectDropdownOptionEvent`. Adds:
-    case-insensitive matching, focus()-before-set + blur()-after-set
-    (critical for React/Vue/Svelte reactive frameworks), selection-
-    reverted detection (when the framework re-overrides our value),
-    fallback to click-the-option when set fails, ARIA combobox/menu
-    parity (matches `[role=combobox|listbox|menu]` + child
-    `[role=menuitem|option]` + `data-value` attr matching), Semantic
-    UI / `.dropdown.ui` class detection.
-
-    Original v0.6.5 behavior was a thin native-select impl that didn't
-    handle reactive frameworks or any non-`[role=option]` ARIA; the
-    Lakers nba.com schedule task (combobox-driven) failed where
-    upstream succeeded — that gap is what this port closes.
+        index: [N] of the dropdown element.
+        value: Option label (preferred) or value attr.
+        text: Alias for value (upstream parity).
     """
     want = (value or text or "").strip()
     if not want:
@@ -346,25 +310,10 @@ _CDP_KEY_ALIASES = {
 
 @tool
 async def send_keys(session, keys: str) -> str:
-    """Send a real CDP keyboard event for a special key (Enter, Tab,
-    Escape, Backspace, Delete, Space, ArrowUp/Down/Left/Right, Home,
-    End, PageUp, PageDown).
-
-    v0.8.19 routes through Rust `session.dispatch_key()` →
-    CDP `Input.dispatchKeyEvent`. This issues a "trusted" event that
-    triggers default browser behavior (form submit on Enter, focus
-    move on Tab, etc.). The previous JS `KeyboardEvent` dispatch was
-    "untrusted" per the WHATWG spec and silently no-op'd default
-    actions on most sites — that's why "type then Enter to submit"
-    flows often hung and burned step budget.
-
-    Modifier combos like "Ctrl+a" are NOT supported here yet (would
-    need CDP modifier-bit support). For typing literal text, use
-    type_text instead.
+    """Send one special key (Enter, Tab, Escape, Backspace, Delete, Space, Arrow*, Home, End, PageUp/Down). For typing text use type_text.
 
     Args:
-        keys: A single key name. Case-insensitive, common aliases
-            supported (Enter/Return, Esc/Escape, Up/ArrowUp, etc.).
+        keys: One key name (case-insensitive; aliases like Return/Esc/Up work).
     """
     canonical = _CDP_KEY_ALIASES.get(keys.strip().lower())
     if not canonical:
@@ -391,12 +340,7 @@ async def go_back(session) -> str:
 
 @tool
 async def web_search(session, query: str, engine: str = "duckduckgo") -> str:
-    """Open a search-engine results page for `query`. Use when the
-    requested information isn't on a known site and you need to find
-    it. Subsequent click/scroll/extract calls operate on the results
-    page.
-
-    Mirrors upstream browser_use's web_search action (v0.6.5).
+    """Open a search engine results page for `query`. Use when info isn't on a known site.
 
     Args:
         query: Search terms.
@@ -416,11 +360,7 @@ async def web_search(session, query: str, engine: str = "duckduckgo") -> str:
 
 @tool
 async def extract_links(session, limit: int = 50) -> str:
-    """Extract all visible links from the current page as
-    `text -> href` lines, sorted by appearance. Capped at `limit`.
-
-    Use when you need a list of clickable destinations to choose from
-    (e.g. listing article URLs, finding the right product page).
+    """Extract visible links as `text -> href` lines, sorted by appearance.
 
     Args:
         limit: Max number of links to return. Default 50.
@@ -482,22 +422,10 @@ async def extract_images(session, limit: int = 30) -> str:
 
 @tool
 async def evaluate_js(session, expression: str) -> str:
-    """Execute an arbitrary JavaScript expression in the page context.
-    Returns the JSON-stringified result.
-
-    Use sparingly — prefer `find_elements` / `search_page` /
-    `get_dropdown_options` when those fit. This is the escape hatch for
-    custom DOM queries (shadow DOM traversal, computed style reads,
-    custom widgets) that the structured tools can't reach.
-
-    IMPORTANT: handle null in your expression. Use `el?.click()` not
-    `el.click()` — calling a method on null will throw. The wrapper
-    catches throws and returns "JS_ERROR: <message>" so you can
-    recover, but a clean expression is cheaper.
+    """Eval a JS expression in the page; returns stringified result. Use `el?.click()` (null-safe). Throws return "JS_ERROR: ...". Prefer find_elements/search_page when they fit.
 
     Args:
-        expression: A JS expression. Can be wrapped in `(() => {...})()`
-            for multi-statement bodies.
+        expression: JS expression (wrap multi-statement in `(() => {...})()`).
     """
     # v0.11.13: re-added the try/catch shim from v0.11.10 (Fix 3).
     # The v0.11.11 → v0.11.12 bisect proved the apparent -7pp accuracy
@@ -562,22 +490,12 @@ def make_extra_tools(agent: Any) -> list:
     async def read_file(
         session, path: str, offset: int = 0, max_chars: int = 50_000,
     ) -> str:
-        """Read a file from the agent's sandbox directory. Use to recall
-        notes, partial extractions, todo items, or large tool results
-        (under `results/`) spilled by the read-state lifecycle.
+        """Read a sandboxed file (notes/, results/). Pages with offset/max_chars; appends `[chars K..L of N]` marker.
 
         Args:
-            path: Relative path in the agent sandbox (e.g. "notes.md"
-                or "results/page_text_abc123.txt").
-            offset: Character offset to start reading from (default 0).
-                Use this to page through files larger than max_chars.
-            max_chars: Max chars to return per call (default 50,000;
-                hard cap 200,000). Lower for cheaper reads.
-
-        Returns the requested slice plus a "[bytes K..L of N]" tail
-        marker so paging is observable. v0.11.2: pagination added so
-        the read-state lifecycle's "full result retrievable" promise
-        is honored for spilled results > 50k chars.
+            path: Sandbox-relative path (e.g. "notes.md", "results/page_text_abc.txt").
+            offset: Start char (for paging). Default 0.
+            max_chars: Chunk size. Default 50000, max 200000.
         """
         full = _resolve(path)
         if not full or not os.path.isfile(full):
@@ -604,14 +522,11 @@ def make_extra_tools(agent: Any) -> list:
 
     @tool
     async def write_file(session, path: str, content: str) -> str:
-        """Write content to a file in the agent's sandbox. Overwrites
-        existing files. Use for storing notes, partial extractions
-        (e.g. when a long task needs to assemble data from many pages),
-        or maintaining a `todo.md` checklist.
+        """Write to a sandboxed file (overwrites). For notes, partial extractions, todo.md.
 
         Args:
-            path: Relative path (e.g. "notes.md", "extracted/page1.json").
-            content: File content (UTF-8 text).
+            path: Sandbox-relative path (e.g. "notes.md").
+            content: UTF-8 text.
         """
         full = _resolve(path)
         if not full:
@@ -628,14 +543,12 @@ def make_extra_tools(agent: Any) -> list:
     async def replace_file_str(
         session, path: str, old: str, new: str
     ) -> str:
-        """Replace all occurrences of `old` with `new` in a sandboxed
-        file. Use to update a `todo.md` checklist (e.g. swap `[ ]` →
-        `[x]` on completed items) without rewriting the whole file.
+        """Replace literal `old` with `new` in a sandboxed file (e.g. swap `[ ]` → `[x]` in todo.md).
 
         Args:
-            path: Relative path of the file to modify.
-            old: Substring to find (literal, not regex).
-            new: Replacement string.
+            path: Sandbox-relative file path.
+            old: Literal substring (not regex).
+            new: Replacement.
         """
         full = _resolve(path)
         if not full or not os.path.isfile(full):
@@ -683,33 +596,13 @@ def make_extra_tools(agent: Any) -> list:
         extract_images: bool = False,
         already_collected: str = "",
     ) -> str:
-        """Extract specific information from the current page using an
-        LLM-powered query.
-
-        This is the flagship READ tool. The agent's own LLM is asked to
-        find the answer to `query` inside the page's text — much more
-        reliable than dumping `page_text` and reasoning over it manually.
-        Use for: extracting specific values (prices, names, dates),
-        listing items matching a criterion ("top 3 articles"), summarizing
-        a section, or answering a question about the page.
-
-        Pagination: when a page is longer than max_chars, call again
-        with start_from_char=max_chars to read the next chunk
-        (start_from_char=30000 starts the second slice). Repeat until
-        you find the answer or the chunk is empty.
-
-        Structured output: pass output_schema_hint with a JSON-like
-        sketch of the format you want. The extractor will try to match
-        that shape. Example:
-          output_schema_hint='{"products": [{"name": str, "price": str}]}'
+        """LLM-powered extract: ask `query` against the page text. Preferred over page_text + manual reasoning. For long pages, page via start_from_char.
 
         Args:
             query: What to extract. Be specific.
-            max_chars: Max page text per chunk. Default 30000.
-            start_from_char: Offset to start reading from (for paged
-                long pages). Default 0.
-            output_schema_hint: Optional JSON-like template the answer
-                should follow. Default empty (free-form text answer).
+            max_chars: Page text chunk size. Default 30000.
+            start_from_char: Offset for next chunk (use prior max_chars).
+            output_schema_hint: Optional JSON-like template, e.g. '{"items": [{"name": str}]}'.
         """
         # Dedup memory (v0.7.0). If the agent calls extract with the
         # exact same query+offset on the same URL we just answered, return
