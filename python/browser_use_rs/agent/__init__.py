@@ -80,6 +80,15 @@ from browser_use_rs.views import (
 # triggers on the long-tail bloat tasks (60-step / 800k-token cases)
 # without disturbing ordinary reads.
 EPHEMERAL_RESULT_THRESHOLD = 25_000
+# v0.11.4: how many _inject_page_state cycles a queued read_state
+# entry is visible for. Was implicitly 1 in v0.11.2/v0.11.3.
+# Codex tune: "1 step is brittle. A common pattern is read page,
+# inspect/navigation action, then synthesize. With one-step expiry,
+# you are forcing the model to immediately compress perfectly. A
+# 2-step window should recover many context-starvation cases."
+# Trades a small cost increase (read_state block emitted on N+1 AND
+# N+2 → cache_creation paid twice) for accuracy recovery.
+EPHEMERAL_RESULT_WINDOW_STEPS = 2
 # evaluate_js is intentionally excluded — it truncates internally at 5k
 # chars in _extra_tools.py, so it can never cross the 10k threshold.
 # Including it would over-promise in the prompt.
@@ -227,7 +236,7 @@ These blocks are automatically extracted and re-injected on subsequent turns so 
 </state_emission>
 
 <read_state_lifecycle>
-Large results from page_text, get_text, get_links, and read_file appear in <read_state> for ONE step only. Before taking any other action, you MUST save all information you'll need later into <memory>. The full result is retrievable via read_file("results/<filename>.txt") using the path from the result's reference stub (offset/max_chars supported for paging), but each retrieval costs a step. Do not assume <read_state> will remain visible on the next step.
+Large results from page_text, get_text, get_links, and read_file appear in <read_state> for the next 2 steps only. Use them for reasoning, then save anything you'll need later into <memory> before they disappear. The full result is retrievable via read_file("results/<filename>.txt") using the path from the result's reference stub (offset/max_chars supported for paging), but each retrieval costs a step. Do not assume <read_state> persists beyond the 2-step window.
 </read_state_lifecycle>
 
 <output>
@@ -289,13 +298,13 @@ Strategy:
   with a specific pattern, or `read_scratchpad` with offset to page
   through it. Re-running `page_text` will just truncate again.
 - READ-STATE LIFECYCLE: large results from page_text, get_text,
-  get_links, and read_file appear in <read_state> for ONE step only.
-  Before taking any other action, you MUST save all information you'll
-  need later into <memory>. The full result is retrievable via
-  read_file("results/<filename>.txt") using the path from the result's
-  reference stub (offset/max_chars supported for paging), but each
-  retrieval costs a step. Do not assume <read_state> will remain
-  visible on the next step.
+  get_links, and read_file appear in <read_state> for the next 2
+  steps. Use them for reasoning, then save anything you'll need later
+  into <memory> before they disappear. The full result is retrievable
+  via read_file("results/<filename>.txt") using the path from the
+  result's reference stub (offset/max_chars supported for paging),
+  but each retrieval costs a step. Do not assume <read_state>
+  persists beyond the 2-step window.
 - When the task is complete, finalize via `done(text="<your answer>",
   success=true|false)`. Set `success=true` only if you completed the
   task with observed page evidence; `success=false` if blocked, data
@@ -2570,11 +2579,16 @@ class Agent:
         ]
 
         # v0.11.2 read-state ephemeral lifecycle: drain pending entries
-        # from the prior step's large read tools into a one-time
-        # <read_state> block. After this turn, the queue is empty and
-        # the next state UserMessage will not include the full content.
+        # from large read tools into a transient <read_state> block.
         # The corresponding ToolResultMessages already carry the
         # reference stub permanently. See EPHEMERAL_RESULT_TOOLS.
+        #
+        # v0.11.4: each entry carries a TTL counter
+        # (EPHEMERAL_RESULT_WINDOW_STEPS). It's emitted while ttl > 0,
+        # then ttl is decremented; when ttl reaches 0, it's dropped
+        # from the queue. With WINDOW_STEPS=2, an entry queued after
+        # step N's tool call is visible in step N+1's AND step N+2's
+        # state UserMessage, then gone for step N+3.
         read_state_block = ""
         if self._read_state_for_next_turn:
             sections: list[str] = []
@@ -2593,7 +2607,12 @@ class Agent:
                 len(self._read_state_for_next_turn),
                 sum(len(e["content"]) for e in self._read_state_for_next_turn),
             )
-            self._read_state_for_next_turn.clear()
+            # Decrement TTL on every entry; drop those that hit 0.
+            self._read_state_for_next_turn = [
+                {**e, "ttl": e.get("ttl", 1) - 1}
+                for e in self._read_state_for_next_turn
+                if e.get("ttl", 1) - 1 > 0
+            ]
 
         # Persistent agent state (v0.8.0): surface prior turn's
         # memory + next_goal + evaluation so the LLM has continuity
@@ -3258,12 +3277,17 @@ class Agent:
                 "full inline return", tool_name,
             )
             return content_parts, summary_text
-        # Record full content for next-turn <read_state> block.
+        # Record full content for next-turn <read_state> block. v0.11.4
+        # adds a TTL counter so each entry survives N _inject_page_state
+        # cycles before being dropped — this gives the LLM a window of
+        # multiple steps to reason over the read result before it
+        # disappears from context.
         self._read_state_for_next_turn.append(
             {
                 "tool_name": tool_name,
                 "content": summary_text,
                 "file_path": file_path,
+                "ttl": EPHEMERAL_RESULT_WINDOW_STEPS,
             }
         )
         # Stub format approved by codex: short, self-contained, includes
