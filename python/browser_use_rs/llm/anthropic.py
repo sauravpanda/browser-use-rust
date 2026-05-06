@@ -185,39 +185,70 @@ class ChatAnthropic(BaseChatModel):
             "tools": tool_defs,
             "messages": anthropic_msgs,
         }
-        # Caching: tag the LAST user/tool-result content block with
-        # cache_control=ephemeral so the prompt cache extends through
-        # the most recent turn. Combined with the system-prompt
-        # breakpoint below, that gives us two cache breakpoints per
-        # request, accumulating cache hits turn-by-turn.
+        # Caching: tag content blocks with cache_control=ephemeral.
+        # Anthropic supports up to 4 cache breakpoints per request and
+        # we use 3 (system prompt + agent_history + last message) to
+        # maximize prefix-cache hit rate.
         #
         # Earlier code passed `cache_control` as a TOP-LEVEL kwarg to
         # client.messages.create(); the Anthropic SDK rejects that
         # (TypeError: unexpected keyword argument 'cache_control').
         # cache_control only belongs on individual content blocks.
-        if anthropic_msgs:
-            last_msg = anthropic_msgs[-1]
-            content = last_msg.get("content")
+
+        def _attach_cc(msg: dict) -> bool:
+            """Tag the last cacheable block of `msg` with ephemeral
+            cache_control. Returns True if a tag was placed.
+            """
+            content = msg.get("content")
             if isinstance(content, list) and content:
-                # Only string-text or tool_result blocks support
-                # cache_control. Walk back to find the last block that
-                # accepts it; mutate in place.
                 for blk in reversed(content):
                     if isinstance(blk, dict) and blk.get("type") in (
                         "text", "tool_result", "image", "document",
                     ):
                         blk["cache_control"] = {"type": "ephemeral"}
-                        break
+                        return True
             elif isinstance(content, str) and content:
-                # Promote string content to a single text block so we
-                # can attach cache_control without changing semantics.
-                last_msg["content"] = [
+                msg["content"] = [
                     {
                         "type": "text",
                         "text": content,
                         "cache_control": {"type": "ephemeral"},
                     }
                 ]
+                return True
+            return False
+
+        # v0.11.20 cache breakpoint #2: agent_history block.
+        # _collapse_old_history (agent/__init__.py:~2492) injects/refreshes
+        # a single UserMessage at index 1 whose first text block starts
+        # with "[AGENT_HISTORY]". That block contains collapsed one-line
+        # summaries of prior turns and is the slow-changing tail of the
+        # cacheable prefix — most steps either don't touch it, or only
+        # append new collapsed summaries. Caching here lets the bulk of
+        # history hit cache_read on every step instead of getting
+        # re-evaluated as cache_creation when the prompt ages out.
+        # Per codex's v0.11.20 recommendation: pure architectural
+        # change, no behavior shift. Success criterion is cost/M
+        # tokens decreasing while step/success/output stay flat.
+        for msg in anthropic_msgs:
+            content = msg.get("content")
+            first_text = ""
+            if isinstance(content, list) and content:
+                first = content[0]
+                if isinstance(first, dict) and first.get("type") == "text":
+                    first_text = first.get("text", "") or ""
+            elif isinstance(content, str):
+                first_text = content
+            if first_text.startswith("[AGENT_HISTORY]"):
+                _attach_cc(msg)
+                break  # only one AGENT_HISTORY message per call
+
+        # v0.11.20 cache breakpoint #3: last message (existing behavior).
+        # Tagging the last block ensures the cache extends through the
+        # most recent turn so the next call's prefix can hit cache_read
+        # on everything up to the prior step.
+        if anthropic_msgs:
+            _attach_cc(anthropic_msgs[-1])
         if system:
             kwargs["system"] = [
                 {
