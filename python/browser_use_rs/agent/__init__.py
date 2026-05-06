@@ -230,7 +230,7 @@ If the target site returns 403 / Cloudflare bot-detection / Turnstile / login wa
 <state_emission>
 On every turn that calls a tool, prefix your message with three short XML blocks so progress survives history compaction:
   <evaluation_previous_goal>Did your last action achieve what you intended? Yes/Partial/No + 1 sentence.</evaluation_previous_goal>
-  <memory>Key facts you've learned so far that are NOT in the current page snapshot — running list of items collected, filters applied, search queries tried, things ruled out. Keep under 5 lines.</memory>
+  <memory>Key facts you've learned so far that are NOT in the current page snapshot — running list of items collected, filters applied, search queries tried, things ruled out. Keep under 3 lines.</memory>
   <next_goal>What you're trying to do next, in one short sentence.</next_goal>
 These blocks are automatically extracted and re-injected on subsequent turns so you don't lose context when older messages get collapsed. Skip them only on the final-answer turn.
 </state_emission>
@@ -325,7 +325,7 @@ collapsed into the agent_history string.
   last action achieved its goal.</evaluation_previous_goal>
   <memory>Key facts you've learned that are NOT in the current page
   snapshot: items collected so far, filters applied, search queries
-  tried, things ruled out. Keep under 5 lines. CRITICAL on multi-step
+  tried, things ruled out. Keep under 3 lines. CRITICAL on multi-step
   filter / sort / "list N items" tasks — without this you'll re-discover
   the same dead ends.</memory>
   <next_goal>What you're trying to do next, in one short sentence.</next_goal>
