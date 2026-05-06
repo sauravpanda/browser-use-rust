@@ -1,6 +1,6 @@
 [project]
 name = "browser-use-rs"
-version = "0.11.17"
+version = "0.11.18"
 description = "Lean Rust runtime for browser-use, with Python bindings"
 requires-python = ">=3.10"
 authors = [{ name = "Saurav Panda", email = "support@browser-use.com" }]

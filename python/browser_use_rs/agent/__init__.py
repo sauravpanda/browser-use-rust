@@ -1261,7 +1261,15 @@ class Agent:
                 # we synthesize a done from the response. No accuracy
                 # cost on tasks that would have failed anyway; large
                 # cost saving on the tail.
-                if self._page_fp_streak >= 5:
+                # v0.11.18 tune: require min step count before exit.
+                # v0.11.17 fired the exit too early on tasks like [1323]
+                # where the agent had 5 steps into dismissing a cookie
+                # modal — premature kill. Real grind tasks (Cloudflare /
+                # CAPTCHA) burn 50-100 steps so the streak=5+step_n>=15
+                # gate still catches them while protecting early-task
+                # cookie/overlay loops where the agent legitimately
+                # needs ~10-15 steps to find the right dismiss element.
+                if self._page_fp_streak >= 5 and step_n >= 15:
                     logger.info(
                         "agent: stagnation force-final at step %d "
                         "(streak=%d, never recovered after nudge)",
