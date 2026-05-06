@@ -112,72 +112,6 @@
         return top === el || el.contains(top) || top.contains(el);
     };
 
-    // v0.11.21: accessible-name-from-children fallback. Many sites use
-    // icon-only buttons like:
-    //   <button aria-label="Search"><svg>...</svg></button>
-    //   <button><svg><title>Menu</title></svg></button>
-    //   <button><i class="icon-search"></i></button>
-    // When the parent button has empty innerText AND no aria-label of
-    // its own, our walker previously emitted an indistinguishable empty
-    // button. The agent then can't tell ten icon buttons apart, gives
-    // up on the site, and drifts to web_search. Failure-mode analysis
-    // on v0.11.18 attributed ~5-8 failed tasks (telegraph search,
-    // history.com search, dicks return-policy, uscis news cards,
-    // gamerant filter) to exactly this pattern.
-    //
-    // Walk the first 2 levels of children for accessible-name signals
-    // and synthesize a text label. Pure ADDITION — when text would
-    // have been empty, this fills it in. Never replaces existing text,
-    // never culls anything. Lowest-risk DOM-walker change.
-    const ICON_CLASS_RE = /(?:^|[\s_-])(?:icon|svg|fa|material-icons)[-_]?([a-z][a-z0-9_-]{1,30})/i;
-    const accessibleNameFromChildren = (el) => {
-        // Limit walk depth to 2 levels to keep this cheap.
-        const candidates = [];
-        const walk = (node, depth) => {
-            if (!node || depth > 2) return;
-            for (const c of node.children || []) {
-                if (!c || !c.tagName) continue;
-                const cTag = c.tagName.toLowerCase();
-                if (cTag === 'svg') {
-                    // <svg><title>...</title></svg> is the WAI-ARIA standard
-                    // for SVG accessible names.
-                    const t = c.querySelector('title');
-                    if (t) {
-                        const tn = (t.textContent || '').trim();
-                        if (tn) candidates.push(tn);
-                    }
-                    // Also check aria-label on the svg itself.
-                    const a = c.getAttribute('aria-label');
-                    if (a) candidates.push(a.trim());
-                } else if (cTag === 'img') {
-                    const alt = c.getAttribute('alt');
-                    if (alt) candidates.push(alt.trim());
-                } else if (cTag === 'i' || cTag === 'span') {
-                    // <i class="icon-search"> or <span class="icon-cart">
-                    // Derive a name from the icon-class fragment. Skip if
-                    // the element has its own visible text (we'd already
-                    // have it).
-                    if (!(c.innerText || c.textContent || '').trim()) {
-                        const cls = c.getAttribute('class') || '';
-                        const m = cls.match(ICON_CLASS_RE);
-                        if (m && m[1]) candidates.push(m[1].replace(/[-_]/g, ' '));
-                    }
-                }
-                // Recurse one more level (depth+1 ≤ 2).
-                walk(c, depth + 1);
-            }
-        };
-        walk(el, 1);
-        // Take first non-empty candidate; truncate.
-        for (const c of candidates) {
-            const trimmed = c.replace(/\s+/g, ' ').trim();
-            if (trimmed) {
-                return trimmed.length > 60 ? trimmed.slice(0, 60) + '…' : trimmed;
-            }
-        }
-        return '';
-    };
-
     const collectText = (el) => {
         const tag = el.tagName.toLowerCase();
         if (tag === 'input' || tag === 'textarea') {
@@ -189,11 +123,7 @@
         }
         const txt = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
         if (txt) return txt.length > 200 ? txt.slice(0, 200) + '…' : txt;
-        const labelOrTitle = (el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
-        if (labelOrTitle) return labelOrTitle;
-        // v0.11.21: only as a last resort, derive a name from icon
-        // children. We still return '' if nothing usable is found.
-        return accessibleNameFromChildren(el);
+        return (el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
     };
 
     // ISO formats for HTML5 date/time inputs. Browser DISPLAYS in
