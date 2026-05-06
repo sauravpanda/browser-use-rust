@@ -1246,6 +1246,36 @@ class Agent:
                         "agent: stagnation nudge injected at step %d "
                         "(streak=%d)", step_n, self._page_fp_streak,
                     )
+                # v0.11.17: hard early-exit on persistent stagnation.
+                # The nudge fires at streak=3 but if the agent ignores
+                # it and the page stays identical at streak=5, no
+                # amount of further attempts will help — the agent is
+                # locked on a Cloudflare/CAPTCHA wall, an unloadable
+                # page, or a degenerate UI. Step-count attack: cut the
+                # high-step tail by forcing a final answer before we
+                # burn 50-100 steps on a guaranteed-fail trajectory.
+                # Targets the analysis-flagged tasks like 1015772
+                # (Cloudflare grind to step 87) and 757446 (OTP wall).
+                # Async path = same termination flow as max_steps + the
+                # all-error-streak: agent gets one final-answer turn,
+                # we synthesize a done from the response. No accuracy
+                # cost on tasks that would have failed anyway; large
+                # cost saving on the tail.
+                if self._page_fp_streak >= 5:
+                    logger.info(
+                        "agent: stagnation force-final at step %d "
+                        "(streak=%d, never recovered after nudge)",
+                        step_n, self._page_fp_streak,
+                    )
+                    await self._force_final_answer(
+                        state_summary, step_n,
+                        reason=(
+                            f"page state stagnated for "
+                            f"{self._page_fp_streak} consecutive steps "
+                            f"(blocked / unrecoverable)"
+                        ),
+                    )
+                    return
             except Exception as e:
                 logger.debug("page fingerprint check failed: %s", e)
 
