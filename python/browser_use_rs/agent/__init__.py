@@ -20,7 +20,7 @@ import json
 import logging
 import os
 import time
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Any, Awaitable, Callable
 
 logger = logging.getLogger(__name__)
@@ -513,6 +513,24 @@ DoneCallback = Callable[[AgentHistoryList], Any]
 ShouldStopCallback = Callable[[], Awaitable[bool]]
 
 
+# v0.12.0-α scaffolding (shipped as v0.11.25). Mirrors upstream
+# browser_use's `HistoryItem` (browser_use/agent/message_manager/views.py:15).
+# Populated in parallel with the existing self._messages / _recent_turn_records
+# pipeline. NOT yet read by message-list construction — α ships are
+# pure refactor scaffolding so any eval delta points to a structural bug
+# before compaction lands. β (v0.11.26) switches the message-list builder
+# to read from this. v0.12.0 adds LLM-summarization compaction.
+@dataclass
+class HistoryItem:
+    step_number: int
+    evaluation_previous_goal: str = ""
+    memory: str = ""
+    next_goal: str = ""
+    action_results: list[ActionResult] = field(default_factory=list)
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    error: str | None = None
+
+
 class Agent:
     def __init__(
         self,
@@ -901,6 +919,14 @@ class Agent:
         # the judge marked wrong — wrong sort order, wrong section,
         # missing required parts).
         self._validation_step_used = False
+        # v0.12.0-α: parallel HistoryItem array (shipped as v0.11.25).
+        # Populated in _append_history alongside the existing
+        # self.state.history.history append. NOT YET CONSUMED — read
+        # path still flows through self._messages / _recent_turn_records.
+        # Decoupled append lets β switch the message-list builder over
+        # without touching the populator. See HistoryItem dataclass.
+        self._history: list[HistoryItem] = []
+
         # Compat: `agent.message_manager.last_input_messages` mirrors
         # browser_use's API. Consumer code (evaluations-internal) reads
         # this for diagnostics; we just expose the live message buffer.
@@ -3374,6 +3400,30 @@ class Agent:
         )
         self.state.history.history.append(
             AgentHistory(state=state, output=output, result=results, metadata=metadata)
+        )
+
+        # v0.12.0-α: populate the parallel HistoryItem array (v0.11.25).
+        # Snapshot the persistent state tags as they are right now;
+        # _parse_persistent_state runs earlier in some paths and later
+        # in others, so values may be from this step or the previous one.
+        # Correctness is verified in β when this array becomes the
+        # canonical source for the agent_history block.
+        step_error: str | None = None
+        for r in results:
+            if r.error:
+                step_error = str(r.error)[:600]
+                break
+        tool_calls = list(output.tool_calls) if output and output.tool_calls else []
+        self._history.append(
+            HistoryItem(
+                step_number=step_n,
+                evaluation_previous_goal=self._previous_evaluation,
+                memory=self._memory,
+                next_goal=self._next_goal,
+                action_results=list(results),
+                tool_calls=tool_calls,
+                error=step_error,
+            )
         )
 
     def _apply_ephemeral_lifecycle(
