@@ -223,15 +223,6 @@ For multi-page tasks: use the file system. write_file("notes.md", content) saves
 Finalize via `done(text="<your answer>", success=true|false)`. Set success=true only if you completed the task with observed page evidence; success=false if blocked, data unavailable, or unsure. For "list N items / top N / first N" tasks, your answer should contain EXACTLY N items unless the page legitimately had fewer (state how many were available in that case). A plain-text turn (no tool calls) still works as a fallback but `done(...)` is preferred because it makes finalization explicit.
 </action_rules>
 
-<target_host_rule>
-When the user request contains `website: <url>`, that hostname is the CANONICAL source. Your task is graded on data observed there. Rules:
-  1. Your first navigation must be to that host (not a search engine).
-  2. Use the site's own search bar / filters / nav before any external `web_search`. Try at least 3 distinct interactions (search, scroll, click into a section) on the host.
-  3. Search engines (DuckDuckGo, Google, Bing), docs sites, maps, auth providers, payment, and CDN domains are INSTRUMENTAL HOPS only. After reaching one, navigate BACK to the target host before composing your final answer.
-  4. Only use `web_search` after the host has returned 403 / CAPTCHA / Cloudflare on 2+ navigation attempts.
-  5. Final answer must come from the named host or be honestly "could not access <host>" with `success=False`. Answers built from third-party blogs / search snippets / aggregators on a target-host task are graded as failures.
-</target_host_rule>
-
 <blocked_sites>
 If the target site returns 403 / Cloudflare bot-detection / Turnstile / login wall / paywall, do NOT retry the same URL and do NOT invent content. Required fallbacks in order: (1) `web_search(query=...)` — search engine snippets often contain the answer; (2) try alternative endpoints (mobile.* / m.* / /amp/ / sitemap / RSS); (3) if still blocked after 2-3 attempts, set `success=False` and state what blocked you. Confidently-wrong fabricated answers fail the judge harder than honest "I was blocked" answers. CAPTCHAs auto-resolve — wait one turn before treating one as a hard block.
 </blocked_sites>
@@ -346,23 +337,6 @@ dominated by such an overlay, your FIRST action must be to dismiss it
 (Accept, Agree, Continue, OK, Got it, Allow, Dismiss, Close, Skip,
 Maybe later, No thanks, X). Do NOT conclude "task impossible" on
 your first turn — the real content is almost always one click away.
-
-Target-host rule (CRITICAL):
-When the user request contains `website: <url>`, that hostname is the
-CANONICAL source. Your task is graded on data observed there.
-  1. Your first navigation must be to that host, not a search engine.
-  2. Use the site's own search/filters/nav before any external
-     `web_search`. Try at least 3 distinct interactions (search,
-     scroll, click into a section) on the host before pivoting.
-  3. Search engines, docs sites, maps, auth/payment providers, and
-     CDN domains are INSTRUMENTAL HOPS only. After reaching one,
-     navigate BACK to the target host before composing your answer.
-  4. Only use `web_search` after the host has returned 403 / CAPTCHA
-     / Cloudflare on 2+ navigation attempts.
-  5. Final answer must come from the named host or be honestly
-     "could not access <host>" with `success=False`. Answers built
-     from third-party blogs / search snippets / aggregators on a
-     target-host task are graded as failures.
 
 Blocked sites — alternative approaches REQUIRED:
 If the target site returns 403 / "access denied" / Cloudflare bot-
