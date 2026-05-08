@@ -39,6 +39,25 @@ class StepMetadata:
     cache_read_tokens: int
     step_start_time: float
     step_end_time: float
+    # v0.12.2 DOM measurement instrumentation. v0.12.1 stashed these on
+    # BrowserStateSummary.dom_metrics, but the dashboard's completeHistory
+    # serializer drops everything from `state` except title+url. The
+    # `metadata` channel passes model_dump keys through verbatim, so we
+    # surface them here as flat scalars instead. All fields default to 0
+    # so older runs / failed snapshots round-trip cleanly. Populated in
+    # _append_history by copying state.dom_metrics; never recomputed.
+    dom_total_bytes: int = 0
+    dom_total_elements: int = 0
+    dom_interactive_count: int = 0
+    dom_static_text_count: int = 0
+    dom_interactive_text_bytes: int = 0
+    dom_static_text_bytes: int = 0
+    dom_interactive_attrs_bytes: int = 0
+    dom_interactive_attrs_count: int = 0
+    dom_interactive_attrs_per_el_avg: float = 0.0
+    dom_el_size_p50: int = 0
+    dom_el_size_p90: int = 0
+    dom_el_size_max: int = 0
 
     @property
     def duration_seconds(self) -> float:

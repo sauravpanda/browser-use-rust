@@ -3496,6 +3496,11 @@ class Agent:
         # Filter and sum is O(n_steps) per call but n_steps is small;
         # not worth maintaining a separate per-step cache.
         step_calls = [u for u in self.usage_log if u.get("step") == step_n]
+        # v0.12.2: surface DOM measurement metrics via metadata, since the
+        # dashboard's completeHistory.state path drops everything except
+        # title+url. Read-only copy from state.dom_metrics — never
+        # recomputed here. dm is None for failed snapshots; defaults to 0.
+        dm = (state.dom_metrics or {}) if state else {}
         metadata = StepMetadata(
             step_number=step_n,
             input_tokens=sum(u.get("input", 0) for u in step_calls),
@@ -3503,6 +3508,20 @@ class Agent:
             cache_read_tokens=sum(u.get("cache_read", 0) for u in step_calls),
             step_start_time=t_start,
             step_end_time=time.monotonic(),
+            dom_total_bytes=int(dm.get("total_bytes") or 0),
+            dom_total_elements=int(dm.get("total_elements") or 0),
+            dom_interactive_count=int(dm.get("interactive_count") or 0),
+            dom_static_text_count=int(dm.get("static_text_count") or 0),
+            dom_interactive_text_bytes=int(dm.get("interactive_text_bytes") or 0),
+            dom_static_text_bytes=int(dm.get("static_text_bytes") or 0),
+            dom_interactive_attrs_bytes=int(dm.get("interactive_attrs_bytes") or 0),
+            dom_interactive_attrs_count=int(dm.get("interactive_attrs_count") or 0),
+            dom_interactive_attrs_per_el_avg=float(
+                dm.get("interactive_attrs_per_el_avg") or 0.0
+            ),
+            dom_el_size_p50=int(dm.get("el_size_p50") or 0),
+            dom_el_size_p90=int(dm.get("el_size_p90") or 0),
+            dom_el_size_max=int(dm.get("el_size_max") or 0),
         )
         self.state.history.history.append(
             AgentHistory(state=state, output=output, result=results, metadata=metadata)
