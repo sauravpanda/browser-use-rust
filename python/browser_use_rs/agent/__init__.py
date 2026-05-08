@@ -197,6 +197,66 @@ def _content_to_dict(content: Any) -> Any:
     return str(content)
 
 
+def _compute_dom_metrics(snap: Any, dom_text: str) -> dict[str, Any]:
+    """v0.12.1 measurement helper. Per-snapshot DOM size breakdown.
+
+    Stored on BrowserStateSummary.dom_metrics so it surfaces in
+    AgentHistory → dashboard completeHistory. Never sent to the LLM.
+    Used to identify which DOM lever is worth pulling for v0.12.x cost
+    work — concretely: are we DOM-bloated vs upstream's ~30-35KB per
+    snapshot, and if so, where (interactive count? static text? attrs
+    per element? per-element bytes)?
+
+    `snap` is a bu_dom DomState (interactive elements have index>0,
+    static text rows have index==0). `dom_text` is the rendered
+    to_llm_string output — its len gives the actual LLM-input bytes.
+    """
+    elements = list(snap.elements)
+    total_bytes = len(dom_text)
+    interactive = [e for e in elements if e.index != 0]
+    static_text = [e for e in elements if e.index == 0]
+
+    interactive_text_bytes = sum(len(e.text) for e in interactive)
+    static_text_bytes = sum(len(e.text) for e in static_text)
+    interactive_attrs_bytes = 0
+    interactive_attrs_count = 0
+    for e in interactive:
+        for k, v in e.attrs.items():
+            # to_llm_string renders ` k="v"` per attr → len(k)+len(v)+4
+            interactive_attrs_bytes += len(k) + len(v) + 4
+            interactive_attrs_count += 1
+
+    # Approximate per-element rendered size (interactive only) so we
+    # can see distribution: are a few mega-elements eating the budget,
+    # or is bloat uniform across all?
+    el_sizes: list[int] = []
+    for e in interactive:
+        size = 4 + len(e.tag) + len(e.text)  # `[N]<tag>text\n`
+        for k, v in e.attrs.items():
+            size += len(k) + len(v) + 4
+        el_sizes.append(size)
+    el_sizes.sort()
+    n = len(el_sizes)
+
+    return {
+        "total_bytes": total_bytes,
+        "total_elements": len(elements),
+        "interactive_count": len(interactive),
+        "static_text_count": len(static_text),
+        "interactive_text_bytes": interactive_text_bytes,
+        "static_text_bytes": static_text_bytes,
+        "interactive_attrs_bytes": interactive_attrs_bytes,
+        "interactive_attrs_count": interactive_attrs_count,
+        "interactive_attrs_per_el_avg": (
+            round(interactive_attrs_count / len(interactive), 2)
+            if interactive else 0
+        ),
+        "el_size_p50": el_sizes[n // 2] if n else 0,
+        "el_size_p90": el_sizes[int(n * 0.9)] if n else 0,
+        "el_size_max": el_sizes[-1] if n else 0,
+    }
+
+
 # Flash-mode prompt — terse variant matching upstream's
 # system_prompt_flash.md. Used when flash_mode=True is passed to the
 # Agent (eval framework default for many setups). Mirrors upstream's
@@ -2325,7 +2385,7 @@ class Agent:
         # selector here so the rendered line reads
         # `Clicked button "Sign In"` instead of `clicked [5]` —
         # cross-turn references stay stable through DOM mutation.
-        async def _safe_dom() -> tuple[str, dict[int, str]]:
+        async def _safe_dom() -> tuple[str, dict[int, str], dict[str, Any] | None]:
             try:
                 # v0.8.23: 30s cap. DOM snapshot is the slowest CDP op
                 # (full DOM walk + serialize + map indices) but should
@@ -2370,18 +2430,52 @@ class Agent:
                             out_lines.append(line)
                         dom_text = "\n".join(out_lines)
                 self._prev_selectors = cur_selectors
-                return dom_text, idx_to_sel
+                # v0.12.1: per-snapshot DOM size breakdown. Computed
+                # AFTER any text decoration (e.g. `*` new-element
+                # markers above) so total_bytes reflects what the LLM
+                # actually receives.
+                try:
+                    metrics = _compute_dom_metrics(snap, dom_text)
+                except Exception:
+                    logger.exception("agent: dom_metrics computation failed (non-fatal)")
+                    metrics = None
+                return dom_text, idx_to_sel, metrics
             except Exception:
                 # No active page yet (very first step before
                 # initial_actions navigate, or a frame transition
                 # mid-step). Skip — the LLM gets a "(no page state
                 # available)" placeholder instead of crashing the run.
-                return "", {}
+                return "", {}, None
 
-        url, screenshot_b64, dom_pair = await asyncio.gather(
+        url, screenshot_b64, dom_triple = await asyncio.gather(
             _safe_url(), _safe_screenshot(), _safe_dom()
         )
-        dom_text, self._index_to_selector = dom_pair
+        dom_text, self._index_to_selector, dom_metrics = dom_triple
+        if dom_metrics is not None:
+            # v0.12.1: log the per-snapshot DOM size breakdown so it's
+            # visible in CI / dashboard logs. AgentHistory.state also
+            # carries it (see return below) for completeHistory access.
+            logger.info(
+                "dom_metrics step=%d url=%s total_bytes=%d el=%d "
+                "(interactive=%d static=%d) "
+                "text=(interactive=%d static=%d) "
+                "attrs=(bytes=%d count=%d per_el=%.1f) "
+                "el_sizes=(p50=%d p90=%d max=%d)",
+                self.state.n_steps,
+                url[:80],
+                dom_metrics["total_bytes"],
+                dom_metrics["total_elements"],
+                dom_metrics["interactive_count"],
+                dom_metrics["static_text_count"],
+                dom_metrics["interactive_text_bytes"],
+                dom_metrics["static_text_bytes"],
+                dom_metrics["interactive_attrs_bytes"],
+                dom_metrics["interactive_attrs_count"],
+                dom_metrics["interactive_attrs_per_el_avg"],
+                dom_metrics["el_size_p50"],
+                dom_metrics["el_size_p90"],
+                dom_metrics["el_size_max"],
+            )
 
         # Stash the set of [N] indices the LLM is about to see, so
         # _run_tool can validate `index=N` arguments against what was
@@ -2411,6 +2505,7 @@ class Agent:
             title="",
             screenshot=screenshot_b64,
             elements_text=dom_text,
+            dom_metrics=dom_metrics,
         )
 
     def _collapse_old_history(self) -> None:

@@ -89,6 +89,14 @@ class BrowserStateSummary:
     # that need a path can write `screenshot` themselves.
     screenshot_path: str | None = None
     elements_text: str = ""
+    # v0.12.1 measurement instrumentation. Per-snapshot DOM size
+    # breakdown (total bytes, interactive vs static-text counts, attr
+    # bloat distribution). Stored on AgentHistory.state so it surfaces
+    # in dashboard completeHistory; never injected into the LLM prompt.
+    # Used to identify which DOM lever is actually worth pulling for
+    # v0.12.x cost optimization. Optional so older snapshots that don't
+    # populate it remain valid.
+    dom_metrics: dict[str, Any] | None = None
 
     def get_screenshot(self) -> str | None:
         return self.screenshot
