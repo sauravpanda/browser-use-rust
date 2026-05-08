@@ -613,7 +613,22 @@ class Agent:
         # content stays native. The earlier K=3 regression was on
         # v0.5.0 BEFORE we had read-tool exclusion + persistent
         # selector retargeting; both should now compensate.
-        history_window_steps: int = 3,
+        #
+        # v0.12.0: dropped 3 → 1. Building on the α (HistoryItem) +
+        # β (canonical journal) foundation from v0.11.25-26: the
+        # collapsed [AGENT_HISTORY] block already carries every past
+        # action's narrative summary (first 3 + last 12 + omit marker),
+        # and the persistent <memory>/<next_goal>/<evaluation_previous_goal>
+        # tags from v0.8.0 carry the LLM's own running state. Keeping
+        # 3 raw native action turns on top of that was redundant
+        # context. K=1 keeps just the most recent action turn native
+        # (tool_use/tool_result IDs need to be paired for the next
+        # provider call) plus all read-tool turns indefinitely (read
+        # exclusion). Estimated savings: 5-10% per-step input tokens
+        # on median, 10-20% on tail tasks where native history was
+        # the dominant non-DOM cost driver. Reversal path: bump back
+        # to 3 if accuracy regresses beyond ±5pp.
+        history_window_steps: int = 1,
         use_vision: bool = True,
         sensitive_data: dict[str, str] | None = None,
         system_prompt: str | None = None,
