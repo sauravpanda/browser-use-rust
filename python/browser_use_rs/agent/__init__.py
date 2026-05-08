@@ -513,13 +513,15 @@ DoneCallback = Callable[[AgentHistoryList], Any]
 ShouldStopCallback = Callable[[], Awaitable[bool]]
 
 
-# v0.12.0-α scaffolding (shipped as v0.11.25). Mirrors upstream
-# browser_use's `HistoryItem` (browser_use/agent/message_manager/views.py:15).
-# Populated in parallel with the existing self._messages / _recent_turn_records
-# pipeline. NOT yet read by message-list construction — α ships are
-# pure refactor scaffolding so any eval delta points to a structural bug
-# before compaction lands. β (v0.11.26) switches the message-list builder
-# to read from this. v0.12.0 adds LLM-summarization compaction.
+# v0.12.0 HistoryItem (α scaffolding shipped v0.11.25; β reader switch
+# shipped v0.11.26). Mirrors upstream browser_use's `HistoryItem`
+# (browser_use/agent/message_manager/views.py:15).
+#
+# β (v0.11.26): _collapse_old_history now reads from self._history
+# instead of _recent_turn_records. Marks items via `collapsed=True`
+# instead of removing them — preserves the journal for v0.12.0
+# LLM-summarization compaction, which needs the full history text to
+# summarize.
 @dataclass
 class HistoryItem:
     step_number: int
@@ -529,6 +531,10 @@ class HistoryItem:
     action_results: list[ActionResult] = field(default_factory=list)
     tool_calls: list[ToolCall] = field(default_factory=list)
     error: str | None = None
+    # β (v0.11.26): set True once this item's native AssistantMessage +
+    # ToolResultMessages have been collapsed into the [AGENT_HISTORY]
+    # block. Prevents double-collapse on subsequent calls.
+    collapsed: bool = False
 
 
 class Agent:
@@ -901,15 +907,11 @@ class Agent:
         self._stagnation_nudged_at_streak: int = 0
         # Running collapsed history of older steps. Each entry: a
         # one-line "<step N> <action> → <result-summary>" string.
+        # Sourced from self._history items marked collapsed=True
+        # (β / v0.11.26 — see _collapse_old_history). Pre-β this was
+        # built from a separate self._recent_turn_records tuple list,
+        # which was redundant once HistoryItem was added in α.
         self._collapsed_history: list[str] = []
-        # Track the last K turns' (step_n, tool_calls, results) so
-        # _collapse_old_history can render them when popping. We need
-        # this because by the time we pop a turn from self._messages,
-        # we've lost the structured tool-call args (the messages
-        # carried only the wire format).
-        self._recent_turn_records: list[
-            tuple[int, list[ToolCall], list[ActionResult]]
-        ] = []
         # Self-validation: when the LLM is about to finalize an answer
         # (no tool calls in text-mode, or first done() call in
         # output-model mode), we let it through ONCE with a "re-check
@@ -919,12 +921,11 @@ class Agent:
         # the judge marked wrong — wrong sort order, wrong section,
         # missing required parts).
         self._validation_step_used = False
-        # v0.12.0-α: parallel HistoryItem array (shipped as v0.11.25).
-        # Populated in _append_history alongside the existing
-        # self.state.history.history append. NOT YET CONSUMED — read
-        # path still flows through self._messages / _recent_turn_records.
-        # Decoupled append lets β switch the message-list builder over
-        # without touching the populator. See HistoryItem dataclass.
+        # v0.12.0 HistoryItem journal. α (v0.11.25) populated this in
+        # parallel; β (v0.11.26) made it the canonical source for
+        # _collapse_old_history. v0.12.0 will add LLM-summarization
+        # compaction on top — collapsed items survive here so the
+        # compactor has the full text to summarize.
         self._history: list[HistoryItem] = []
 
         # Compat: `agent.message_manager.last_input_messages` mirrors
@@ -1694,14 +1695,11 @@ class Agent:
                 ]
 
             self._append_history(state_summary, output, tool_results, t0, step_n)
-
-            # Record this turn for later sliding-window collapse. We
-            # snapshot the structured tool calls + results because by
-            # the time _collapse_old_history runs, we've only got the
-            # wire-format messages left in self._messages.
-            self._recent_turn_records.append(
-                (step_n, list(completion.tool_calls), list(tool_results))
-            )
+            # β (v0.11.26): _append_history now also populates
+            # self._history with a HistoryItem. _collapse_old_history
+            # walks that. The previous self._recent_turn_records tuple
+            # array was removed (redundant once HistoryItem was added
+            # in α; see HistoryItem dataclass docstring).
 
             if on_step_end is not None:
                 await _maybe_await(on_step_end())
@@ -2424,73 +2422,71 @@ class Agent:
         """
         if self.history_window_steps <= 0:
             return
-        # `_recent_turn_records` is per-turn; the live message list
-        # holds 1 AssistantMessage + N ToolResultMessage(s) per turn.
-        # Only count action-only turns toward the window (read-tool
-        # turns are exempt and stay native), so we skip ahead through
-        # records that contain reads.
+        # β (v0.11.26): walk self._history (canonical journal since α).
+        # Filter for non-collapsed action-only items — read-tool turns
+        # stay native indefinitely so the LLM keeps full access to
+        # extracted content.
         action_only_indices = [
             i
-            for i, (_, tcs, _) in enumerate(self._recent_turn_records)
-            if not any(tc.name in self._READ_ONLY_TOOLS for tc in tcs)
+            for i, h in enumerate(self._history)
+            if not h.collapsed
+            and h.tool_calls
+            and not any(tc.name in self._READ_ONLY_TOOLS for tc in h.tool_calls)
         ]
         excess = len(action_only_indices) - self.history_window_steps
         if excess <= 0:
             return
-        # Indices into _recent_turn_records that we'll actually collapse.
+        # Oldest `excess` action-only items get collapsed.
         collapse_indices = action_only_indices[:excess]
-        records_to_collapse = [self._recent_turn_records[i] for i in collapse_indices]
 
-        for record in records_to_collapse:
-            step_n, tool_calls, results = record
-            # Render one history line per (call, result) pair. If the
-            # batch had only one call, this is a single line; for
-            # multi_act batches we list each.
-            for tc, res in zip(tool_calls, results):
+        for idx in collapse_indices:
+            h = self._history[idx]
+            # Render one history line per (call, result) pair. Multi_act
+            # batches produce multiple lines; single-call turns produce one.
+            for tc, res in zip(h.tool_calls, h.action_results):
                 self._collapsed_history.append(
-                    self._format_action_line(step_n, tc, res)
+                    self._format_action_line(h.step_number, tc, res)
                 )
-            # Pop the matching messages from self._messages: 1
+            # Pop the matching native messages from self._messages: 1
             # AssistantMessage followed by len(tool_calls) ToolResultMessages.
             # Walk forward looking for the next AssistantMessage that
             # matches; once found, drop it + the next N ToolResultMessages.
             pop_idx = None
+            record_call_ids = [tc.id for tc in h.tool_calls]
             for i, msg in enumerate(self._messages):
                 if isinstance(msg, AssistantMessage):
                     msg_call_ids = [tc.id for tc in msg.tool_calls]
-                    record_call_ids = [tc.id for tc in tool_calls]
                     if msg_call_ids == record_call_ids:
                         pop_idx = i
                         break
             if pop_idx is None:
-                # Couldn't find the matching native pair (e.g. it was
-                # already popped, or messages were re-shuffled by a
-                # nudge inject). Skip the prune for this turn — better
-                # to keep the message than risk corrupting the order.
+                # Couldn't find the matching native pair (already popped,
+                # or messages re-shuffled by a nudge inject). Mark the
+                # HistoryItem collapsed anyway — its summary is now in
+                # _collapsed_history; we just skip the native prune for
+                # this turn rather than risk corrupting message order.
+                h.collapsed = True
                 continue
             # Drop the AssistantMessage and the immediately-following
             # ToolResultMessages whose tool_call_id matches one in
             # this batch. Stop at the first non-matching message.
-            wanted_ids = {tc.id for tc in tool_calls}
+            wanted_ids = {tc.id for tc in h.tool_calls}
             del self._messages[pop_idx]
             while pop_idx < len(self._messages) and isinstance(
                 self._messages[pop_idx], ToolResultMessage
             ) and self._messages[pop_idx].tool_call_id in wanted_ids:
                 del self._messages[pop_idx]
-
-        # Drop the collapsed records (by index, since they may not be
-        # contiguous — read-tool turns are skipped over).
-        keep_set = set(range(len(self._recent_turn_records))) - set(collapse_indices)
-        self._recent_turn_records = [
-            self._recent_turn_records[i] for i in sorted(keep_set)
-        ]
+            h.collapsed = True
 
         if self._collapsed_history:
+            native_turns_kept = sum(
+                1 for h in self._history
+                if not h.collapsed and h.tool_calls
+            )
             logger.info(
                 "agent: collapsed %d old turns (%d history lines now, "
                 "%d native turns kept)",
-                excess, len(self._collapsed_history),
-                len(self._recent_turn_records),
+                excess, len(self._collapsed_history), native_turns_kept,
             )
 
         # v0.8.20: cap the rendered history at first N + last M lines
