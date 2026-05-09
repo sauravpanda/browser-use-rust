@@ -3501,6 +3501,12 @@ class Agent:
         # title+url. Read-only copy from state.dom_metrics — never
         # recomputed here. dm is None for failed snapshots; defaults to 0.
         dm = (state.dom_metrics or {}) if state else {}
+        # v0.12.3: surface prompt-section bytes (system / tools / state /
+        # user / assistant / tool_results / image / n_messages). Take the
+        # LAST step_calls entry, not aggregated — these are byte-count
+        # snapshots from _compute_call_metrics and a sum across multiple
+        # LLM calls (e.g. extract_structured_data) would inflate them.
+        last_call = step_calls[-1] if step_calls else {}
         metadata = StepMetadata(
             step_number=step_n,
             input_tokens=sum(u.get("input", 0) for u in step_calls),
@@ -3522,6 +3528,14 @@ class Agent:
             dom_el_size_p50=int(dm.get("el_size_p50") or 0),
             dom_el_size_p90=int(dm.get("el_size_p90") or 0),
             dom_el_size_max=int(dm.get("el_size_max") or 0),
+            prompt_system_bytes=int(last_call.get("system_bytes") or 0),
+            prompt_tools_bytes=int(last_call.get("tools_bytes") or 0),
+            prompt_state_msg_bytes=int(last_call.get("state_msg_bytes") or 0),
+            prompt_user_msgs_bytes=int(last_call.get("user_msgs_bytes") or 0),
+            prompt_assistant_msgs_bytes=int(last_call.get("assistant_msgs_bytes") or 0),
+            prompt_tool_results_bytes=int(last_call.get("tool_results_bytes") or 0),
+            prompt_image_bytes=int(last_call.get("image_bytes") or 0),
+            prompt_n_messages=int(last_call.get("n_messages") or 0),
         )
         self.state.history.history.append(
             AgentHistory(state=state, output=output, result=results, metadata=metadata)
@@ -3695,6 +3709,13 @@ class Agent:
         tool_results_bytes = 0
         assistant_msgs_bytes = 0
         user_msgs_bytes = 0
+        # v0.12.3: split out image bytes (currently lumped into
+        # state_msg_bytes because _content_byte_len counts ImagePart
+        # base64 length). With use_vision=True, screenshots are
+        # 50-200KB per step uncached — likely the dominant non-cached
+        # cost driver. Knowing the split lets v0.12.x decide whether
+        # to chase image-resolution / vision-toggling.
+        image_bytes = 0
         n_user = n_assistant = n_tool_result = 0
         last_user_idx = -1
         for i, msg in enumerate(self._messages):
@@ -3713,6 +3734,12 @@ class Agent:
             elif isinstance(msg, ToolResultMessage):
                 tool_results_bytes += blen
                 n_tool_result += 1
+            # Walk ImageParts in any role's content list.
+            content = getattr(msg, "content", None)
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, ImagePart) and part.data:
+                        image_bytes += len(part.data)
         return {
             "prompt_hash": prompt_hash,
             "tools_hash": tools_hash,
@@ -3726,6 +3753,7 @@ class Agent:
             "user_msgs_bytes": user_msgs_bytes,
             "assistant_msgs_bytes": assistant_msgs_bytes,
             "tool_results_bytes": tool_results_bytes,
+            "image_bytes": image_bytes,
         }
 
     def _tools_signature(self) -> str:

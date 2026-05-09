@@ -58,6 +58,30 @@ class StepMetadata:
     dom_el_size_p50: int = 0
     dom_el_size_p90: int = 0
     dom_el_size_max: int = 0
+    # v0.12.3 prompt-section instrumentation. Same surfacing pattern as
+    # v0.12.2 dom_*: scalars on metadata, populated from the LAST
+    # _compute_call_metrics entry in usage_log for this step (we take
+    # the last, not the sum, because byte fields are snapshots — sums
+    # would inflate when extract_structured_data fires extra LLM calls
+    # in the same step). DOM proved to be 4.3% of input; the other 96%
+    # lives in these buckets.
+    #
+    # IMPORTANT — bucket overlap: prompt_image_bytes is the sum of
+    # ImagePart base64 across ALL messages. _message_byte_len /
+    # _content_byte_len already include ImagePart bytes inside whichever
+    # message carries them, so prompt_image_bytes is INCLUDED in
+    # prompt_state_msg_bytes / prompt_user_msgs_bytes (page-state messages
+    # carry the screenshot today). Don't sum these buckets without
+    # subtracting prompt_image_bytes once. Reported as a separate
+    # metric so analysis can isolate "if I disable use_vision" cost.
+    prompt_system_bytes: int = 0
+    prompt_tools_bytes: int = 0
+    prompt_state_msg_bytes: int = 0     # latest UserMessage (incl. screenshot if any)
+    prompt_user_msgs_bytes: int = 0     # all UserMessages (incl. screenshots)
+    prompt_assistant_msgs_bytes: int = 0
+    prompt_tool_results_bytes: int = 0
+    prompt_image_bytes: int = 0         # OVERLAP with state_msg / user_msgs above
+    prompt_n_messages: int = 0
 
     @property
     def duration_seconds(self) -> float:
