@@ -537,7 +537,6 @@ _UPSTREAM_NAME_ALIASES = {
     #     search_page now reachable via 'search_text'/'find_in_page'.
     "input": "type_text",
     "input_text": "type_text",
-    "click_element_by_index": "click",
     # v0.11.12: scroll_down/scroll_up restored to the alias map. The
     # underlying `scroll_to_bottom` / `scroll_to_top` still take no
     # kwargs in their schema (= cache-stable, byte-identical to v0.11.5
@@ -559,14 +558,21 @@ _UPSTREAM_NAME_ALIASES = {
     "select_option": "select_dropdown",
     "press_keys": "send_keys",
     "key_press": "send_keys",
-    "back": "go_back",
     "history_back": "go_back",
     "screenshot_page": "screenshot",
-    "scroll_to_text": "find_text",
-    "find_in_page": "search_page",
     "query_selector_all": "find_elements",
     "css_select": "find_elements",
     "search_text": "search_page",
+    # v0.12.4: removed 4 aliases per v0.12.3 measurement — each
+    # received <5 calls in 198 tasks (<0.15% of tool calls each)
+    # while the canonical equivalent had heavy traffic. Pure cached-
+    # prefix shrink. Removed:
+    #   "click_element_by_index" (5 calls; canonical "click" 1037)
+    #   "back" (2 calls; canonical "go_back" 43; "history_back" alias kept)
+    #   "find_in_page" (1 call; canonical "search_page" 6)
+    #   "scroll_to_text" (3 calls; canonical "find_text" 6)
+    # Aliases with meaningful traffic preserved:
+    #   "press_keys" (36 calls), "search_google" (22), "wait" (20)
 }
 
 # Reverse map: alias-or-canonical -> canonical name. Used by guards

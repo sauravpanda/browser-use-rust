@@ -92,11 +92,25 @@ EPHEMERAL_RESULT_WINDOW_STEPS = 2
 # evaluate_js is intentionally excluded — it truncates internally at 5k
 # chars in _extra_tools.py, so it can never cross the 10k threshold.
 # Including it would over-promise in the prompt.
+#
+# v0.12.4: extract_structured_data ADDED. It already has an in-tool
+# 10KB → file overflow path (`_extra_tools.py` line ~902), but v0.12.3
+# measurement caught a real failure: task kn79c1464jkm5t33234h had a
+# 127KB extract result persist across 16 native message-list steps.
+# That happens when the in-tool overflow's sandbox-write fallback
+# fires (line 926-933) and the full text is returned inline. Adding
+# extract_structured_data to the ephemeral lifecycle is a backstop:
+# even when the in-tool overflow fails, the post-step lifecycle
+# (_apply_ephemeral_lifecycle) spills > 25KB results to disk and
+# replaces the native tool_result with a stub. Per v0.12.3 analysis
+# this fix is mean cost ~$0.0001/task (rare bug) but cleans up the
+# p99 tail by ~$0.04/worst-task.
 EPHEMERAL_RESULT_TOOLS: frozenset[str] = frozenset({
     "page_text",
     "get_text",
     "get_links",
     "read_file",
+    "extract_structured_data",
 })
 
 
@@ -3596,7 +3610,17 @@ class Agent:
         # establish task grounding. Only subsequent large reads use
         # the lifecycle (where they're more likely to be bloat /
         # alternative searches / repeat extraction).
-        if not self._has_durable_read:
+        #
+        # v0.12.4: extract_structured_data is EXEMPT from the durable
+        # pass. Per codex review of the v0.11.5 logic + v0.12.3 bug
+        # finding: extract is LLM-summarized output, not raw page text,
+        # so the "first read establishes grounding" rationale is weaker.
+        # And it has its own in-tool 10KB→file overflow that should
+        # already prevent large inline returns; the lifecycle entry is
+        # specifically a backstop for when that overflow falls through.
+        # Letting extract_structured_data take the durable pass would
+        # defeat the whole reason we added it to EPHEMERAL_RESULT_TOOLS.
+        if tool_name != "extract_structured_data" and not self._has_durable_read:
             self._has_durable_read = True
             logger.info(
                 "agent: first large read (%s, %d chars) stays durable "
