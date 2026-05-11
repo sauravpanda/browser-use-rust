@@ -165,11 +165,16 @@ python/browser_use_rs/
 ```
 
 The agent loop is a **manual native-tool-call loop**: each provider's
-`ainvoke` returns structured `tool_calls`; the agent executes them in
-parallel via `asyncio.gather`, sends results back as `tool_result` /
-`function_response` / `tool` messages. Image-in-tool-result works
-natively for Anthropic; for Gemini and OpenAI the screenshot is split
-into the next user-message `Part` automatically inside their providers.
+`ainvoke` returns structured `tool_calls`; the agent executes batched
+calls sequentially with DOM/URL staleness guards, then sends results back
+as `tool_result` / `function_response` / `tool` messages.
+Image-in-tool-result works natively for Anthropic; for Gemini and OpenAI
+the screenshot is split into the next user-message `Part` automatically
+inside their providers.
+When the task contains exactly one explicit `http(s)://` URL and no
+caller-supplied `initial_actions`, the agent deterministically navigates
+there before the first LLM turn. Pass `auto_initial_navigation=False` to
+force the model to plan the first navigation itself.
 
 ## Tools available to the agent
 

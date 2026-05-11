@@ -19,6 +19,7 @@ import inspect
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Any, Awaitable, Callable
@@ -112,6 +113,32 @@ EPHEMERAL_RESULT_TOOLS: frozenset[str] = frozenset({
     "read_file",
     "extract_structured_data",
 })
+
+_URL_RE = re.compile(r"https?://[^\s<>{}\\|^`\"']+")
+_URL_TRAILING_PUNCT = ".,;:!?)]}"
+
+
+def _infer_initial_navigation_url(task: str) -> str | None:
+    """Return the single explicit URL in a task, if deterministic.
+
+    Browser tasks commonly start with "Go to https://..." and the first
+    model turn merely calls navigate(url=...). Doing that navigation before
+    the first LLM call saves one full agent step. We only infer when there is
+    exactly one URL; multi-URL tasks need the model to decide tabs/order.
+    """
+    if not task:
+        return None
+    urls: list[str] = []
+    for match in _URL_RE.finditer(task):
+        url = match.group(0).rstrip(_URL_TRAILING_PUNCT)
+        if url and url not in urls:
+            urls.append(url)
+    if len(urls) != 1:
+        return None
+    lowered = task.lower()
+    if re.search(r"\b(?:do not|don't)\s+(?:go|open|navigate|visit|browse)", lowered):
+        return None
+    return urls[0]
 
 
 def _json_fallback(obj: Any) -> Any:
@@ -709,6 +736,7 @@ class Agent:
         extend_system_message: str | None = None,
         override_system_message: str | None = None,
         initial_actions: list[dict] | None = None,
+        auto_initial_navigation: bool = True,
         register_new_step_callback: StepStartCallback | None = None,
         register_done_callback: DoneCallback | None = None,
         register_should_stop_callback: ShouldStopCallback | None = None,
@@ -875,7 +903,17 @@ class Agent:
                     "schema. Do NOT answer in plain text — a plain-text turn "
                     "will be treated as 'still working' and waste a step."
                 )
-        self.initial_actions = initial_actions or []
+        self.initial_actions = list(initial_actions or [])
+        self._auto_initial_navigation_url: str | None = None
+        if auto_initial_navigation and not self.initial_actions:
+            inferred_url = _infer_initial_navigation_url(task)
+            if inferred_url is not None:
+                self.initial_actions.append({"navigate": {"url": inferred_url}})
+                self._auto_initial_navigation_url = inferred_url
+                logger.info(
+                    "agent: auto initial navigation inferred url=%s",
+                    inferred_url,
+                )
         self.register_new_step_callback = register_new_step_callback
         self.register_done_callback = register_done_callback
         self.register_should_stop_callback = register_should_stop_callback
