@@ -238,13 +238,15 @@ class ChatAnthropic(BaseChatModel):
             ]
         if self.thinking:
             kwargs["thinking"] = self.thinking
-        if self.effort:
+        if self.thinking and self.effort:
             # output_config is a newer Anthropic API surface that older
             # versions of the python SDK don't recognise as a kwarg
             # (TypeError: unexpected keyword argument 'output_config').
             # Route through extra_body so the SDK forwards it untouched
             # to the server, which always accepts it for models that
-            # support extended thinking effort.
+            # support extended thinking effort. Only send it when a
+            # thinking config is active; Haiku and Claude 3.x reject
+            # effort even though `effort` has a non-None default here.
             kwargs.setdefault("extra_body", {})["output_config"] = {
                 "effort": self.effort,
             }

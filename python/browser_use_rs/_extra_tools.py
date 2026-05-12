@@ -391,10 +391,10 @@ async def go_back(session) -> str:
 
 @tool
 async def web_search(session, query: str, engine: str = "duckduckgo") -> str:
-    """Open a search-engine results page for `query`. Use when the
-    requested information isn't on a known site and you need to find
-    it. Subsequent click/scroll/extract calls operate on the results
-    page.
+    """Open a search-engine results page for `query` and return the
+    visible result snippets. Use when the requested information isn't on
+    a known site and you need to find it. Subsequent click/scroll/extract
+    calls operate on the results page.
 
     Mirrors upstream browser_use's web_search action (v0.6.5).
 
@@ -411,7 +411,87 @@ async def web_search(session, query: str, engine: str = "duckduckgo") -> str:
     from urllib.parse import quote
     url = base + quote(query)
     await session.navigate(url)
-    return f"opened {eng} results for: {query}"
+    try:
+        await asyncio.sleep(0.8)
+        snippets = await session.evaluate(
+            r"""
+(() => {
+  const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const unwrapUrl = (raw) => {
+    try {
+      const u = new URL(raw, location.href);
+      const host = u.hostname.replace(/^www\./, '');
+      if (host.endsWith('duckduckgo.com') && u.searchParams.get('uddg')) {
+        return decodeURIComponent(u.searchParams.get('uddg'));
+      }
+      if (host.endsWith('google.com') && u.pathname === '/url' && u.searchParams.get('q')) {
+        return u.searchParams.get('q');
+      }
+      if (host.endsWith('bing.com') && u.searchParams.get('u')) {
+        return u.searchParams.get('u');
+      }
+      return u.href;
+    } catch (_) {
+      return raw || '';
+    }
+  };
+  const currentHost = location.hostname.replace(/^www\./, '');
+  const searchHosts = [
+    'duckduckgo.com', 'google.com', 'bing.com', 'yahoo.com',
+    'startpage.com', 'search.brave.com',
+  ];
+  const skipText = /^(images|videos|news|maps|shopping|books|flights|search|settings|tools|more|next|previous|feedback|cached|similar)$/i;
+  const results = [];
+  const seen = new Set();
+  for (const a of Array.from(document.querySelectorAll('a[href]'))) {
+    const title = clean(a.innerText || a.textContent);
+    if (title.length < 3 || title.length > 180 || skipText.test(title)) continue;
+    const href = unwrapUrl(a.getAttribute('href') || a.href);
+    let parsed;
+    try { parsed = new URL(href, location.href); } catch (_) { continue; }
+    const host = parsed.hostname.replace(/^www\./, '');
+    if (!/^https?:$/.test(parsed.protocol)) continue;
+    if (searchHosts.some((h) => host === h || host.endsWith('.' + h))) continue;
+    if (host === currentHost) continue;
+    const key = parsed.href.replace(/[#?].*$/, '') + '|' + title.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    let container = a;
+    for (let i = 0; i < 5 && container.parentElement; i++) {
+      const parentText = clean(container.parentElement.innerText || container.parentElement.textContent);
+      if (parentText.length > title.length + 40 && parentText.length < 1400) {
+        container = container.parentElement;
+        break;
+      }
+      container = container.parentElement;
+    }
+    let snippet = clean(container.innerText || container.textContent);
+    if (snippet.startsWith(title)) snippet = clean(snippet.slice(title.length));
+    snippet = snippet
+      .replace(/^https?:\/\/\S+\s*/i, '')
+      .replace(/\b(Cached|Similar|Translate this page)\b/gi, '')
+      .slice(0, 420);
+    results.push({ title, url: parsed.href, snippet });
+    if (results.length >= 8) break;
+  }
+  if (!results.length) return '';
+  return results.map((r, i) => {
+    const snippet = r.snippet ? `\n   ${r.snippet}` : '';
+    return `${i + 1}. ${r.title}\n   ${r.url}${snippet}`;
+  }).join('\n');
+})()
+"""
+        )
+    except Exception:
+        snippets = ""
+    if snippets and snippets.strip():
+        return f"opened {eng} results for: {query}\n\nTop visible results:\n{snippets.strip()}"
+    return (
+        f"opened {eng} results for: {query}\n"
+        f"(no result snippets were extractable from the search page; use "
+        f"extract_structured_data or page_text if the results are visible)"
+    )
 
 
 @tool

@@ -106,10 +106,18 @@ EPHEMERAL_RESULT_WINDOW_STEPS = 2
 # replaces the native tool_result with a stub. Per v0.12.3 analysis
 # this fix is mean cost ~$0.0001/task (rare bug) but cleans up the
 # p99 tail by ~$0.04/worst-task.
+#
+# v0.12.6: extract_links/extract_images ADDED. They are read tools with
+# the same context-bloat shape as get_links/page_text when SERPs,
+# sitemaps, or image grids return hundreds of entries. Keeping the first
+# large raw read durable still preserves grounding; subsequent oversized
+# link/image lists move through <read_state> and the file fallback.
 EPHEMERAL_RESULT_TOOLS: frozenset[str] = frozenset({
     "page_text",
     "get_text",
     "get_links",
+    "extract_links",
+    "extract_images",
     "read_file",
     "extract_structured_data",
 })
