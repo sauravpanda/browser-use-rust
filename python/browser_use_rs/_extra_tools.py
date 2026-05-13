@@ -391,10 +391,10 @@ async def go_back(session) -> str:
 
 @tool
 async def web_search(session, query: str, engine: str = "duckduckgo") -> str:
-    """Open a search-engine results page for `query` and return the
-    visible result snippets. Use when the requested information isn't on
-    a known site and you need to find it. Subsequent click/scroll/extract
-    calls operate on the results page.
+    """Open a search-engine results page for `query`. Use when the
+    requested information isn't on a known site and you need to find
+    it. Subsequent click/scroll/extract calls operate on the results
+    page.
 
     Mirrors upstream browser_use's web_search action (v0.6.5).
 
@@ -411,6 +411,13 @@ async def web_search(session, query: str, engine: str = "duckduckgo") -> str:
     from urllib.parse import quote
     url = base + quote(query)
     await session.navigate(url)
+    if os.getenv("BROWSER_USE_RS_WEB_SEARCH_SNIPPETS", "").lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return f"opened {eng} results for: {query}"
     try:
         await asyncio.sleep(0.8)
         snippets = await session.evaluate(
