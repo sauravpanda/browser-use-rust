@@ -6,8 +6,34 @@ import asyncio
 import base64
 import os
 import time
+from urllib.parse import urlparse
 
 from browser_use_rs.tools import tool
+
+
+MAX_SLEEP_SECONDS = 28.0
+MAX_SCROLL_SECONDS = 8.0
+MAX_PAGE_TEXT_CHARS = 50_000
+MAX_GET_LINKS = 100
+
+
+def _is_blank_or_error_url(url: str) -> bool:
+    normalized = (url or "").strip().lower()
+    return (
+        normalized == "about:blank"
+        or normalized.startswith("chrome-error://")
+        or normalized.startswith("edge-error://")
+    )
+
+
+def _normalize_target_id(target_id: str) -> str:
+    tid = (target_id or "").strip()
+    if tid.startswith("[") and tid.endswith("]"):
+        tid = tid[1:-1].strip()
+    kind, sep, rest = tid.partition(":")
+    if sep and kind in {"page", "iframe"} and rest:
+        return rest.strip()
+    return tid
 
 
 @tool
@@ -97,9 +123,28 @@ async def click(session, index: int) -> str:
             f"({new_url}) but auto-switch failed ({type(e).__name__}); "
             f"call switch_tab({new_tid}) on next turn"
         )
+
+    active_url = ""
+    for _ in range(10):
+        try:
+            active_url = await session.current_url()
+        except Exception:
+            active_url = ""
+        if active_url and not _is_blank_or_error_url(active_url):
+            break
+        await asyncio.sleep(0.2)
+
+    if _is_blank_or_error_url(active_url):
+        return (
+            f"clicked [{index}] — opened new tab and switched to it "
+            f"(target_id={new_tid}, url={new_url}, title={new_title!r}), "
+            f"but the active page is still {active_url}. Wait for navigation "
+            f"before extracting."
+        )
+
     return (
         f"clicked [{index}] — opened new tab and switched to it "
-        f"(target_id={new_tid}, url={new_url}, title={new_title!r}). "
+        f"(target_id={new_tid}, url={active_url or new_url}, title={new_title!r}). "
         f"Take a fresh dom_snapshot before the next interaction."
     )
 
@@ -144,6 +189,19 @@ async def upload_file(session, index: int, path: str) -> str:
     return f"attached {path} to [{index}]"
 
 
+async def _bounded_scroll(awaitable, label: str) -> str | None:
+    try:
+        await asyncio.wait_for(awaitable, timeout=MAX_SCROLL_SECONDS)
+        return None
+    except asyncio.TimeoutError:
+        return (
+            f"({label} timed out after {MAX_SCROLL_SECONDS}s; the page may "
+            "be stuck loading or blocked. Try reading visible content, "
+            "waiting for a specific selector, or finishing honestly if "
+            "the target data is inaccessible.)"
+        )
+
+
 @tool
 async def scroll(
     session,
@@ -152,13 +210,14 @@ async def scroll(
     pages: float = 0,
     index: int = 0,
 ) -> str:
-    """Scroll vertically. Page-level by default; in-container when `index` is given.
+    """Scroll vertically. Defaults to one page down; in-container when `index` is given.
 
     Args:
         dy: Pixels to scroll. Positive=down, negative=up. Used when
             non-zero. Original signature.
-        direction: 'up' or 'down' — used when `pages` > 0. Mirrors
-            upstream's `scroll(down=bool, pages=float)` form.
+        direction: 'up' or 'down' — used when `pages` > 0, or as a
+            one-page scroll when `pages` is omitted. Mirrors upstream's
+            `scroll(down=bool, pages=float)` form.
         pages: Number of viewport-heights (or container-heights when
             `index` is set) to scroll. Combined with `direction`.
         index: Optional [N] of an indexed scroll container (one of the
@@ -188,14 +247,24 @@ async def scroll(
         else:
             delta = container_h  # single container-height down by default
         try:
-            await session.evaluate(
-                f"(() => {{ const el = document.querySelector('[data-bu-idx=\"{int(index)}\"]'); "
-                f"if (!el) return 'no-element'; el.scrollBy({{top: {delta:.0f}, behavior: 'auto'}}); return 'ok'; }})()"
+            result = await _bounded_scroll(
+                session.evaluate(
+                    f"(() => {{ const el = document.querySelector('[data-bu-idx=\"{int(index)}\"]'); "
+                    f"if (!el) return 'no-element'; el.scrollBy({{top: {delta:.0f}, behavior: 'auto'}}); return 'ok'; }})()"
+                ),
+                "scroll-in-container",
             )
+            if result is not None:
+                return result
             return f"scrolled inside [{index}] by {delta:.0f}px (container_h={container_h:.0f})"
         except Exception as e:
             return f"(scroll-in-container failed: {type(e).__name__}: {e})"
 
+    if dy == 0 and (pages <= 0 or direction in ("up", "down")):
+        if pages <= 0:
+            pages = 1
+        if direction not in ("up", "down"):
+            direction = "down"
     if pages > 0 and direction in ("up", "down"):
         # Translate page-based scroll to pixel scroll.
         try:
@@ -204,9 +273,13 @@ async def scroll(
         except Exception:
             view_h = 800
         delta = view_h * pages * (-1 if direction == "up" else 1)
-        await session.scroll(delta)
+        result = await _bounded_scroll(session.scroll(delta), "scroll")
+        if result is not None:
+            return result
         return f"scrolled {direction} {pages} pages ({delta:.0f}px)"
-    await session.scroll(dy)
+    result = await _bounded_scroll(session.scroll(dy), "scroll")
+    if result is not None:
+        return result
     return f"scrolled {dy} px"
 
 
@@ -217,21 +290,27 @@ async def scroll_to(session, index: int) -> str:
     Args:
         index: The [N] index of the element to bring into view.
     """
-    await session.scroll_to_index(index)
+    result = await _bounded_scroll(session.scroll_to_index(index), "scroll_to")
+    if result is not None:
+        return result
     return f"scrolled to [{index}]"
 
 
 @tool
 async def scroll_to_top(session) -> str:
     """Scroll to the very top of the page."""
-    await session.scroll_to_top()
+    result = await _bounded_scroll(session.scroll_to_top(), "scroll_to_top")
+    if result is not None:
+        return result
     return "scrolled to top"
 
 
 @tool
 async def scroll_to_bottom(session) -> str:
     """Scroll to the very bottom of the page."""
-    await session.scroll_to_bottom()
+    result = await _bounded_scroll(session.scroll_to_bottom(), "scroll_to_bottom")
+    if result is not None:
+        return result
     return "scrolled to bottom"
 
 
@@ -284,18 +363,36 @@ async def page_text(session, max_chars: int = 10000) -> str:
     the context window in check.
 
     Args:
-        max_chars: Maximum characters to return. Default 10000.
+        max_chars: Maximum characters to return. Default 10000, capped
+            to keep context size bounded.
     """
-    return await session.page_text(max_chars)
+    try:
+        requested = int(max_chars)
+    except (TypeError, ValueError):
+        requested = 10000
+    capped = max(0, min(requested, MAX_PAGE_TEXT_CHARS))
+    text = await session.page_text(capped)
+    if requested > capped:
+        return f"(page_text capped to {capped} chars from requested {requested})\n{text}"
+    return text
 
 
 @tool
 async def get_links(session) -> str:
-    """List all visible links on the page as `<text> -> <url>` lines."""
+    """List visible links on the page as `<text> -> <url>` lines."""
     links = await session.get_links()
     if not links:
         return "(no links on page)"
-    return "\n".join(f"{text or '(no text)'} -> {href}" for href, text in links)
+    out: list[str] = []
+    for href, text in links[:MAX_GET_LINKS]:
+        label = (text or "(no text)").replace("\n", " ")
+        out.append(
+            f"{_ellipsize_middle(label, 120)} -> "
+            f"{_ellipsize_middle(href or '', 320)}"
+        )
+    if len(links) > MAX_GET_LINKS:
+        out.append(f"(... {len(links) - MAX_GET_LINKS} more links truncated)")
+    return "\n".join(out)
 
 
 @tool
@@ -305,10 +402,13 @@ async def sleep(session, seconds: float) -> str:
     inputs). Prefer wait_for or wait_for_navigation when a real signal exists.
 
     Args:
-        seconds: Wait duration. Capped at 30 to keep loops responsive.
+        seconds: Wait duration. Capped below the default tool timeout
+            to keep loops responsive.
     """
-    capped = max(0.0, min(seconds, 30.0))
+    capped = max(0.0, min(seconds, MAX_SLEEP_SECONDS))
     await asyncio.sleep(capped)
+    if capped != seconds:
+        return f"slept {capped}s (requested {seconds}s)"
     return f"slept {capped}s"
 
 
@@ -342,6 +442,50 @@ async def wait_for(session, selector: str, timeout_ms: int = 5000) -> str:
     return f"appeared: {selector!r}" if found else f"timeout — {selector!r} not found in {timeout_ms}ms"
 
 
+def _ellipsize_middle(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    if max_chars < 32:
+        return text[:max_chars]
+    keep = (max_chars - 25) // 2
+    omitted = len(text) - (keep * 2)
+    return f"{text[:keep]} ...[{omitted} chars]... {text[-keep:]}"
+
+
+_NOISY_IFRAME_HOST_PARTS = (
+    "doubleclick.net",
+    "googlesyndication.com",
+    "googleadservices.com",
+    "googletagmanager.com",
+    "google-analytics.com",
+    "adsystem.com",
+    "adnxs.com",
+    "quantserve.com",
+    "scorecardresearch.com",
+)
+_NOISY_IFRAME_TEXT_PARTS = (
+    "recaptcha",
+    "hcaptcha",
+    "turnstile",
+    "challenge-platform",
+    "challenges.cloudflare.com",
+    "partnerpixels",
+    "facebook.com/tr",
+    "one-google-bar",
+)
+
+
+def _is_noisy_iframe(url: str, title: str) -> bool:
+    text = f"{url} {title}".lower()
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except Exception:
+        host = ""
+    return any(part in host for part in _NOISY_IFRAME_HOST_PARTS) or any(
+        part in text for part in _NOISY_IFRAME_TEXT_PARTS
+    )
+
+
 @tool
 async def list_tabs(session) -> str:
     """List all attachable contexts — top-level tabs and cross-origin
@@ -352,10 +496,25 @@ async def list_tabs(session) -> str:
     tabs = await session.list_tabs()
     if not tabs:
         return "(no tabs)"
-    return "\n".join(
-        f"{'*' if active else ' '} [{ttype}:{tid}] {url} — {title}"
-        for tid, url, title, ttype, active in tabs
-    )
+    lines: list[str] = []
+    omitted_iframes = 0
+    for tid, url, title, ttype, active in tabs:
+        url_text = url or ""
+        title_text = title or ""
+        if (
+            ttype == "iframe"
+            and not active
+            and _is_noisy_iframe(url_text, title_text)
+        ):
+            omitted_iframes += 1
+            continue
+        lines.append(
+            f"{'*' if active else ' '} [{ttype}:{tid}] "
+            f"{_ellipsize_middle(url_text, 320)} — {_ellipsize_middle(title_text, 180)}"
+        )
+    if omitted_iframes:
+        lines.append(f"  [omitted {omitted_iframes} ad/challenge iframe target(s)]")
+    return "\n".join(lines)
 
 
 @tool
@@ -367,8 +526,9 @@ async def switch_tab(session, target_id: str) -> str:
     Args:
         target_id: The target_id of the tab (from list_tabs).
     """
-    await session.switch_tab(target_id)
-    return f"switched to tab {target_id}"
+    tid = _normalize_target_id(target_id)
+    await session.switch_tab(tid)
+    return f"switched to tab {tid}"
 
 
 @tool
@@ -390,8 +550,9 @@ async def close_tab(session, target_id: str) -> str:
     Args:
         target_id: The target_id of the tab to close (from list_tabs).
     """
-    await session.close_tab(target_id)
-    return f"closed tab {target_id}"
+    tid = _normalize_target_id(target_id)
+    await session.close_tab(tid)
+    return f"closed tab {tid}"
 
 
 @tool

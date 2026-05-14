@@ -26,6 +26,7 @@ dev = ["maturin>=1.7,<2", "pytest>=8"]
 # `Laminar.initialize()` itself before invoking the agent; spans then
 # nest into that context. Local users can call it manually.
 lmnr = ["lmnr>=0.5"]
+posthog = ["aiohttp", "datasets", "huggingface_hub", "python-dotenv"]
 
 [build-system]
 requires = ["maturin>=1.7,<2"]

@@ -22,6 +22,7 @@ import os
 import re
 import time
 from dataclasses import asdict, dataclass, field, is_dataclass
+from datetime import datetime, date
 from typing import Any, Awaitable, Callable
 
 logger = logging.getLogger(__name__)
@@ -149,12 +150,50 @@ def _infer_initial_navigation_url(task: str) -> str | None:
     return urls[0]
 
 
+def _task_message_with_runtime_context(
+    task: str,
+    *,
+    now: datetime | None = None,
+) -> str:
+    """Wrap the user task with run-date context for relative-date tasks."""
+    if now is None:
+        now = datetime.now().astimezone()
+    elif now.tzinfo is None:
+        now = now.astimezone()
+    tz = now.tzname() or "local time"
+    current_date = now.strftime("%A, %Y-%m-%d")
+    return (
+        "<runtime_context>\n"
+        f"Current date: {current_date} ({tz}). Treat relative date words "
+        'such as "today", "current", "latest", "most recent", and '
+        '"upcoming weekend" relative to this date unless the live page '
+        "shows a more specific date. This context is not target-site "
+        "evidence by itself.\n"
+        "</runtime_context>\n\n"
+        "<user_request>\n"
+        f"{task}\n"
+        "</user_request>"
+    )
+
+
 def _json_fallback(obj: Any) -> Any:
     if is_dataclass(obj) and not isinstance(obj, type):
         return asdict(obj)
     if hasattr(obj, "__dict__"):
         return {k: v for k, v in obj.__dict__.items() if not k.startswith("_")}
     return repr(obj)
+
+
+def _short_tool_call_repr(tc: ToolCall, max_chars: int = 140) -> str:
+    args = getattr(tc, "args", None)
+    try:
+        args_s = json.dumps(args or {}, sort_keys=True, default=_json_fallback)
+    except Exception:
+        args_s = repr(args)
+    out = f"{tc.name}({args_s})"
+    if len(out) <= max_chars:
+        return out
+    return out[: max(0, max_chars - 3)] + "..."
 
 
 def _content_byte_len(content: Any) -> int:
@@ -177,6 +216,21 @@ def _content_byte_len(content: Any) -> int:
                 total += len(repr(part).encode("utf-8"))
         return total
     return len(str(content).encode("utf-8"))
+
+
+def _content_text(content: Any) -> str:
+    """Text-only view of message content for prompt-section metrics."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, TextPart):
+                parts.append(part.text)
+        return "\n".join(parts)
+    return str(content)
 
 
 def _message_byte_len(msg: Message) -> int:
@@ -323,6 +377,12 @@ Dynamic pages: if `[N]` returns "index not available" or "no longer present", do
 
 For extraction tasks (find/list/answer): PREFER `extract_structured_data(query=...)` over scrolling and reading raw page_text. The extractor uses an LLM over the cleaned page — far more reliable than reasoning manually.
 
+On result/list pages, call `extract_result_cards(query=...)` first when
+you need titles, links, dates, snippets, or quick filter verification.
+It is deterministic and cheaper than an LLM extraction. Use
+`extract_structured_data` after that only when card text is missing or
+the answer requires synthesis.
+
 LOCATE-THEN-EXTRACT: when the task names a specific NAMED section/category/page that is likely to exist as a navigable region ("Politics", "Reviews", "About", "Technology category"), first narrow scope by clicking that section/category/page or by including that named region in the extraction query.
 
 For time windows ("past week", "current week", "today", "latest", "most recent"), counts ("top 3", "first 5", "next three"), prices/attributes ("under $100", "with private pool"), do NOT search for the filter text as a section. Instead inspect the current results/list, use visible sort/filter controls if present, and extract matching items from the list.
@@ -333,7 +393,7 @@ Finalize via `done(text="<your answer>", success=true|false)`. Set success=true 
 </action_rules>
 
 <blocked_sites>
-If the target site returns 403 / Cloudflare bot-detection / Turnstile / login wall / paywall, do NOT retry the same URL and do NOT invent content. Required fallbacks in order: (1) `web_search(query=...)` — search engine snippets often contain the answer; (2) try alternative endpoints (mobile.* / m.* / /amp/ / sitemap / RSS); (3) if still blocked after 2-3 attempts, set `success=False` and state what blocked you. Confidently-wrong fabricated answers fail the judge harder than honest "I was blocked" answers. CAPTCHAs auto-resolve — wait one turn before treating one as a hard block.
+If the target site returns 403 / Cloudflare bot-detection / Turnstile / login wall / paywall, do NOT retry the same URL and do NOT invent content. Required fallbacks in order: (1) `web_search(query=...)` — search engine snippets often contain the answer; (2) try alternative endpoints (mobile.* / m.* / /amp/ / sitemap / RSS); (3) if still blocked after 2-3 attempts, set `success=False` and state what blocked you. When the task explicitly requires the target site's own search/filter/list/page, external search is only a way to discover same-site URLs or corroborate details; it does NOT satisfy the task by itself. Do not set `success=True` from search-engine snippets alone for those site-required tasks. Confidently-wrong fabricated answers fail the judge harder than honest "I was blocked" answers. CAPTCHAs auto-resolve — wait one turn before treating one as a hard block.
 </blocked_sites>
 
 <state_emission>
@@ -455,7 +515,10 @@ repeatedly retry the same URL and do NOT invent content.
   1. Try `web_search(query="<specific information needed>")` — search
      engine snippets and cached results often contain the answer the
      blocked page would have shown. This is the single most useful
-     fallback — use it whenever a target site blocks you.
+     fallback — use it whenever a target site blocks you. If the task
+     explicitly requires the target site's own search, filters, locator,
+     list, or page, use external search only to find same-site URLs or
+     corroborate details; snippets alone do not complete that task.
   2. Try alternative endpoints on the same site: mobile.* subdomain,
      m.* subdomain, /amp/ variants, RSS feeds, sitemap.xml.
   3. CAPTCHAs auto-resolve — wait ONE turn after a CAPTCHA appears
@@ -466,7 +529,9 @@ repeatedly retry the same URL and do NOT invent content.
      access the data and what blocked you). Do NOT paraphrase or
      fabricate content as if you had retrieved it from the live site
      — the judge will reject confidently-wrong answers harder than
-     honest "I was blocked" answers.
+     honest "I was blocked" answers. Do NOT set `success=True` when
+     your only evidence for a site-required task is an external search
+     result page.
 
 When calling tools: never invent values for required arguments. If the
 snapshot doesn't show what you need (no [N] for the element, no text
@@ -476,9 +541,12 @@ For extraction tasks (find/list/answer questions about page content):
 PREFER `extract_structured_data(query=...)` over reading raw page_text.
 The extractor uses an LLM to answer your specific question over a
 cleaned page — far more reliable than dumping page_text and reasoning
-manually. Use `find_elements(selector, attributes)` to enumerate
-matching DOM nodes when you need raw HTML. Use `search_page(pattern)`
-when you just want to know "is X mentioned anywhere".
+manually. On result/list pages, call `extract_result_cards(query=...)`
+first when you need titles, links, dates, snippets, or quick filter
+verification; it is deterministic and cheaper than an LLM extraction.
+Use `find_elements(selector, attributes)` to enumerate matching DOM
+nodes when you need raw HTML. Use `search_page(pattern)` when you just
+want to know "is X mentioned anywhere".
 
 LOCATE-THEN-EXTRACT: when the task names a specific NAMED section,
 category, or page that is likely to exist as a navigable region
@@ -574,7 +642,12 @@ _VALIDATION_CHECKLIST = (
     "If the task asks about product X but your quotes come from product "
     "Y's page, your answer is wrong even if it's well-formed. Common "
     "trap: clicking the first search result without verifying it's the "
-    "right entity.\n"
+    "right entity. If the task required the target site's own search, "
+    "filters, locator, list, or page, search-engine snippets alone are "
+    "not right-page evidence; use them only to reach same-site evidence "
+    "or finish with success=False. Before calling done(), verify the "
+    "current URL is still on the requested website or a same-site "
+    "subdomain; an unrelated host is not target-site evidence.\n"
     "\n"
     "STEP 4 — Honest success flag (CRITICAL).\n"
     "If your reasoning or answer mentions ANY of: 'I cannot access', "
@@ -809,6 +882,8 @@ class Agent:
                 "agent: use_thinking=False received; we don't have a "
                 "no-thinking template yet. Using the standard prompt.",
             )
+        # Tool source: explicit tools= wins, then controller=, then defaults.
+        controller = _compat_kwargs.pop("controller", None)
         # Anything left is genuinely unused — warn loudly so the user
         # sees it in eval logs and can either patch the agent or stop
         # passing the kwarg.
@@ -817,8 +892,6 @@ class Agent:
                 "agent: ignored kwargs (silent compat-pass-through): %s",
                 sorted(_compat_kwargs.keys()),
             )
-        # Tool source: explicit tools= wins, then controller=, then defaults.
-        controller = _compat_kwargs.pop("controller", None)
         if tools is None and controller is not None:
             tools = controller.tools
         if tools is None:
@@ -1040,6 +1113,19 @@ class Agent:
         self._last_page_fp: str | None = None
         self._page_fp_streak: int = 0
         self._stagnation_nudged_at_streak: int = 0
+        # Rolling bot-block detector. The same-page stagnation guard
+        # catches one CAPTCHA/Cloudflare URL repeated forever, but the
+        # expensive eval tail often hops target to Google sorry to Bing
+        # to DuckDuckGo with each URL changing. Track challenge pages
+        # across the recent window so those runs stop honestly.
+        self._recent_blocked_state_reasons: list[str] = []
+        self._blocked_state_nudged_at_count: int = 0
+        # Rolling external-search fallback detector for site-required
+        # tasks. Search engines are useful for discovery, but spending
+        # most recent states on them usually means the target site's own
+        # search/filter/list page remains inaccessible.
+        self._recent_search_fallback_hosts: list[str] = []
+        self._search_fallback_nudged_at_count: int = 0
         # Running collapsed history of older steps. Each entry: a
         # one-line "<step N> <action> → <result-summary>" string.
         # Sourced from self._history items marked collapsed=True
@@ -1139,7 +1225,9 @@ class Agent:
         # First-run setup: seed the conversation with the task and any
         # initial_actions the caller scripted (typically a navigate).
         if not self._messages:
-            self._messages.append(UserMessage(content=self.task))
+            self._messages.append(
+                UserMessage(content=_task_message_with_runtime_context(self.task))
+            )
             await self._run_initial_actions()
 
         try:
@@ -1229,7 +1317,9 @@ class Agent:
 
     async def add_new_task(self, new_task: str) -> None:
         """Append a follow-up user instruction. Next run() picks it up."""
-        self._messages.append(UserMessage(content=new_task))
+        self._messages.append(
+            UserMessage(content=_task_message_with_runtime_context(new_task))
+        )
 
     async def _judge_and_log(self) -> dict[str, Any] | None:
         """Run an inline LLM-based judge and store the verdict on history.
@@ -1364,6 +1454,130 @@ class Agent:
             except Exception:
                 pass
 
+            try:
+                block_reason = self._blocked_state_reason(state_summary)
+                self._recent_blocked_state_reasons.append(block_reason or "")
+                self._recent_blocked_state_reasons = (
+                    self._recent_blocked_state_reasons[-8:]
+                )
+                blocked_recent = [
+                    r for r in self._recent_blocked_state_reasons if r
+                ]
+                blocked_count = len(blocked_recent)
+                if (
+                    blocked_count >= 3
+                    and blocked_count > self._blocked_state_nudged_at_count
+                ):
+                    self._blocked_state_nudged_at_count = blocked_count
+                    examples = ", ".join(dict.fromkeys(blocked_recent[-3:]))
+                    nudge = (
+                        f"[BOT_BLOCKED] {blocked_count}/"
+                        f"{len(self._recent_blocked_state_reasons)} recent "
+                        f"states show bot/CAPTCHA/challenge pages "
+                        f"({examples}). Stop retrying blocked pages; try "
+                        f"one same-site fallback or finish success=false."
+                    )
+                    self._messages.append(UserMessage(content=nudge))
+                    logger.info(
+                        "agent: BOT_BLOCKED nudge at step %d "
+                        "(blocked_recent=%d/%d, examples=%s)",
+                        step_n,
+                        blocked_count,
+                        len(self._recent_blocked_state_reasons),
+                        examples,
+                    )
+                if blocked_count >= 5 and step_n >= 15:
+                    logger.info(
+                        "agent: BOT_BLOCKED force-final at step %d "
+                        "(blocked_recent=%d/%d)",
+                        step_n,
+                        blocked_count,
+                        len(self._recent_blocked_state_reasons),
+                    )
+                    await self._force_final_answer(
+                        state_summary,
+                        step_n,
+                        reason=(
+                            "bot/CAPTCHA/challenge pages appeared in "
+                            f"{blocked_count} of the last "
+                            f"{len(self._recent_blocked_state_reasons)} "
+                            "browser states"
+                        ),
+                    )
+                    return
+            except Exception as e:
+                logger.debug("blocked-state check failed: %s", e)
+
+            # External-search loop detector. For tasks that explicitly
+            # require the target site's own search/filter/list/page,
+            # search engines are discovery tools, not completion
+            # evidence. If most recent browser states are still on
+            # search engines after many steps, cut the tail.
+            try:
+                fallback_host = _search_fallback_state_host(
+                    self.task,
+                    state_summary.url,
+                )
+                self._recent_search_fallback_hosts.append(fallback_host or "")
+                self._recent_search_fallback_hosts = (
+                    self._recent_search_fallback_hosts[-8:]
+                )
+                fallback_count = sum(
+                    1 for h in self._recent_search_fallback_hosts if h
+                )
+                if (
+                    fallback_count >= 4
+                    and step_n >= 10
+                    and fallback_count > self._search_fallback_nudged_at_count
+                ):
+                    self._search_fallback_nudged_at_count = fallback_count
+                    examples = ", ".join(
+                        sorted({h for h in self._recent_search_fallback_hosts if h})
+                    )
+                    self._messages.append(
+                        UserMessage(
+                            content=(
+                                "[SEARCH_FALLBACK_LOOP] This task requires "
+                                "the target site, but the browser stayed on "
+                                f"search engines {fallback_count}/"
+                                f"{len(self._recent_search_fallback_hosts)} "
+                                f"recent states ({examples}). Try one "
+                                "same-site fallback; do not finish "
+                                "success=true from snippets."
+                            )
+                        )
+                    )
+                    logger.info(
+                        "agent: SEARCH_FALLBACK_LOOP nudge at step %d "
+                        "(fallback_recent=%d/%d, hosts=%s)",
+                        step_n,
+                        fallback_count,
+                        len(self._recent_search_fallback_hosts),
+                        examples,
+                    )
+                if fallback_count >= 6 and step_n >= 20:
+                    logger.info(
+                        "agent: SEARCH_FALLBACK_LOOP force-final at step %d "
+                        "(fallback_recent=%d/%d)",
+                        step_n,
+                        fallback_count,
+                        len(self._recent_search_fallback_hosts),
+                    )
+                    await self._force_final_answer(
+                        state_summary,
+                        step_n,
+                        reason=(
+                            "site-required task remained on external "
+                            "search engine pages in "
+                            f"{fallback_count} of the last "
+                            f"{len(self._recent_search_fallback_hosts)} "
+                            "browser states"
+                        ),
+                    )
+                    return
+            except Exception as e:
+                logger.debug("search-fallback loop check failed: %s", e)
+
             # Page-stagnation nudge (v0.6.3). Hash the (url, element
             # count, head of DOM text) and compare to the prior step.
             # If 3 in a row are identical, the agent is stuck — its
@@ -1388,20 +1602,10 @@ class Agent:
                 ):
                     self._stagnation_nudged_at_streak = self._page_fp_streak
                     nudge = (
-                        f"[STAGNATION] The page state has not changed "
-                        f"for {self._page_fp_streak} consecutive steps "
-                        f"(same URL, same elements, same content). Your "
-                        f"recent actions are not having any effect. Try "
-                        f"a fundamentally different approach:\n"
-                        f"  - If you've been clicking, try scrolling or "
-                        f"a different element.\n"
-                        f"  - If a popup/overlay may be blocking, try "
-                        f"dismissing it first (Accept, Close, X).\n"
-                        f"  - If on the wrong page, navigate elsewhere.\n"
-                        f"  - If the answer is already on the page, "
-                        f"call extract_structured_data(query=...) and "
-                        f"finalize.\n"
-                        f"Do NOT repeat the same action type."
+                        f"[STAGNATION] Page state unchanged for "
+                        f"{self._page_fp_streak} steps. Stop repeating; "
+                        f"try a different element/scroll/URL, dismiss an "
+                        f"overlay, or read+finish if the answer is visible."
                     )
                     self._messages.append(UserMessage(content=nudge))
                     logger.info(
@@ -1600,6 +1804,12 @@ class Agent:
             # ActionResult so consumers can read final_result() / is_done().
             if not completion.tool_calls:
                 done_text = completion.text or ""
+                candidate_done_text = self._strip_state_tags_for_answer(done_text)
+                proposed_failure_answer = _looks_like_unsupported_final_answer(
+                    self.task,
+                    candidate_done_text,
+                    state_summary.url,
+                )
 
                 # Self-validation intercept: on the FIRST proposed
                 # answer, append the validation prompt and let the LLM
@@ -1610,6 +1820,7 @@ class Agent:
                     self.self_validate
                     and not self._validation_step_used
                     and done_text
+                    and not proposed_failure_answer
                     and step_n < max_steps  # don't validate on the very last step
                     and step_n >= self.self_validate_min_steps  # skip on short tasks
                 ):
@@ -1640,6 +1851,48 @@ class Agent:
                         await _maybe_await(on_step_end())
                     continue
 
+                try:
+                    from browser_use_rs._extra_tools import _done_count_check_message
+
+                    count_check = _done_count_check_message(
+                        self.task,
+                        candidate_done_text,
+                        already_fired=self._done_count_check_fired,
+                        finish_instruction=(
+                            "reply again, including in your final answer "
+                            "the explicit phrase 'the page showed only X "
+                            "matching items'"
+                        ),
+                    )
+                except Exception:
+                    count_check = None
+                if (
+                    done_text
+                    and count_check
+                    and not proposed_failure_answer
+                    and step_n < max_steps
+                ):
+                    logger.info(
+                        "agent: DONE_COUNT_CHECK injected before "
+                        "plain-text finalization (step %d)",
+                        step_n,
+                    )
+                    self._done_count_check_fired = True
+                    self._messages.append(
+                        AssistantMessage(text=done_text, tool_calls=[])
+                    )
+                    self._messages.append(UserMessage(content=count_check))
+                    self._append_history(
+                        state_summary,
+                        AgentOutput(text=done_text, tool_calls=[]),
+                        [ActionResult(extracted_content=done_text, is_done=False)],
+                        t0,
+                        step_n,
+                    )
+                    if on_step_end is not None:
+                        await _maybe_await(on_step_end())
+                    continue
+
                 # v0.8.11: mechanical success downgrade. The v0.8.9
                 # prompt told the agent to set success=False on
                 # blocked-and-not-recovered tasks. Trace data showed
@@ -1652,13 +1905,14 @@ class Agent:
                 # forgets the "skip on final-answer turn" rule and the
                 # raw XML reaches the eval framework's finalAnswer
                 # field, where the judge can't parse around it.
-                done_text = self._strip_state_tags_for_answer(done_text)
+                done_text = candidate_done_text
                 _success = bool(done_text)
-                if _success and _looks_like_fabricated_blocked_answer(done_text):
+                if _success and proposed_failure_answer:
                     _success = False
                     logger.info(
                         "agent: success downgraded to False at step %d "
-                        "(blocked-fabrication detected in plain-text answer)",
+                        "(unsupported final-answer evidence detected in "
+                        "plain-text answer)",
                         step_n,
                     )
                 results = [
@@ -1786,11 +2040,17 @@ class Agent:
                         # calls where the LLM smuggled a "I was unable
                         # but here's typical content" answer with
                         # success=True.
-                        if s_flag and _looks_like_fabricated_blocked_answer(payload):
+                        unsupported_evidence = _looks_like_unsupported_final_answer(
+                            self.task,
+                            payload,
+                            state_summary.url,
+                        )
+                        if s_flag and unsupported_evidence:
                             s_flag = False
                             logger.info(
                                 "agent: success downgraded to False at step %d "
-                                "(blocked-fabrication detected in done payload)",
+                                "(unsupported final-answer evidence detected "
+                                "in done payload)",
                                 step_n,
                             )
                         done_result = ActionResult(
@@ -1803,11 +2063,16 @@ class Agent:
                         # text as the final answer rather than crashing.
                         text = action_result.extracted_content
                         s_flag = True
-                        if _looks_like_fabricated_blocked_answer(text):
+                        if _looks_like_unsupported_final_answer(
+                            self.task,
+                            text,
+                            state_summary.url,
+                        ):
                             s_flag = False
                             logger.info(
                                 "agent: success downgraded to False at step %d "
-                                "(blocked-fabrication, malformed-marker fallback)",
+                                "(unsupported evidence, malformed-marker "
+                                "fallback)",
                                 step_n,
                             )
                         done_result = ActionResult(
@@ -1816,13 +2081,38 @@ class Agent:
                             success=s_flag,
                         )
 
+            done_count_check: str | None = None
+            if (
+                done_result is not None
+                and bool(done_result.success)
+                and step_n < max_steps
+            ):
+                try:
+                    from browser_use_rs._extra_tools import _done_count_check_message
+
+                    done_count_check = _done_count_check_message(
+                        self.task,
+                        done_result.extracted_content or "",
+                        already_fired=self._done_count_check_fired,
+                    )
+                except Exception:
+                    done_count_check = None
+
             if done_result is not None:
                 # Replace the parsed-out tool result with the done flag set
                 # so history.is_done() / final_result() see it directly,
-                # then exit the loop. Other tool results from the same turn
-                # are kept (they ran and may have side effects).
+                # then exit the loop. If a count-check nudge will run,
+                # keep the history entry non-final so the provisional
+                # short answer does not appear as an intermediate done.
+                # Other tool results from the same turn are kept (they
+                # ran and may have side effects).
+                replacement = (
+                    ActionResult(extracted_content=done_result.extracted_content)
+                    if done_count_check
+                    else done_result
+                )
                 tool_results = [
-                    done_result if r.extracted_content
+                    replacement if r.extracted_content
                     and isinstance(r.extracted_content, str)
                     and r.extracted_content.startswith("__DONE__:")
                     else r
@@ -1848,9 +2138,20 @@ class Agent:
                 # can either re-call done with corrections or call
                 # other tools to gather missing data, then re-call
                 # done. The second done call commits.
+                if done_count_check:
+                    logger.info(
+                        "agent: DONE_COUNT_CHECK injected before "
+                        "done-tool finalization (step %d)",
+                        step_n,
+                    )
+                    self._done_count_check_fired = True
+                    self._messages.append(UserMessage(content=done_count_check))
+                    continue
+
                 if (
                     self.self_validate
                     and not self._validation_step_used
+                    and bool(done_result.success)
                     and step_n < max_steps
                     and step_n >= self.self_validate_min_steps
                 ):
@@ -2046,6 +2347,7 @@ class Agent:
         "save_pdf",
         "done",
         "extract_structured_data",
+        "extract_result_cards",
         "search_page",
     })
 
@@ -2132,11 +2434,9 @@ class Agent:
         ):
             remaining = max_steps - step_n
             nudge = (
-                f"[BUDGET_WARNING] You have ~{remaining} turn(s) left "
-                f"before the run ends. Stop exploring — read whatever "
-                f"content is on the current page and finish with the "
-                f"best answer you have. A partial answer is better than "
-                f"no answer."
+                f"[BUDGET_WARNING] ~{remaining} turn(s) left. Stop "
+                f"exploring; read current content and finish with the "
+                f"best supported answer."
             )
             self._messages.append(UserMessage(content=nudge))
             logger.info(
@@ -2155,14 +2455,9 @@ class Agent:
         repeat_count = self._recent_action_sigs.count(sig)
         if repeat_count >= REPEAT_THRESHOLD:
             nudge = (
-                f"[LOOP_DETECTED] You have called the EXACT same action "
-                f"sequence {repeat_count} times in your last {WINDOW} "
-                f"turns. Repeating it again will not work. Try a "
-                f"materially different approach: pick different elements, "
-                f"reformulate the search query, scroll to a different "
-                f"region, switch tabs, or finish with `done` if you have "
-                f"enough information. Do NOT issue the same tool calls "
-                f"again."
+                f"[LOOP_DETECTED] Same action sequence {repeat_count}/"
+                f"{WINDOW} recent turns. Do not repeat it; change "
+                f"element/query/scroll/tab or finish with done."
             )
             self._messages.append(UserMessage(content=nudge))
             logger.info(
@@ -2190,15 +2485,11 @@ class Agent:
                     self._domain_of(u) for u in self._recent_urls if u
                 }
                 nudge = (
-                    f"[STUCK_NO_EXTRACT] In your last "
-                    f"{len(self._recent_tool_names)} turns you have only "
-                    f"called a content-read tool {extract_turns} time(s) "
-                    f"(target: every other turn). You've been navigating/"
-                    f"clicking across {len(domains)} domain(s) without "
-                    f"reading much. The data you need is on the page "
-                    f"already — call page_text or get_text NOW to read "
-                    f"it, or call done with the best answer you have. "
-                    f"More navigation is unlikely to help."
+                    f"[STUCK_NO_EXTRACT] Only {extract_turns}/"
+                    f"{len(self._recent_tool_names)} recent turns read "
+                    f"content across {len(domains)} domain(s). Call "
+                    f"extract_result_cards/page_text/get_text now, or "
+                    f"finish with the best supported answer."
                 )
                 self._messages.append(UserMessage(content=nudge))
                 logger.info(
@@ -2263,13 +2554,8 @@ class Agent:
 
         nudge = (
             f"[BATCH_FAILED] {error_count} of {len(tool_calls)} actions "
-            f"in your last turn errored. Multi-action turns work when "
-            f"the actions are independent or pre-planned; when one fails "
-            f"the rest usually fail too because they assumed the page "
-            f"state would advance. For the NEXT turn, emit ONE tool "
-            f"call only so its result can inform the next decision. "
-            f"Resume batching only after you confirm the page is in the "
-            f"expected state."
+            f"errored. Next turn emit ONE tool call; resume batching "
+            f"only after the page state is confirmed."
         )
         self._messages.append(UserMessage(content=nudge))
         logger.info(
@@ -2390,6 +2676,71 @@ class Agent:
             return host
         except Exception:
             return url
+
+    @staticmethod
+    def _blocked_state_reason(state: BrowserStateSummary) -> str:
+        url = (state.url or "").strip()
+        title = (state.title or "").strip()
+        text = (state.elements_text or "")[:4000]
+        haystack = f"{url}\n{title}\n{text}".lower()
+        try:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(url)
+            host = (parsed.hostname or "").lower()
+            path = (parsed.path or "").lower()
+        except Exception:
+            host = ""
+            path = ""
+
+        search_hosts = (
+            "google.com",
+            "bing.com",
+            "duckduckgo.com",
+            "yandex.com",
+            "yahoo.com",
+            "search.brave.com",
+            "startpage.com",
+        )
+        is_search_host = any(host == h or host.endswith("." + h) for h in search_hosts)
+
+        if url.lower().startswith(("chrome-error://", "edge-error://")):
+            return "browser error page"
+        if "challenges.cloudflare.com" in host or "/cdn-cgi/challenge" in path:
+            return "Cloudflare challenge"
+        if host.endswith("google.com") and path.startswith("/sorry"):
+            return "Google CAPTCHA"
+        if host.endswith("yandex.com") and "showcaptcha" in path:
+            return "Yandex CAPTCHA"
+        if is_search_host and any(
+            phrase in haystack
+            for phrase in (
+                "unusual traffic",
+                "verify you are human",
+                "complete the captcha",
+                "not a robot",
+                "our systems have detected",
+            )
+        ):
+            return "search-engine CAPTCHA"
+        if "just a moment" in haystack and "cloudflare" in haystack:
+            return "Cloudflare challenge"
+        if any(
+            phrase in haystack
+            for phrase in (
+                "verify you are human",
+                "checking your browser",
+                "cf-chl",
+                "turnstile",
+                "hcaptcha",
+                "recaptcha",
+            )
+        ) and any(
+            marker in haystack
+            for marker in ("cloudflare", "captcha", "blocked", "challenge")
+        ):
+            return "bot challenge"
+        return ""
 
     async def _capture_state(self) -> BrowserStateSummary:
         """Pre-step snapshot stored in history for the judge / callbacks.
@@ -2593,15 +2944,21 @@ class Agent:
         if self.history_window_steps <= 0:
             return
         # β (v0.11.26): walk self._history (canonical journal since α).
-        # Filter for non-collapsed action-only items — read-tool turns
-        # stay native indefinitely so the LLM keeps full access to
-        # extracted content.
+        # Filter for non-collapsed action-only items — content-heavy
+        # read-tool turns stay native indefinitely so the LLM keeps full
+        # access to extracted content. `list_tabs` is deliberately
+        # collapsible even though it is execution-read-only: repeated tab
+        # listings can include huge ad/consent iframe URLs, and the latest
+        # listing is enough for target_id selection.
         action_only_indices = [
             i
             for i, h in enumerate(self._history)
             if not h.collapsed
             and h.tool_calls
-            and not any(tc.name in self._READ_ONLY_TOOLS for tc in h.tool_calls)
+            and not any(
+                tc.name in self._READ_ONLY_TOOLS and tc.name != "list_tabs"
+                for tc in h.tool_calls
+            )
         ]
         excess = len(action_only_indices) - self.history_window_steps
         if excess <= 0:
@@ -2938,6 +3295,7 @@ class Agent:
         "grep_scratchpad",
         "read_scratchpad",
         "extract_structured_data",
+        "extract_result_cards",
         "search_page",
         "find_elements",
         "find_text",
@@ -3012,6 +3370,7 @@ class Agent:
         for i, tc in enumerate(tool_calls):
             pair = await self._run_tool(tc)
             results.append(pair)
+            prior_failed = bool(pair[0].error)
 
             if tc.name not in self._READ_ONLY_TOOLS:
                 indices_invalidated = True
@@ -3044,25 +3403,17 @@ class Agent:
                 # invalidation kills indexed tools specifically.
                 if url_changed:
                     err = (
-                        f"skipped: page navigated mid-batch "
-                        f"({start_url!r} → {cur_url!r}). The `[N]` "
-                        f"indices in your tool calls were from the old "
-                        f"page; re-plan on the next turn using the "
-                        f"fresh snapshot."
+                        "skipped: page navigated mid-batch; re-plan "
+                        "using the next fresh snapshot before indexed "
+                        "[N] tools."
                     )
                     is_error = True
                 elif skipped.name in self._INDEXED_TOOLS:
                     err = (
-                        f"skipped: an earlier action in this batch "
-                        f"mutated the DOM, so the `[N]` index in this "
-                        f"call may now point to a different element "
-                        f"(or no element at all). Wait for the next "
-                        f"turn's fresh snapshot before clicking / "
-                        f"typing / scrolling-to indexed elements. "
-                        f"Tip: chaining `[type_text, click]` rarely "
-                        f"works because typing triggers autocomplete "
-                        f"and form validation — split them across "
-                        f"turns."
+                        "skipped: an earlier action in this batch "
+                        "mutated the DOM; wait for the next fresh "
+                        "snapshot before indexed [N] tools. Do not "
+                        "chain type_text -> click."
                     )
                     is_error = True
                     logger.info(
@@ -3082,12 +3433,15 @@ class Agent:
 
                 results.append(
                     (
-                        ActionResult(error=err),
+                        ActionResult(
+                            error=err if prior_failed else None,
+                            extracted_content=None if prior_failed else err,
+                        ),
                         ToolResultMessage(
                             tool_call_id=skipped.id,
                             name=skipped.name,
                             content=err,
-                            is_error=is_error,
+                            is_error=is_error and prior_failed,
                         ),
                     )
                 )
@@ -3222,11 +3576,9 @@ class Agent:
             )
         except asyncio.TimeoutError:
             err = (
-                f"tool timed out after {self.tool_timeout:.0f}s "
-                f"(call: {tc.name}({tc.args})). The page may be stuck "
-                f"loading or the element unresponsive. Try a different "
-                f"approach next turn — wait_for_navigation, switch tabs, "
-                f"or pick a different element."
+                f"tool timed out after {self.tool_timeout:.0f}s: "
+                f"{_short_tool_call_repr(tc)}. Try wait_for_navigation, "
+                "switch tabs, or another element."
             )
             logger.info(
                 "agent: tool timeout %s(%s) after %.0fs",
@@ -3263,7 +3615,24 @@ class Agent:
                     # Force target re-discovery; this re-attaches stale
                     # session ids in the rust BrowserSession's `attached`
                     # map and prunes dead targets.
-                    await asyncio.wait_for(self.session.list_tabs(), timeout=5.0)
+                    tabs = await asyncio.wait_for(
+                        self.session.list_tabs(), timeout=5.0
+                    )
+                    try:
+                        page_tabs = [
+                            t for t in tabs if len(t) >= 5 and t[3] == "page"
+                        ]
+                        active_tid = next(
+                            (t[0] for t in page_tabs if t[4]),
+                            page_tabs[0][0] if page_tabs else None,
+                        )
+                        if active_tid:
+                            await asyncio.wait_for(
+                                self.session.switch_tab(active_tid),
+                                timeout=5.0,
+                            )
+                    except Exception:
+                        pass
                     raw = await asyncio.wait_for(
                         tool.func(self.session, **real_args),
                         timeout=self.tool_timeout,
@@ -3294,6 +3663,54 @@ class Agent:
                         "agent: CDP-staleness retry FAILED for %s: %s: %s",
                         tc.name, type(retry_e).__name__, str(retry_e)[:120],
                     )
+                    retry_msg = str(retry_e)
+                    if (
+                        (
+                            "-32001" in retry_msg
+                            or "Session with given id not found" in retry_msg
+                            or "unknown tab target_id" in retry_msg
+                        )
+                        and tc.name in {"navigate", "web_search", "search", "search_google"}
+                    ):
+                        try:
+                            # If the active target itself died, rediscovery
+                            # may still leave navigation-like tools pointed
+                            # at a dead session. Open a clean tab and retry
+                            # once; these tools immediately navigate away, so
+                            # losing the dead target's page state is harmless.
+                            await asyncio.wait_for(
+                                self.session.new_tab(""), timeout=5.0
+                            )
+                            raw = await asyncio.wait_for(
+                                tool.func(self.session, **real_args),
+                                timeout=self.tool_timeout,
+                            )
+                            logger.info(
+                                "agent: CDP-staleness fresh-tab retry "
+                                "succeeded for %s",
+                                tc.name,
+                            )
+                            content_parts, summary_text = _format_tool_return(
+                                raw, self.sensitive_data
+                            )
+                            return (
+                                ActionResult(extracted_content=summary_text),
+                                ToolResultMessage(
+                                    tool_call_id=tc.id,
+                                    name=tc.name,
+                                    content=content_parts,
+                                ),
+                            )
+                        except Exception as fresh_e:
+                            retry_e = fresh_e
+                            retry_msg = str(fresh_e)
+                            logger.info(
+                                "agent: CDP-staleness fresh-tab retry "
+                                "FAILED for %s: %s: %s",
+                                tc.name,
+                                type(fresh_e).__name__,
+                                retry_msg[:120],
+                            )
                     # fall through to existing handling — convert to a
                     # readable error string the LLM can react to instead
                     # of letting the original RuntimeError bubble.
@@ -3596,6 +4013,14 @@ class Agent:
             prompt_tool_results_bytes=int(last_call.get("tool_results_bytes") or 0),
             prompt_image_bytes=int(last_call.get("image_bytes") or 0),
             prompt_n_messages=int(last_call.get("n_messages") or 0),
+            prompt_agent_history_bytes=int(last_call.get("agent_history_bytes") or 0),
+            prompt_agent_history_lines=int(last_call.get("agent_history_lines") or 0),
+            prompt_read_state_bytes=int(last_call.get("read_state_bytes") or 0),
+            prompt_read_state_entries=int(last_call.get("read_state_entries") or 0),
+            prompt_history_items=int(last_call.get("history_items") or 0),
+            prompt_history_collapsed_items=int(
+                last_call.get("history_collapsed_items") or 0
+            ),
         )
         self.state.history.history.append(
             AgentHistory(state=state, output=output, result=results, metadata=metadata)
@@ -3786,6 +4211,14 @@ class Agent:
         # cost driver. Knowing the split lets v0.12.x decide whether
         # to chase image-resolution / vision-toggling.
         image_bytes = 0
+        # v0.12.5: finer history/read-state split for deciding whether
+        # the next structural HistoryItem summarizer is actually worth
+        # enabling. These are measured from the live prompt message list,
+        # so they reflect exactly what the model saw.
+        agent_history_bytes = 0
+        agent_history_lines = 0
+        read_state_bytes = 0
+        read_state_entries = 0
         n_user = n_assistant = n_tool_result = 0
         last_user_idx = -1
         for i, msg in enumerate(self._messages):
@@ -3798,6 +4231,19 @@ class Agent:
                 n_user += 1
                 if i == last_user_idx:
                     state_msg_bytes = blen
+                text = _content_text(msg.content)
+                if text.startswith("[AGENT_HISTORY]"):
+                    agent_history_bytes = len(text.encode("utf-8"))
+                    agent_history_lines = max(0, len(text.splitlines()) - 1)
+                for match in re.finditer(
+                    r"<read_state>\s*(.*?)\s*</read_state>",
+                    text,
+                    re.S,
+                ):
+                    read_state_bytes += len(match.group(0).encode("utf-8"))
+                    read_state_entries += len(
+                        re.findall(r"<result\b", match.group(1))
+                    )
             elif isinstance(msg, AssistantMessage):
                 assistant_msgs_bytes += blen
                 n_assistant += 1
@@ -3824,6 +4270,15 @@ class Agent:
             "assistant_msgs_bytes": assistant_msgs_bytes,
             "tool_results_bytes": tool_results_bytes,
             "image_bytes": image_bytes,
+            "agent_history_bytes": agent_history_bytes,
+            "agent_history_lines": agent_history_lines,
+            "read_state_bytes": read_state_bytes,
+            "read_state_entries": read_state_entries,
+            "history_items": len(getattr(self, "_history", []) or []),
+            "history_collapsed_items": sum(
+                1 for h in (getattr(self, "_history", []) or [])
+                if getattr(h, "collapsed", False)
+            ),
         }
 
     def _tools_signature(self) -> str:
@@ -3998,6 +4453,20 @@ async def _maybe_await(value: Any) -> Any:
 # to avoid flagging legit search-fallback recoveries (which start with
 # "Based on the search results from..." — not in the blocker list).
 _BLOCKER_PHRASES = (
+    "i am unable to complete",
+    "i was unable to complete",
+    "unable to complete the task",
+    "unable to fulfill the request",
+    "i am unable to fulfill",
+    "i was unable to fulfill",
+    "i am unable to provide",
+    "i was unable to provide",
+    "i cannot provide",
+    "i cannot copy",
+    "i was unable to determine",
+    "i am unable to determine",
+    "i was unable to locate",
+    "i am unable to locate",
     "i am unable to retrieve",
     "i was unable to retrieve",
     "i am unable to access",
@@ -4017,6 +4486,15 @@ _BLOCKER_PHRASES = (
     "captcha verification",
     "could not bypass the bot",
     "due to persistent bot",
+    "due to bot-detection",
+    "blocked by bot-detection",
+    "blocked by automated bot-detection",
+    "blocked by a persistent cookie consent overlay",
+    "blocked by a persistent privacy consent modal",
+    "blocked by a persistent",
+    "as i cannot access",
+    "as i could not access",
+    "i could not verify",
 )
 _FABRICATION_PHRASES = (
     "would typically",
@@ -4032,6 +4510,102 @@ _FABRICATION_PHRASES = (
     "based on the content typically",
     "is generally known",
     "as is commonly known",
+)
+_SITE_REQUIRED_TASK_PHRASES = (
+    "use the search",
+    "use the search bar",
+    "search bar",
+    "advanced search",
+    "filter",
+    "filters",
+    "sort",
+    "find",
+    "check",
+    "browse",
+    "locate",
+    "current ",
+    "live scores",
+    "facility locator",
+    "first ",
+    "top ",
+    "latest",
+    "most recent",
+)
+_WRONG_HOST_TASK_PHRASES = _SITE_REQUIRED_TASK_PHRASES + (
+    "homepage",
+    "section",
+    "navigate to",
+    "open ",
+    "identify",
+    "extract",
+    "record",
+    "provide",
+)
+_EXPLICIT_EXTERNAL_EVIDENCE_PHRASES = (
+    "source: duckduckgo",
+    "source: google",
+    "source: bing",
+    "duckduckgo search result",
+    "google search result",
+    "bing search result",
+    "search result snippet",
+    "search results snippet",
+    "from snippets",
+    "from earlier snippets",
+    "based on snippets",
+    "based on search results as the site's direct",
+    "as the site's direct search is currently inaccessible",
+    "main site was protected",
+    "website was protected",
+    "site was protected",
+    "secondary retail",
+    "secondary listings",
+    "secondary source",
+    "secondary pages",
+    "third-party source",
+    "third-party editorial source",
+    "alternative travel resource",
+    "used san francisco's primary event aggregator",
+    "referenced in buzzfeed news article",
+    "mass511",
+    "local traffic reports",
+)
+_SEARCH_OR_FALLBACK_FINAL_HOSTS = (
+    "duckduckgo.com",
+    "google.com",
+    "bing.com",
+    "yahoo.com",
+    "yandex.com",
+    "search.brave.com",
+    "startpage.com",
+)
+_LIVE_CURRENT_TASK_PHRASES = (
+    "live score",
+    "live scores",
+    "current score",
+    "current nba match",
+    "current match",
+    "currently playing",
+)
+_FORWARD_LOOKING_TASK_PHRASES = (
+    "next ",
+    "upcoming",
+    "current ",
+    "currently ",
+    "live ",
+)
+_RECENCY_TASK_PHRASES = _FORWARD_LOOKING_TASK_PHRASES + (
+    "latest",
+    "most recent",
+    "newest",
+)
+_PAST_ARTICLE_ANSWER_PHRASES = (
+    "match report",
+    "game report",
+    "recap",
+    "took place",
+    "game took place",
+    "article",
 )
 
 
@@ -4057,6 +4631,550 @@ def _looks_like_fabricated_blocked_answer(text: str) -> bool:
     has_blocker_anywhere = any(p in s for p in _BLOCKER_PHRASES)
     has_fab = any(p in s for p in _FABRICATION_PHRASES)
     return has_blocker_anywhere and has_fab
+
+
+def _looks_like_site_required_external_answer(task: str, text: str) -> bool:
+    """Detect site-required answers that admit external/secondary evidence.
+
+    This intentionally does NOT flag generic "search results" wording:
+    "CNN search results" or "TMDB advanced search results" can be the
+    target site's own UI. It only fires when the answer explicitly says
+    it relied on snippets, named external search engines, secondary
+    sources, or a non-target aggregator after direct target-site access
+    failed.
+    """
+    if not task or not text or len(text) < 30:
+        return False
+    task_lc = task.lower()
+    if "website:" not in task_lc:
+        return False
+    if not any(phrase in task_lc for phrase in _WRONG_HOST_TASK_PHRASES):
+        return False
+    s = text.lower()
+    if any(phrase in s for phrase in _EXPLICIT_EXTERNAL_EVIDENCE_PHRASES):
+        return True
+    return bool(
+        re.search(
+            r"direct access(?: to [^.]{0,80})? "
+            r"(?:was|is|remained|proved)? ?"
+            r"(?:blocked|restricted|inaccessible|unavailable|failed|denied)",
+            s,
+        )
+    )
+
+
+def _host_from_url_or_host(value: str) -> str:
+    raw = (value or "").strip().lower()
+    if not raw:
+        return ""
+    try:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(raw if "://" in raw else "https://" + raw)
+        return (parsed.hostname or raw).removeprefix("www.")
+    except Exception:
+        return raw.removeprefix("www.")
+
+
+def _target_host_from_task(task: str) -> str:
+    match = re.search(r"website:\s*(https?://\S+)", task or "", re.IGNORECASE)
+    if not match:
+        return ""
+    return _host_from_url_or_host(match.group(1))
+
+
+def _host_matches(host: str, target: str) -> bool:
+    h = _host_from_url_or_host(host)
+    t = _host_from_url_or_host(target)
+    return bool(h and t and (h == t or h.endswith("." + t) or t.endswith("." + h)))
+
+
+def _looks_like_search_host_final(task: str, final_url: str | None) -> bool:
+    if not task or not final_url:
+        return False
+    task_lc = task.lower()
+    if "website:" not in task_lc:
+        return False
+    if not any(phrase in task_lc for phrase in _SITE_REQUIRED_TASK_PHRASES):
+        return False
+    target = _target_host_from_task(task)
+    host = _host_from_url_or_host(final_url)
+    if not host or _host_matches(host, target):
+        return False
+    return any(
+        host == known or host.endswith("." + known)
+        for known in _SEARCH_OR_FALLBACK_FINAL_HOSTS
+    )
+
+
+def _looks_like_wrong_host_final(task: str, final_url: str | None) -> bool:
+    """Detect finals produced while the browser is on an unrelated host.
+
+    Eval failures showed the agent sometimes completed site-required
+    tasks from adjacent aggregators (HotPads for apartments.com, Countik
+    for TikTok, UEFA for Goal, Ovid for Science.org). Search-engine
+    hosts are handled separately; this catches the broader wrong-host
+    class while still allowing same-domain and subdomain redirects.
+    """
+    task_lc = (task or "").lower()
+    if not task_lc or not final_url or "website:" not in task_lc:
+        return False
+    if not any(phrase in task_lc for phrase in _SITE_REQUIRED_TASK_PHRASES):
+        return False
+    target = _target_host_from_task(task)
+    host = _host_from_url_or_host(final_url)
+    if not host or not target:
+        return False
+    return not _host_matches(host, target)
+
+
+def _looks_like_late_pagination_final(task: str, final_url: str | None) -> bool:
+    """Detect top/latest/first-result finals left on later result pages."""
+    task_lc = (task or "").lower()
+    if not task_lc or not final_url or "website:" not in task_lc:
+        return False
+    if not any(
+        phrase in task_lc
+        for phrase in ("first ", "top ", "latest", "most recent", "newest")
+    ):
+        return False
+    if re.search(
+        r"\b(?:page\s*(?:2|two|3|three|4|four|5|five)|"
+        r"second page|third page|next page|later page)\b",
+        task_lc,
+    ):
+        return False
+    try:
+        from urllib.parse import parse_qs, urlparse
+
+        parsed = urlparse(final_url)
+        query = parse_qs(parsed.query)
+    except Exception:
+        return False
+
+    for key in ("page", "p"):
+        for value in query.get(key, []):
+            try:
+                if int(value) > 1:
+                    return True
+            except (TypeError, ValueError):
+                continue
+    for key in ("from", "start", "offset"):
+        for value in query.get(key, []):
+            try:
+                if int(value) > 0:
+                    return True
+            except (TypeError, ValueError):
+                continue
+    if re.search(r"/page/(?:[2-9]|\d{2,})(?:/|$)", parsed.path or ""):
+        return True
+    return False
+
+
+_MULTI_ITEM_COUNT_RE = (
+    r"(?:[2-9]|\d{2,}|two|three|four|five|six|seven|eight|nine|ten)"
+)
+_ITEM_DETAIL_PATH_SEGMENTS = {
+    "article",
+    "articles",
+    "book",
+    "books",
+    "doc",
+    "docs",
+    "document",
+    "documents",
+    "item",
+    "items",
+    "movie",
+    "movies",
+    "news",
+    "post",
+    "posts",
+    "product",
+    "products",
+    "song",
+    "songs",
+    "stories",
+    "story",
+    "title",
+    "track",
+    "tracks",
+    "video",
+    "videos",
+    "watch",
+}
+_LIST_PAGE_PATH_SEGMENTS = {
+    "advanced",
+    "archive",
+    "archives",
+    "browse",
+    "category",
+    "categories",
+    "collection",
+    "collections",
+    "discover",
+    "highlights",
+    "latest",
+    "list",
+    "lists",
+    "press-releases",
+    "result",
+    "results",
+    "search",
+    "section",
+    "sections",
+    "tag",
+    "tags",
+    "trending",
+}
+
+
+def _task_requests_multiple_result_items(task_lc: str) -> bool:
+    return bool(
+        re.search(rf"\b(?:first|top)\s+{_MULTI_ITEM_COUNT_RE}\b", task_lc)
+        or re.search(
+            rf"\b{_MULTI_ITEM_COUNT_RE}\s+(?:most\s+recent|latest|newest)\b",
+            task_lc,
+        )
+        or re.search(
+            rf"\b(?:latest|newest|most\s+recent)\s+{_MULTI_ITEM_COUNT_RE}\b",
+            task_lc,
+        )
+    )
+
+
+def _looks_like_item_detail_list_final(task: str, final_url: str | None) -> bool:
+    """Detect multi-result list tasks finalized on a single item detail page."""
+    task_lc = (task or "").lower()
+    if not task_lc or not final_url or "website:" not in task_lc:
+        return False
+    if not _task_requests_multiple_result_items(task_lc):
+        return False
+
+    try:
+        from urllib.parse import unquote, urlparse
+
+        parsed = urlparse(final_url)
+        segments = [
+            unquote(seg).strip().lower()
+            for seg in (parsed.path or "").split("/")
+            if seg.strip()
+        ]
+    except Exception:
+        return False
+
+    if len(segments) < 2:
+        return False
+    if any(seg in _LIST_PAGE_PATH_SEGMENTS for seg in segments):
+        return False
+    if any(seg in _ITEM_DETAIL_PATH_SEGMENTS for seg in segments[:-1]):
+        return True
+
+    # Many news sites use date-based article paths without an explicit
+    # "article" segment, e.g. /2026/05/14/story-slug.
+    path = "/" + "/".join(segments)
+    return bool(re.search(r"/20\d{2}/\d{1,2}/\d{1,2}/[^/]{8,}$", path))
+
+
+def _search_fallback_state_host(task: str, current_url: str | None) -> str:
+    if _looks_like_search_host_final(task, current_url):
+        return _host_from_url_or_host(current_url or "")
+    return ""
+
+
+def _looks_like_unmet_requested_data_answer(task: str, text: str) -> bool:
+    """Detect finals that explicitly admit the requested data was not observed.
+
+    This targets traces where the agent answered a site-specific task
+    with adjacent data after saying the requested feature/live state was
+    missing. Those finals should be success=false.
+    """
+    if not task or not text or len(text) < 30:
+        return False
+    task_lc = task.lower()
+    if "website:" not in task_lc:
+        return False
+    s = text.lower()
+
+    if any(phrase in task_lc for phrase in _LIVE_CURRENT_TASK_PHRASES):
+        if "not explicitly" in s and "quarter" in s:
+            return True
+        if "final score" in s and any(
+            phrase in s for phrase in _PAST_ARTICLE_ANSWER_PHRASES
+        ):
+            return True
+        if re.search(
+            r"(?:unable|could not|cannot|failed) to "
+            r"(?:retrieve|access|find|locate) [^.]{0,80}"
+            r"(?:live|current|quarter)",
+            s,
+        ):
+            return True
+
+    if re.search(
+        r"(?:unable|could not|cannot|failed) to "
+        r"(?:locate|find|retrieve|access) "
+        r"(?:the )?(?:specific|requested) ",
+        s,
+    ):
+        return True
+
+    if "review bytes" in task_lc and (
+        "unable to locate" in s
+        or "could not locate" in s
+        or "does not appear" in s
+    ):
+        return True
+
+    if _looks_like_past_dated_forward_answer(task_lc, text):
+        return True
+    if _looks_like_stale_relative_date_answer(task_lc, text):
+        return True
+
+    return False
+
+
+_SEARCH_RESULT_QUERY_STOPWORDS = {
+    "about",
+    "article",
+    "articles",
+    "document",
+    "documents",
+    "first",
+    "found",
+    "latest",
+    "list",
+    "mentioning",
+    "most",
+    "news",
+    "page",
+    "paper",
+    "papers",
+    "post",
+    "posts",
+    "recent",
+    "resource",
+    "resources",
+    "result",
+    "results",
+    "search",
+    "title",
+    "titles",
+    "website",
+}
+
+
+def _looks_like_search_result_query_mismatch_answer(task: str, text: str) -> bool:
+    """Detect list/search finals whose listed titles miss the requested query.
+
+    This is deliberately conservative. It only considers numbered or
+    bulleted answer lines for site-search/list tasks and fires when none
+    of those result lines contain any meaningful requested query term.
+    """
+    if not task or not text or len(text) < 30:
+        return False
+    task_lc = task.lower()
+    if "website:" not in task_lc:
+        return False
+    if not any(
+        phrase in task_lc
+        for phrase in (
+            "search for",
+            "search function",
+            "search bar",
+            "search results",
+            "locate articles",
+            "articles on",
+            "resources on",
+        )
+    ):
+        return False
+    if not any(
+        phrase in task_lc
+        for phrase in (
+            "article",
+            "document",
+            "post",
+            "resource",
+            "result",
+            "title",
+        )
+    ):
+        return False
+
+    terms = _search_result_query_terms(task)
+    if not terms:
+        return False
+    result_lines = _answer_result_lines(text)
+    if len(result_lines) < 2:
+        return False
+
+    matched = 0
+    for line in result_lines:
+        line_lc = line.lower()
+        if any(re.search(rf"\b{re.escape(term)}\b", line_lc) for term in terms):
+            matched += 1
+    if matched == 0:
+        return True
+
+    groups = _search_result_query_groups(task)
+    if len(groups) >= 2:
+        complete_matches = 0
+        for line in result_lines:
+            line_lc = line.lower()
+            if all(
+                any(re.search(rf"\b{re.escape(term)}\b", line_lc) for term in group)
+                for group in groups
+            ):
+                complete_matches += 1
+        if complete_matches == 0:
+            return True
+    return False
+
+
+def _search_result_query_terms(task: str) -> list[str]:
+    terms: list[str] = []
+    for group in _search_result_query_groups(task):
+        for token in group:
+            if token not in terms:
+                terms.append(token)
+    return terms[:8]
+
+
+def _search_result_query_groups(task: str) -> list[list[str]]:
+    task_body = re.sub(r"\s*website:\s*https?://\S+.*$", "", task, flags=re.I | re.S)
+    candidates = [m.strip() for m in re.findall(r'"([^"\n]{2,100})"', task_body)]
+    if not candidates:
+        for pattern in (
+            r"\b(?:articles|resources|documents|posts)\s+on\s+(.+?)(?:\s+within\b|[,.;]|\s+and\s+(?:list|provide|copy|record)\b|\s+then\b|$)",
+            r"\bmentioning\s+(.+?)(?:\s+and\s+(?:list|provide|copy|record)\b|[,.;]|\s+then\b|$)",
+            r"\bsearch(?:\s+function)?\s+to\s+locate\s+(.+?)(?:\s+then\b|[,.;]|\s+and\s+(?:list|provide|copy|record)\b|$)",
+        ):
+            m = re.search(pattern, task_body, re.I | re.S)
+            if m:
+                candidates.append(m.group(1).strip())
+                break
+
+    groups: list[list[str]] = []
+    for candidate in candidates:
+        group: list[str] = []
+        for raw in re.findall(r"[a-zA-Z][a-zA-Z0-9'-]{1,}", candidate.lower()):
+            token = raw.strip("'")
+            if len(token) < 3:
+                continue
+            if token in _SEARCH_RESULT_QUERY_STOPWORDS:
+                continue
+            if token not in group:
+                group.append(token)
+        if group:
+            groups.append(group[:6])
+    return groups[:4]
+
+
+def _answer_result_lines(text: str) -> list[str]:
+    lines: list[str] = []
+    for line in (text or "").splitlines():
+        m = re.match(r"\s*(?:\d+[.)]|[-*])\s+(.{3,240})", line)
+        if m:
+            lines.append(m.group(1).strip())
+    return lines[:20]
+
+
+def _looks_like_stale_relative_date_answer(
+    task_lc: str,
+    text: str,
+    *,
+    today: date | None = None,
+) -> bool:
+    """Detect impossible mixes like "Jan 2025 (3 hours ago)".
+
+    For latest/current tasks, relative recency labels are common page
+    text. When the final answer combines such a label with an absolute
+    date far before the run date, it usually means the agent synthesized
+    stale or contradictory evidence from a page card.
+    """
+    task_lc = (task_lc or "").lower()
+    if not any(phrase in task_lc for phrase in _RECENCY_TASK_PHRASES):
+        return False
+    s = (text or "").lower()
+    if not re.search(
+        r"\b(\d+\s+(?:minute|minutes|hour|hours)\s+ago|today|yesterday)\b",
+        s,
+    ):
+        return False
+    if today is None:
+        today = datetime.now().astimezone().date()
+    for mentioned in _extract_answer_dates(text, today=today):
+        if mentioned < today and (today - mentioned).days > 2:
+            return True
+    return False
+
+
+def _looks_like_past_dated_forward_answer(
+    task_lc: str,
+    text: str,
+    *,
+    today: date | None = None,
+) -> bool:
+    task_lc = (task_lc or "").lower()
+    if not any(phrase in task_lc for phrase in _FORWARD_LOOKING_TASK_PHRASES):
+        return False
+    if today is None:
+        today = datetime.now().astimezone().date()
+    for mentioned in _extract_answer_dates(text, today=today):
+        if mentioned < today:
+            return True
+    return False
+
+
+def _extract_answer_dates(text: str, *, today: date) -> list[date]:
+    """Extract simple dates that commonly appear in final answers."""
+    month_names = (
+        "january", "february", "march", "april", "may", "june",
+        "july", "august", "september", "october", "november", "december",
+    )
+    month_to_num = {name: i for i, name in enumerate(month_names, start=1)}
+    month_alt = "|".join(month_names)
+    found: list[date] = []
+    for m in re.finditer(
+        rf"\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday,\s+)?"
+        rf"({month_alt})\s+(\d{{1,2}})(?:st|nd|rd|th)?"
+        rf"(?:,\s*(\d{{4}}))?\b",
+        text,
+        re.IGNORECASE,
+    ):
+        month = month_to_num[m.group(1).lower()]
+        day = int(m.group(2))
+        year = int(m.group(3)) if m.group(3) else today.year
+        try:
+            found.append(date(year, month, day))
+        except ValueError:
+            continue
+    # "Wednesday, May 13" is covered above; this handles compact ISO-ish
+    # dates that appear in scraper output.
+    for m in re.finditer(r"\b(20\d{2})-(\d{1,2})-(\d{1,2})\b", text):
+        try:
+            found.append(date(int(m.group(1)), int(m.group(2)), int(m.group(3))))
+        except ValueError:
+            continue
+    return found
+
+
+def _looks_like_unsupported_final_answer(
+    task: str,
+    text: str,
+    final_url: str | None = None,
+) -> bool:
+    return (
+        _looks_like_fabricated_blocked_answer(text)
+        or _looks_like_site_required_external_answer(task, text)
+        or _looks_like_unmet_requested_data_answer(task, text)
+        or _looks_like_search_result_query_mismatch_answer(task, text)
+        or _looks_like_wrong_host_final(task, final_url)
+        or _looks_like_search_host_final(task, final_url)
+        or _looks_like_late_pagination_final(task, final_url)
+        or _looks_like_item_detail_list_final(task, final_url)
+    )
 
 
 def _format_tool_return(

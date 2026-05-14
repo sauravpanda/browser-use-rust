@@ -6,11 +6,16 @@ task from argv[1]. Prints JSON to stdout.
 
 import asyncio
 import json
+import os
 import sys
 import time
+from pathlib import Path
 
-from browser_use import Agent
-from browser_use.llm import ChatGoogle
+BENCH_DIR = Path(__file__).resolve().parent
+if str(BENCH_DIR) not in sys.path:
+    sys.path.insert(0, str(BENCH_DIR))
+
+from env_file import load_dotenv  # noqa: E402
 
 COST_INPUT_PER_M = 0.30
 COST_OUTPUT_PER_M = 2.50
@@ -53,8 +58,34 @@ async def _aggregate_usage(agent) -> tuple[int, int, int]:
 
 
 async def main() -> None:
+    load_dotenv()
     task = sys.argv[1]
     max_steps = int(sys.argv[2]) if len(sys.argv) > 2 else 12
+    if not (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")):
+        print(
+            json.dumps(
+                {
+                    "system": "theirs",
+                    "task": task,
+                    "completed": False,
+                    "success": False,
+                    "answer": (
+                        "ERROR: missing GEMINI_API_KEY or GOOGLE_API_KEY "
+                        "for ChatGoogle"
+                    ),
+                    "elapsed_s": 0,
+                    "steps": 0,
+                    "in_tokens": 0,
+                    "out_tokens": 0,
+                    "cache_read_tokens": 0,
+                    "cost_usd": 0,
+                }
+            )
+        )
+        return
+
+    from browser_use import Agent
+    from browser_use.llm import ChatGoogle
 
     llm = ChatGoogle(model="gemini-3-flash-preview", temperature=0)
 
@@ -78,10 +109,12 @@ async def main() -> None:
         history = await agent.run(max_steps=max_steps)
         answer = history.final_result() or ""
         completed = bool(history.is_done())
+        success = history.is_successful()
         steps = len(getattr(history, "history", []) or [])
     except Exception as e:
         answer = f"ERROR: {type(e).__name__}: {e}"
         completed = False
+        success = False
         steps = 0
     elapsed = time.monotonic() - t0
 
@@ -102,6 +135,7 @@ async def main() -> None:
                 "system": "theirs",
                 "task": task,
                 "completed": completed,
+                "success": success,
                 "answer": answer,
                 "elapsed_s": round(elapsed, 2),
                 "steps": steps,

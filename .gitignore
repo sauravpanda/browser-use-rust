@@ -12,6 +12,8 @@ __pycache__/
 .venv/
 .venv*/
 venv/
+.env
+.env.*
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
@@ -22,6 +24,12 @@ wheels/
 
 # Example run artifacts
 python/examples/*.png
+
+# Bench run artifacts
+bench/.run_state/
+bench/.trace_cache/
+bench/active_runs.txt
+bench/results*.json
 
 # Editor / OS
 .DS_Store

@@ -25,9 +25,167 @@ import os
 import re
 import tempfile
 import uuid
+from datetime import datetime
 from typing import Any
 
 from browser_use_rs.tools import tool
+
+
+MAX_EXTRACT_CHARS = 60_000
+
+
+def _ellipsize_middle(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    if max_chars < 32:
+        return text[:max_chars]
+    keep = (max_chars - 25) // 2
+    omitted = len(text) - (keep * 2)
+    return f"{text[:keep]} ...[{omitted} chars]... {text[-keep:]}"
+
+
+def _is_unusable_extract_url(url: str) -> bool:
+    normalized = (url or "").strip().lower()
+    return (
+        normalized == "about:blank"
+        or normalized.startswith("chrome-error://")
+        or normalized.startswith("edge-error://")
+    )
+
+
+def _runtime_context_for_extractor() -> str:
+    now = datetime.now().astimezone()
+    tz = now.tzname() or "local time"
+    return (
+        "<runtime_context>\n"
+        f"Current date: {now.strftime('%A, %Y-%m-%d')} ({tz}). "
+        "Treat relative date words such as today, current, latest, "
+        "most recent, and upcoming relative to this date unless the "
+        "webpage content gives a more specific date. This context is "
+        "not webpage evidence by itself.\n"
+        "</runtime_context>"
+    )
+
+
+_SEARCH_CHALLENGE_CACHE: dict[tuple[int, str], str] = {}
+
+
+def _search_challenge_url_reason(url: str) -> str:
+    normalized = (url or "").strip().lower()
+    if not normalized:
+        return ""
+    try:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(normalized)
+        host = parsed.hostname or ""
+        path = parsed.path or ""
+    except Exception:
+        host = ""
+        path = normalized
+    if host.endswith("google.com") and path.startswith("/sorry"):
+        return "Google CAPTCHA"
+    if host.endswith("yandex.com") and "showcaptcha" in path:
+        return "Yandex CAPTCHA"
+    if host.endswith("duckduckgo.com") and "anomaly" in path:
+        return "DuckDuckGo bot challenge"
+    if host.endswith("bing.com") and "captcha" in path:
+        return "Bing CAPTCHA"
+    if host.endswith("search.brave.com") and "captcha" in path:
+        return "Brave Search CAPTCHA"
+    if host.endswith("startpage.com") and "captcha" in path:
+        return "Startpage CAPTCHA"
+    return ""
+
+
+def _is_search_challenge_url(url: str) -> bool:
+    return bool(_search_challenge_url_reason(url))
+
+
+def _search_engine_from_url(url: str) -> str:
+    try:
+        from urllib.parse import urlparse
+
+        host = (urlparse(url).hostname or "").lower()
+    except Exception:
+        return ""
+    for engine, domains in {
+        "google": ("google.com",),
+        "bing": ("bing.com",),
+        "duckduckgo": ("duckduckgo.com",),
+        "yandex": ("yandex.com",),
+        "brave": ("search.brave.com",),
+        "startpage": ("startpage.com",),
+    }.items():
+        if any(host == d or host.endswith("." + d) for d in domains):
+            return engine
+    return ""
+
+
+async def _search_challenge_page_reason(session, current_url: str) -> str:
+    if not _search_engine_from_url(current_url):
+        return ""
+    try:
+        text = await session.evaluate(
+            """
+(() => {
+  const body = (document.body && document.body.innerText || '').toLowerCase();
+  const title = (document.title || '').toLowerCase();
+  return `${title}\n${body}`.slice(0, 4000);
+})()
+"""
+        )
+    except Exception:
+        return ""
+    haystack = (text or "").lower()
+    if any(
+        phrase in haystack
+        for phrase in (
+            "unusual traffic",
+            "verify you are human",
+            "complete the captcha",
+            "not a robot",
+            "our systems have detected",
+            "automated queries",
+        )
+    ):
+        return "search-engine CAPTCHA"
+    return ""
+
+
+def _cached_search_challenge(session, engine: str) -> str:
+    return _SEARCH_CHALLENGE_CACHE.get((id(session), engine), "")
+
+
+def _record_search_challenge(session, engine: str, reason: str) -> None:
+    if reason:
+        _SEARCH_CHALLENGE_CACHE[(id(session), engine)] = reason
+
+
+def _search_challenge_message(
+    *,
+    engine: str,
+    query: str,
+    reason: str,
+    current_url: str = "",
+    skipped: bool = False,
+) -> str:
+    prefix = (
+        f"skipped {engine} search for: {query} because this engine "
+        f"already returned a bot/CAPTCHA block earlier in this browser "
+        f"session ({reason})"
+        if skipped
+        else (
+            f"opened {engine} results for: {query}, but the search engine "
+            f"returned a bot/CAPTCHA block ({reason}"
+            f"{f': {current_url}' if current_url else ''})"
+        )
+    )
+    return (
+        f"{prefix}. Do not retry the same search engine repeatedly; try "
+        "one alternative engine or a same-site endpoint, then finish with "
+        "success=false if the required site data remains inaccessible."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +284,141 @@ async def find_elements(
             prefix += " " + attr_str
         text = m.get("text") or ""
         lines.append(f"{prefix}>{text}</{m['tag']}>")
+    return "\n".join(lines)
+
+
+@tool
+async def extract_result_cards(
+    session,
+    limit: int = 10,
+    query: str = "",
+) -> str:
+    """Extract visible result/list cards from the current page without an LLM.
+
+    Use on search results, filtered lists, news/article indexes, product
+    grids, video lists, or press-release pages before paying for
+    extract_structured_data. It returns likely title, URL, date/meta,
+    snippet, and which query terms appear in each card.
+
+    Args:
+        limit: Maximum cards to return. Default 10, capped at 50.
+        query: Optional query/filter words to check against each card.
+    """
+    try:
+        cap = max(1, min(int(limit or 10), 50))
+    except (TypeError, ValueError):
+        cap = 10
+    q = str(query or "")
+    js = r"""
+(() => {
+  const lim = __LIMIT__;
+  const query = __QUERY__;
+  const stop = new Set([
+    'about','after','also','and','article','articles','first','from',
+    'latest','list','most','page','result','results','search','the',
+    'this','three','title','titles','top','with','within'
+  ]);
+  const terms = Array.from(new Set(
+    (query.toLowerCase().match(/[a-z0-9][a-z0-9'-]{2,}/g) || [])
+      .map(t => t.replace(/^'+|'+$/g, ''))
+      .filter(t => t.length >= 3 && !stop.has(t))
+  )).slice(0, 12);
+  const root = document.querySelector('main') || document.body;
+  if (!root) return JSON.stringify({cards: []});
+  const selector = [
+    'article',
+    '[role="article"]',
+    'li',
+    '[class*="result"]',
+    '[class*="Result"]',
+    '[class*="card"]',
+    '[class*="Card"]',
+    '[class*="item"]',
+    '[class*="Item"]',
+    '[data-testid*="result"]',
+    '[data-testid*="card"]'
+  ].join(',');
+  const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
+  const visible = el => {
+    const r = el.getBoundingClientRect();
+    if (r.width < 8 || r.height < 8) return false;
+    const style = window.getComputedStyle(el);
+    return style && style.display !== 'none' && style.visibility !== 'hidden';
+  };
+  const hrefOf = a => {
+    if (!a) return '';
+    const raw = a.getAttribute('href') || '';
+    if (!raw || raw.startsWith('#') || raw.startsWith('javascript:')) return '';
+    try { return new URL(raw, location.href).href; } catch (e) { return raw; }
+  };
+  const candidates = Array.from(root.querySelectorAll(selector));
+  const seen = new Set();
+  const out = [];
+  for (const el of candidates) {
+    if (out.length >= lim) break;
+    if (!visible(el)) continue;
+    if (el.closest('nav, header, footer, aside, [aria-hidden="true"]')) continue;
+    const text = clean(el.innerText || el.textContent || '');
+    if (text.length < 20) continue;
+    const link = el.querySelector('a[href]');
+    const heading = el.querySelector('h1,h2,h3,h4,[role="heading"],a[href]');
+    let title = clean(heading && (heading.innerText || heading.textContent));
+    if (!title) title = clean(text.split(/[.!?\n]/)[0]);
+    title = title.slice(0, 180);
+    if (title.length < 3) continue;
+    const dateEl = el.querySelector(
+      'time,[datetime],[class*="date"],[class*="Date"],[class*="time"],[class*="Time"]'
+    );
+    const date = clean(
+      (dateEl && (dateEl.getAttribute('datetime') || dateEl.innerText || dateEl.textContent)) || ''
+    ).slice(0, 120);
+    const url = hrefOf(link);
+    const fp = `${title.toLowerCase()}|${url}`;
+    if (seen.has(fp)) continue;
+    seen.add(fp);
+    const lower = text.toLowerCase();
+    out.push({
+      title,
+      url,
+      date,
+      termsMatched: terms.filter(t => lower.includes(t)),
+      text: text.slice(0, 320)
+    });
+  }
+  return JSON.stringify({queryTerms: terms, cards: out});
+})()
+"""
+    js = js.replace("__LIMIT__", str(cap)).replace("__QUERY__", json.dumps(q))
+    raw = await session.evaluate(js)
+    try:
+        data = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        return f"(unparseable result: {str(raw)[:200]})"
+    if "error" in data:
+        return f"(result-card extraction error: {data['error']})"
+    cards = data.get("cards", [])
+    if not cards:
+        return "(no visible result/list cards found)"
+    lines: list[str] = []
+    terms = data.get("queryTerms") or []
+    if terms:
+        lines.append("query terms: " + ", ".join(str(t) for t in terms))
+    for i, card in enumerate(cards[:cap], start=1):
+        title = str(card.get("title") or "").strip()
+        url = _ellipsize_middle(str(card.get("url") or "").strip(), 320)
+        date = str(card.get("date") or "").strip()
+        text = str(card.get("text") or "").strip()
+        matched = ", ".join(str(t) for t in (card.get("termsMatched") or []))
+        header = f"{i}. {title or '(untitled)'}"
+        if date:
+            header += f" — {date}"
+        lines.append(header)
+        if url:
+            lines.append(f"   url: {url}")
+        if matched:
+            lines.append(f"   query terms matched: {matched}")
+        if text:
+            lines.append(f"   text: {text}")
     return "\n".join(lines)
 
 
@@ -403,6 +696,14 @@ async def web_search(session, query: str, engine: str = "duckduckgo") -> str:
         engine: 'duckduckgo' (default), 'google', or 'bing'.
     """
     eng = engine.lower().strip()
+    cached_challenge = _cached_search_challenge(session, eng)
+    if cached_challenge:
+        return _search_challenge_message(
+            engine=eng,
+            query=query,
+            reason=cached_challenge,
+            skipped=True,
+        )
     base = {
         "duckduckgo": "https://duckduckgo.com/?q=",
         "google": "https://www.google.com/search?q=",
@@ -411,6 +712,21 @@ async def web_search(session, query: str, engine: str = "duckduckgo") -> str:
     from urllib.parse import quote
     url = base + quote(query)
     await session.navigate(url)
+    try:
+        current_url = await session.current_url()
+    except Exception:
+        current_url = ""
+    challenge_reason = _search_challenge_url_reason(current_url)
+    if not challenge_reason:
+        challenge_reason = await _search_challenge_page_reason(session, current_url)
+    if challenge_reason:
+        _record_search_challenge(session, eng, challenge_reason)
+        return _search_challenge_message(
+            engine=eng,
+            query=query,
+            reason=challenge_reason,
+            current_url=current_url,
+        )
     if os.getenv("BROWSER_USE_RS_WEB_SEARCH_SNIPPETS", "").lower() not in {
         "1",
         "true",
@@ -424,6 +740,12 @@ async def web_search(session, query: str, engine: str = "duckduckgo") -> str:
             r"""
 (() => {
   const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const clipMiddle = (s, n) => {
+    s = String(s || '');
+    if (s.length <= n) return s;
+    const keep = Math.floor((n - 25) / 2);
+    return s.slice(0, keep) + ` ...[${s.length - keep * 2} chars]... ` + s.slice(-keep);
+  };
   const unwrapUrl = (raw) => {
     try {
       const u = new URL(raw, location.href);
@@ -479,7 +801,7 @@ async def web_search(session, query: str, engine: str = "duckduckgo") -> str:
       .replace(/^https?:\/\/\S+\s*/i, '')
       .replace(/\b(Cached|Similar|Translate this page)\b/gi, '')
       .slice(0, 420);
-    results.push({ title, url: parsed.href, snippet });
+    results.push({ title, url: clipMiddle(parsed.href, 320), snippet });
     if (results.length >= 8) break;
   }
   if (!results.length) return '';
@@ -526,7 +848,7 @@ async def extract_links(session, limit: int = 50) -> str:
     # augmentation path, fixed with the same swap.
     for href, text in raw_links[:limit]:
         text = text.strip().replace("\n", " ")[:80] or "(no text)"
-        out.append(f"{text} -> {href}")
+        out.append(f"{text} -> {_ellipsize_middle(href, 320)}")
     if len(raw_links) > limit:
         out.append(f"(... {len(raw_links) - limit} more links truncated)")
     return "\n".join(out)
@@ -588,7 +910,22 @@ async def evaluate_js(session, expression: str) -> str:
     # keeping scroll_down/up real-tool fix and CDP -32001 retry which
     # were independently sound and contributed to the -40% action
     # error reduction.
-    raw = await session.evaluate(expression)
+    try:
+        raw = await session.evaluate(expression)
+    except Exception as e:
+        msg = str(e)
+        if (
+            "-32001" in msg
+            or "Session with given id not found" in msg
+            or "unknown tab target_id" in msg
+        ):
+            raise
+        return (
+            "(javascript error: "
+            f"{type(e).__name__}: {msg[:800]}. "
+            "Check that selectors match existing elements before calling "
+            "methods like click(), and remember querySelector only accepts CSS.)"
+        )
     if not raw:
         return "(no result)"
     return raw[:5000] + ("…" if len(raw) > 5000 else "")
@@ -738,9 +1075,9 @@ def make_extra_tools(agent: Any) -> list:
         return "\n".join(sorted(out))
 
     # Per-task dedup memory for extract_structured_data. Keys are
-    # (query, page_offset_bucket); values are the answer strings we
-    # already returned. Saves redundant LLM calls when the agent
-    # re-extracts the same thing it just got. v0.7.0.
+    # (query, exact page window, answer-shaping options); values are the
+    # answer strings we already returned. Saves redundant LLM calls when
+    # the agent re-extracts the same thing it just got. v0.7.0.
     extract_cache: dict = {}
 
     @tool
@@ -776,7 +1113,8 @@ def make_extra_tools(agent: Any) -> list:
 
         Args:
             query: What to extract. Be specific.
-            max_chars: Max page text per chunk. Default 30000.
+            max_chars: Max page text per chunk. Default 30000, capped
+                at 60000.
             start_from_char: Offset to start reading from (for paged
                 long pages). Default 0.
             output_schema_hint: Optional JSON-like template the answer
@@ -787,10 +1125,33 @@ def make_extra_tools(agent: Any) -> list:
         # the cached answer instead of re-running the LLM. Saves ~$0.005
         # per duplicate call.
         try:
+            max_chars = max(1_000, min(int(max_chars or 30_000), MAX_EXTRACT_CHARS))
+        except (TypeError, ValueError):
+            max_chars = 30_000
+        try:
+            start_from_char = max(0, int(start_from_char or 0))
+        except (TypeError, ValueError):
+            start_from_char = 0
+        try:
             url = await session.current_url()
         except Exception:
             url = ""
-        cache_key = (url, query.strip(), start_from_char // 5000)
+        if _is_unusable_extract_url(url):
+            return (
+                f"(current page is {url or 'not available'} — cannot extract "
+                "grounded page data yet. Wait for navigation to complete or "
+                "navigate to a real page, then retry extraction.)"
+            )
+        cache_key = (
+            url,
+            query.strip(),
+            start_from_char,
+            max_chars,
+            (output_schema_hint or "").strip()[:2000],
+            bool(extract_links),
+            bool(extract_images),
+            (already_collected or "").strip()[:2000],
+        )
         if cache_key in extract_cache:
             return f"(cached) {extract_cache[cache_key]}"
 
@@ -924,6 +1285,20 @@ def make_extra_tools(agent: Any) -> list:
             "- If the query asks for ALL items, products, etc., make "
             "sure to directly list ALL of them — do not summarize or "
             "pick just a few unless the query specifies a count.\n"
+            "- For search/filter/list pages, include only results whose "
+            "visible title, snippet, URL, or metadata supports the "
+            "requested query and filters. If the page appears to show "
+            "default or unrelated results, reply exactly NOT FOUND "
+            "instead of returning the first visible items.\n"
+            "- For multi-criterion requests, every returned item must "
+            "individually satisfy every requested filter or constraint "
+            "(type, topic, date, sort order, genre, price, location, etc.) "
+            "using visible page evidence. Do not mix items that each "
+            "satisfy only part of the request.\n"
+            "- When the query asks for first/top titles or results for "
+            "a search query, every returned item must visibly match the "
+            "query terms or appear under a clearly applied search/filter "
+            "heading; otherwise reply exactly NOT FOUND.\n"
             "- If the content was truncated and you need more, note "
             "that the user can use start_from_char to continue from "
             "where truncation occurred.\n"
@@ -943,6 +1318,7 @@ def make_extra_tools(agent: Any) -> list:
         extraction_user = (
             f"<query>\n{query}\n</query>\n\n"
             f"<page_url>\n{url}\n</page_url>\n\n"
+            f"{_runtime_context_for_extractor()}\n\n"
             f"<page_offset>{start_from_char}</page_offset>"
             + schema_clause + already_clause + "\n\n"
             f"<webpage_content>\n{page}{extras}\n</webpage_content>"
@@ -1058,55 +1434,15 @@ def make_extra_tools(agent: Any) -> list:
         # Top-N count-check guard. Fires AT MOST ONCE per task so we
         # don't spin if the LLM genuinely cannot find more items —
         # codex's design: nudge once, then trust the agent.
-        already_fired = getattr(agent, "_done_count_check_fired", False)
-        if success and not already_fired:
-            n_required = _parse_required_count(agent.task or "")
-            if n_required is not None and n_required >= 2:
-                n_found = _count_items_in_answer(text)
-                # Only nudge when SIGNIFICANTLY short — < ceil(N/2). A
-                # 3-of-5 partial is plausible; 1-of-5 is suspicious. Also
-                # skip if the agent already explicitly acknowledged
-                # partial coverage in the text (avoids double-prompting
-                # honest "only M available" answers).
-                acknowledges_partial = bool(
-                    re.search(
-                        r"\b(only|just|fewer than|less than|less|partial)\b.*"
-                        r"\b(item|result|article|headline|entry|game|review|"
-                        r"deal|product|listing|video|press release|"
-                        r"available|matching|found)\b",
-                        text,
-                        re.IGNORECASE,
-                    )
-                ) or bool(
-                    re.search(
-                        r"\b(showed|returned|displayed|had|contained)\b\s+"
-                        r"only\s+\d+",
-                        text,
-                        re.IGNORECASE,
-                    )
-                )
-                if (
-                    n_found is not None
-                    and n_found < (n_required + 1) // 2
-                    and not acknowledges_partial
-                ):
-                    agent._done_count_check_fired = True
-                    return (
-                        f"[DONE_COUNT_CHECK] The task asks for "
-                        f"{n_required} items but your answer appears "
-                        f"to contain only {n_found} list item(s). "
-                        f"Either:\n"
-                        f"  (a) extract more items from the page (call "
-                        f"extract_structured_data or scroll to reveal "
-                        f"more), OR\n"
-                        f"  (b) call done() again, including in your "
-                        f"text the explicit phrase 'the page showed "
-                        f"only X matching items' so the judge knows "
-                        f"this is a verified-partial answer, not an "
-                        f"oversight.\n"
-                        f"This guard fires once — your next done() "
-                        f"call will commit whatever you submit."
-                    )
+        if success:
+            nudge = _done_count_check_message(
+                agent.task or "",
+                text,
+                already_fired=getattr(agent, "_done_count_check_fired", False),
+            )
+            if nudge:
+                agent._done_count_check_fired = True
+                return nudge
         # Encode for the agent loop's existing __DONE__ parser
         # (agent/__init__.py: ~line 1369). The success flag must be 0
         # or 1; payload follows the second colon.
@@ -1143,6 +1479,17 @@ _COUNT_PATTERNS = [
     re.compile(
         r"\blist\s+"
         r"(\d+|two|three|four|five|six|seven|eight|nine|ten)\s+"
+        r"(?:item|article|headline|result|entry|game|review|deal|"
+        r"product|listing|video|press release|recipe|paragraph|"
+        r"option|topic|tour|community|hashtag|name|definition|fee|"
+        r"address|database|paper|recommendation|advisory|step)",
+        re.IGNORECASE,
+    ),
+    # "list titles of at least two such articles"
+    re.compile(
+        r"\bat\s+least\s+"
+        r"(\d+|two|three|four|five|six|seven|eight|nine|ten)\s+"
+        r"(?:such\s+)?"
         r"(?:item|article|headline|result|entry|game|review|deal|"
         r"product|listing|video|press release|recipe|paragraph|"
         r"option|topic|tour|community|hashtag|name|definition|fee|"
@@ -1189,6 +1536,55 @@ def _parse_required_count(task: str) -> int | None:
     return None
 
 
+def _done_count_check_message(
+    task: str,
+    text: str,
+    *,
+    already_fired: bool,
+    finish_instruction: str = (
+        "call done() again, including in your text the explicit phrase "
+        "'the page showed only X matching items'"
+    ),
+) -> str | None:
+    if already_fired:
+        return None
+    n_required = _parse_required_count(task or "")
+    if n_required is None or n_required < 2:
+        return None
+    n_found = _count_items_in_answer(text)
+    acknowledges_partial = bool(
+        re.search(
+            r"\b(only|just|fewer than|less than|less|partial)\b.*"
+            r"\b(item|result|article|headline|entry|game|review|"
+            r"deal|product|listing|video|press release|"
+            r"available|matching|found)\b",
+            text,
+            re.IGNORECASE,
+        )
+    ) or bool(
+        re.search(
+            r"\b(showed|returned|displayed|had|contained)\b\s+"
+            r"only\s+\d+",
+            text,
+            re.IGNORECASE,
+        )
+    )
+    short_threshold = n_required if n_required <= 3 else (n_required + 1) // 2
+    if n_found is None or n_found >= short_threshold or acknowledges_partial:
+        return None
+    return (
+        f"[DONE_COUNT_CHECK] The task asks for {n_required} items but "
+        f"your answer appears to contain only {n_found} list item(s). "
+        f"Either:\n"
+        f"  (a) extract more items from the page (call "
+        f"extract_structured_data or scroll to reveal more), OR\n"
+        f"  (b) {finish_instruction} so the judge knows this is a "
+        f"verified-partial answer, not an oversight.\n"
+        f"This guard fires once — your next final answer will commit "
+        f"whatever you submit."
+    )
+
+
 def _count_items_in_answer(text: str) -> int | None:
     """Heuristic count of distinct list items in a final-answer string.
 
@@ -1197,16 +1593,31 @@ def _count_items_in_answer(text: str) -> int | None:
     """
     if not text:
         return 0
-    # Numbered lines like "1.", "2)", "1:", at start of a line/segment.
-    numbered = len(
-        re.findall(r"(?:^|\n)\s*\d+[.)\]:](?:\s|\*)", text)
-    )
+    # Numbered items like "1.", "2)", "1:" at line starts OR inline
+    # after a colon. Count the consecutive 1..N prefix so decimals,
+    # versions, dates, and repeated references do not inflate the list.
+    numbered_markers = [
+        int(m.group(1))
+        for m in re.finditer(
+            r"(?<!\d)(\d{1,2})[.)\]:](?:\s|\*)",
+            text,
+        )
+    ]
+    numbered = 0
+    expected = 1
+    for marker in numbered_markers:
+        if marker == expected:
+            numbered += 1
+            expected += 1
+        elif marker == 1:
+            numbered = 1
+            expected = 2
     # Bulleted lines: -, *, •, ·, — followed by space.
     bulleted = len(
         re.findall(r"(?:^|\n)\s*[-*•·—](?:\s|\*)", text)
     )
     n = max(numbered, bulleted)
-    if n >= 2:
+    if n >= 1:
         return n
     # Fallback: bold-prefixed enumerations like "**Title:**" — common
     # gemini-flash output style for list items.
@@ -1221,6 +1632,7 @@ def _count_items_in_answer(text: str) -> int | None:
 EXTRA_STATELESS_TOOLS = [
     search_page,
     find_elements,
+    extract_result_cards,
     find_text,
     get_dropdown_options,
     select_dropdown,

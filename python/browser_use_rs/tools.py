@@ -7,6 +7,7 @@ loop, not exposed to the LLM). All subsequent parameters become tool inputs.
 
 from __future__ import annotations
 
+import functools
 import inspect
 import typing
 from dataclasses import dataclass
@@ -17,6 +18,13 @@ _PRIMITIVE_TYPES: dict[type, str] = {
     int: "integer",
     float: "number",
     bool: "boolean",
+}
+
+_ARG_ALIASES = {
+    # Gemini occasionally prefixes a valid argument name with `u_`
+    # when trying to call upstream/browser-use-shaped tools. Normalize
+    # the observed spelling without exposing another schema field.
+    "u_output_schema_hint": "output_schema_hint",
 }
 
 
@@ -97,6 +105,12 @@ def tool(
             hints = {}
         derived_desc, param_docs = _parse_docstring(inspect.getdoc(f))
         params = list(sig.parameters.values())[1:]  # skip ctx
+        allowed_kwargs = {
+            p.name
+            for p in params
+            if p.kind
+            in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+        }
         properties: dict[str, dict] = {}
         required: list[str] = []
         for p in params:
@@ -113,11 +127,29 @@ def tool(
             "required": required,
             "additionalProperties": False,
         }
+
+        @functools.wraps(f)
+        async def wrapped(*args, **kwargs):
+            if kwargs:
+                normalized: dict[str, Any] = {}
+                for k, v in kwargs.items():
+                    if k in allowed_kwargs:
+                        normalized[k] = v
+                for k, v in kwargs.items():
+                    key = _ARG_ALIASES.get(k)
+                    if key in allowed_kwargs and key not in normalized:
+                        normalized[key] = v
+                kwargs = normalized
+            result = f(*args, **kwargs)
+            if inspect.isawaitable(result):
+                return await result
+            return result
+
         return Tool(
             name=name or f.__name__,
             description=description or derived_desc,
             input_schema=input_schema,
-            func=f,
+            func=wrapped,
         )
 
     if func is not None:

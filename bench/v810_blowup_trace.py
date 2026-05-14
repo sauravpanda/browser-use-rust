@@ -6,14 +6,20 @@ surface what the [INDEX_DEAD] nudge actually did. We want to see:
   - is the regression from the nudge text or from something else?
 """
 import json
-import os
+import sys
 import urllib.request
 import ssl
 import concurrent.futures
 from pathlib import Path
 
-URL = os.environ['EVALUATION_TOOL_URL'].rstrip('/')
-KEY = os.environ['EVALUATION_TOOL_SECRET_KEY']
+BENCH_DIR = Path(__file__).resolve().parent
+if str(BENCH_DIR) not in sys.path:
+    sys.path.insert(0, str(BENCH_DIR))
+
+from env_file import require_env
+
+URL = require_env('EVALUATION_TOOL_URL').rstrip('/')
+KEY = require_env('EVALUATION_TOOL_SECRET_KEY')
 HDR = {"Authorization": f"Bearer {KEY}", "Content-Type": "application/json"}
 CTX = ssl.create_default_context()
 

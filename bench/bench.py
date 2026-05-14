@@ -1,8 +1,8 @@
 """Benchmark orchestrator: runs the same task list against both systems.
 
 Each system runs in its own venv via subprocess so dependencies don't
-collide. Both use gemini-2.5-flash. Results written to bench/results.json
-and printed as a markdown table.
+collide. Both use gemini-3-flash-preview. Results written to
+bench/results.json and printed as a markdown table.
 
 Run:
     export GEMINI_API_KEY=...
@@ -17,10 +17,16 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+BENCH_DIR = Path(__file__).resolve().parent
+if str(BENCH_DIR) not in sys.path:
+    sys.path.insert(0, str(BENCH_DIR))
+
 OURS_PY = REPO / ".venv/bin/python"
 THEIRS_PY = REPO.parent / "browser-use/.venv/bin/python"
 OURS_SCRIPT = REPO / "bench/run_ours.py"
 THEIRS_SCRIPT = REPO / "bench/run_theirs.py"
+
+from env_file import load_dotenv  # noqa: E402
 
 TASKS: list[dict] = [
     {
@@ -73,6 +79,7 @@ def run_one(label: str, py: Path, script: Path, task: str, max_steps: int = 12) 
             "system": label,
             "task": task,
             "completed": False,
+            "success": False,
             "answer": f"ERROR: {py} not found",
             "elapsed_s": 0,
             "steps": 0,
@@ -110,6 +117,7 @@ def run_one(label: str, py: Path, script: Path, task: str, max_steps: int = 12) 
             "system": label,
             "task": task,
             "completed": False,
+            "success": False,
             "answer": f"ERROR: no JSON in stdout. stderr={proc.stderr[-400:]!r}",
             "elapsed_s": round(wall, 2),
             "steps": 0,
@@ -120,6 +128,7 @@ def run_one(label: str, py: Path, script: Path, task: str, max_steps: int = 12) 
         }
     # Wall time from outside is the truth (covers process startup); the
     # inner elapsed_s is closer to the actual agent.run() time.
+    parsed.setdefault("success", None)
     parsed["wall_s"] = round(wall, 2)
     return parsed
 
@@ -135,9 +144,18 @@ def fmt_answer(ans: str, w: int = 60) -> str:
     return s if len(s) <= w else s[: w - 1] + "…"
 
 
+def fmt_success(value) -> str:
+    if value is True:
+        return "ok"
+    if value is False:
+        return "fail"
+    return "?"
+
+
 def main() -> None:
-    if not os.environ.get("GEMINI_API_KEY"):
-        print("Set GEMINI_API_KEY", file=sys.stderr)
+    load_dotenv()
+    if not (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")):
+        print("Set GEMINI_API_KEY or GOOGLE_API_KEY", file=sys.stderr)
         sys.exit(1)
 
     results: list[dict] = []
@@ -148,6 +166,7 @@ def main() -> None:
         ours["id"] = t["id"]
         print(
             f"  ours:   {ours['wall_s']:>5.1f}s steps={ours['steps']:>2} "
+            f"success={fmt_success(ours.get('success')):<4} "
             f"in={ours['in_tokens']:>5} out={ours['out_tokens']:>4} "
             f"cache={ours['cache_read_tokens']:>5} ${ours['cost_usd']:.4f} "
             f"→ {fmt_answer(ours['answer'])}"
@@ -157,6 +176,7 @@ def main() -> None:
         theirs["id"] = t["id"]
         print(
             f"  theirs: {theirs['wall_s']:>5.1f}s steps={theirs['steps']:>2} "
+            f"success={fmt_success(theirs.get('success')):<4} "
             f"in={theirs['in_tokens']:>5} out={theirs['out_tokens']:>4} "
             f"cache={theirs['cache_read_tokens']:>5} ${theirs['cost_usd']:.4f} "
             f"→ {fmt_answer(theirs['answer'])}"
@@ -170,15 +190,17 @@ def main() -> None:
 
     # Summary table
     print("\n## Per-task results\n")
-    print(md_row("task", "ours s", "ours steps", "ours $", "theirs s", "theirs steps", "theirs $"))
-    print(md_row("---", "---", "---", "---", "---", "---", "---"))
+    print(md_row("task", "ours ok", "ours s", "ours steps", "ours $", "theirs ok", "theirs s", "theirs steps", "theirs $"))
+    print(md_row("---", "---", "---", "---", "---", "---", "---", "---", "---"))
     for r in results:
         print(
             md_row(
                 r["id"],
+                fmt_success(r["ours"].get("success")),
                 f"{r['ours']['wall_s']:.1f}",
                 r["ours"]["steps"],
                 f"${r['ours']['cost_usd']:.4f}",
+                fmt_success(r["theirs"].get("success")),
                 f"{r['theirs']['wall_s']:.1f}",
                 r["theirs"]["steps"],
                 f"${r['theirs']['cost_usd']:.4f}",
@@ -189,9 +211,14 @@ def main() -> None:
     def total(side: str, key: str) -> float:
         return sum(r[side][key] for r in results)
 
+    def count_true(side: str, key: str) -> int:
+        return sum(1 for r in results if r[side].get(key) is True)
+
     print("\n## Aggregates\n")
     print(md_row("metric", "ours", "theirs"))
     print(md_row("---", "---", "---"))
+    print(md_row("completed runs", count_true("ours", "completed"), count_true("theirs", "completed")))
+    print(md_row("successful runs", count_true("ours", "success"), count_true("theirs", "success")))
     for label, key in [
         ("total wall time (s)", "wall_s"),
         ("total steps", "steps"),

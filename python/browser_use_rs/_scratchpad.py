@@ -36,6 +36,7 @@ DEFAULT_MAX_LINES = 1000
 # the whole thing on tasks where it doesn't need details.
 HEAD_LINES = 200
 TAIL_LINES = 100
+MAX_PREVIEW_LINE_CHARS = 800
 
 
 class TruncatedResult(NamedTuple):
@@ -50,6 +51,98 @@ class TruncatedResult(NamedTuple):
     path: str
     full_lines: int
     full_bytes: int
+
+
+def _utf8_len(text: str) -> int:
+    return len(text.encode("utf-8", errors="replace"))
+
+
+def _fit_prefix_bytes(text: str, max_bytes: int) -> str:
+    """Return a prefix that fits in max_bytes without splitting UTF-8."""
+    if max_bytes <= 0:
+        return ""
+    if _utf8_len(text) <= max_bytes:
+        return text
+    lo, hi = 0, len(text)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if _utf8_len(text[:mid]) <= max_bytes:
+            lo = mid
+        else:
+            hi = mid - 1
+    return text[:lo].rstrip()
+
+
+def _fit_suffix_bytes(text: str, max_bytes: int) -> str:
+    """Return a suffix that fits in max_bytes without splitting UTF-8."""
+    if max_bytes <= 0:
+        return ""
+    if _utf8_len(text) <= max_bytes:
+        return text
+    lo, hi = 0, len(text)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if _utf8_len(text[len(text) - mid :]) <= max_bytes:
+            lo = mid
+        else:
+            hi = mid - 1
+    return text[len(text) - lo :].lstrip()
+
+
+def _clip_line(line: str) -> str:
+    """Bound pathological single-line payloads before head/tail assembly."""
+    if len(line) <= MAX_PREVIEW_LINE_CHARS:
+        return line
+    keep = max(80, (MAX_PREVIEW_LINE_CHARS - 80) // 2)
+    omitted = len(line) - (keep * 2)
+    return (
+        f"{line[:keep]} ... [line clipped, {omitted:,} chars omitted] ... "
+        f"{line[-keep:]}"
+    )
+
+
+def _bound_preview_bytes(
+    *,
+    head: str,
+    banner: str,
+    tail: str,
+    max_bytes: int,
+) -> str:
+    """Assemble a preview that never exceeds the configured byte budget.
+
+    The original head+tail strategy is line-count based. Some browser
+    outputs, especially Target.getTargets rows, contain 100KB consent URLs
+    on a single line. Without this final byte cap, "spilled" tool results
+    still stayed huge in the live conversation.
+    """
+    preview = head + banner + tail if tail else head + banner.rstrip("\n")
+    if _utf8_len(preview) <= max_bytes:
+        return preview
+
+    trim_note = (
+        "\n\n[SCRATCHPAD_PREVIEW_TRIMMED] Preview was clipped to fit "
+        f"{max_bytes:,} bytes. Use the scratchpad path above for full text.\n\n"
+    )
+    fixed_bytes = _utf8_len(banner) + _utf8_len(trim_note)
+    budget = max(0, max_bytes - fixed_bytes)
+
+    if tail:
+        head_budget = budget // 2
+        tail_budget = budget - head_budget
+        preview = (
+            _fit_prefix_bytes(head, head_budget).rstrip()
+            + banner
+            + trim_note
+            + _fit_suffix_bytes(tail, tail_budget).lstrip()
+        ).strip()
+        return _fit_prefix_bytes(preview, max_bytes)
+
+    preview = (
+        _fit_prefix_bytes(head, budget).rstrip()
+        + banner
+        + trim_note.rstrip("\n")
+    ).strip()
+    return _fit_prefix_bytes(preview, max_bytes)
 
 
 def _scratchpad_root() -> Path:
@@ -109,8 +202,12 @@ def maybe_spill(
     path = root / fname
     path.write_text(content, encoding="utf-8", errors="replace")
 
-    head = "\n".join(lines[:HEAD_LINES])
-    tail = "\n".join(lines[-TAIL_LINES:]) if n_lines > HEAD_LINES + TAIL_LINES else ""
+    head = "\n".join(_clip_line(line) for line in lines[:HEAD_LINES])
+    tail = (
+        "\n".join(_clip_line(line) for line in lines[-TAIL_LINES:])
+        if n_lines > HEAD_LINES + TAIL_LINES
+        else ""
+    )
     truncated_lines = max(0, n_lines - HEAD_LINES - TAIL_LINES)
 
     banner = (
@@ -121,7 +218,12 @@ def maybe_spill(
         f"  grep_scratchpad(path=\"{path}\", pattern=\"<regex or substring>\")\n"
         f"  read_scratchpad(path=\"{path}\", offset=<line_n>, limit=<count>)\n\n"
     )
-    preview = head + banner + tail if tail else head + banner.rstrip("\n")
+    preview = _bound_preview_bytes(
+        head=head,
+        banner=banner,
+        tail=tail,
+        max_bytes=max_bytes,
+    )
 
     return TruncatedResult(
         preview=preview,

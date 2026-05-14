@@ -82,6 +82,15 @@ class StepMetadata:
     prompt_tool_results_bytes: int = 0
     prompt_image_bytes: int = 0         # OVERLAP with state_msg / user_msgs above
     prompt_n_messages: int = 0
+    # v0.12.5 history/read-state instrumentation. These are measured
+    # from the actual prompt message list so future evals can decide
+    # whether the next structural compaction step is worth the risk.
+    prompt_agent_history_bytes: int = 0
+    prompt_agent_history_lines: int = 0
+    prompt_read_state_bytes: int = 0
+    prompt_read_state_entries: int = 0
+    prompt_history_items: int = 0
+    prompt_history_collapsed_items: int = 0
 
     @property
     def duration_seconds(self) -> float:
