@@ -103,6 +103,26 @@ class ResultCardToolTests(unittest.TestCase):
             asyncio.run(extract_result_cards.func(BadSession())),
         )
 
+    def test_extract_result_cards_script_filters_broad_page_chrome(self):
+        class Session:
+            def __init__(self):
+                self.expression = ""
+
+            async def evaluate(self, expression):
+                self.expression = expression
+                return json.dumps({"cards": []})
+
+        session = Session()
+
+        asyncio.run(extract_result_cards.func(session, query="nutrition health"))
+
+        self.assertIn("rejectTitle", session.expression)
+        self.assertIn("tooBroad", session.expression)
+        self.assertIn("growFromLink", session.expression)
+        self.assertIn("closestUsefulCard", session.expression)
+        self.assertIn("results?|stories|items|products", session.expression)
+        self.assertIn("remove|clear|sort by|filter", session.expression)
+
     def test_extract_result_cards_is_registered_as_stateless_tool(self):
         names = [tool.name for tool in EXTRA_STATELESS_TOOLS]
 

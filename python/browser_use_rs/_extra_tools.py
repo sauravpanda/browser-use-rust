@@ -339,6 +339,7 @@ async def extract_result_cards(
     '[data-testid*="card"]'
   ].join(',');
   const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
+  const lowerQuery = query.toLowerCase();
   const visible = el => {
     const r = el.getBoundingClientRect();
     if (r.width < 8 || r.height < 8) return false;
@@ -351,38 +352,124 @@ async def extract_result_cards(
     if (!raw || raw.startsWith('#') || raw.startsWith('javascript:')) return '';
     try { return new URL(raw, location.href).href; } catch (e) { return raw; }
   };
-  const candidates = Array.from(root.querySelectorAll(selector));
-  const seen = new Set();
-  const out = [];
-  for (const el of candidates) {
-    if (out.length >= lim) break;
-    if (!visible(el)) continue;
-    if (el.closest('nav, header, footer, aside, [aria-hidden="true"]')) continue;
+  const linkText = a => clean(
+    (a && (a.innerText || a.textContent || a.getAttribute('aria-label') || a.getAttribute('title'))) || ''
+  );
+  const rejectTitle = title => {
+    const t = clean(title).toLowerCase();
+    if (!t) return true;
+    if (t === lowerQuery) return true;
+    if (/^\d[\d,+.\s]*(results?|stories|items|products|matches)\b/.test(t)) return true;
+    if (/^(remove|clear|sort by|filter|filters?|search|showing|view all|load more|next|previous)\b/.test(t)) return true;
+    if (/^(sign in|subscribe|advertisement|sponsored|privacy|cookie)\b/.test(t)) return true;
+    return false;
+  };
+  const meaningfulLink = a => {
+    if (!a || !visible(a)) return false;
+    if (a.closest('nav, header, footer, aside, [aria-hidden="true"]')) return false;
+    const url = hrefOf(a);
+    const title = linkText(a);
+    if (!url || rejectTitle(title)) return false;
+    if (title.length < 4 || title.length > 220) return false;
+    return true;
+  };
+  const significantLinks = el => {
+    const unique = new Map();
+    for (const a of Array.from(el.querySelectorAll('a[href]'))) {
+      if (!meaningfulLink(a)) continue;
+      unique.set(`${hrefOf(a)}|${linkText(a).toLowerCase()}`, a);
+    }
+    return Array.from(unique.values());
+  };
+  const tooBroad = el => {
     const text = clean(el.innerText || el.textContent || '');
-    if (text.length < 20) continue;
-    const link = el.querySelector('a[href]');
-    const heading = el.querySelector('h1,h2,h3,h4,[role="heading"],a[href]');
-    let title = clean(heading && (heading.innerText || heading.textContent));
+    if (text.length > 2500) return true;
+    const links = significantLinks(el);
+    return links.length >= 2 && text.length > 520;
+  };
+  const growFromLink = a => {
+    let card = a;
+    let cur = a.parentElement;
+    while (cur && cur !== root && visible(cur)) {
+      if (cur.closest('nav, header, footer, aside, [aria-hidden="true"]')) break;
+      if (tooBroad(cur)) break;
+      card = cur;
+      const text = clean(cur.innerText || cur.textContent || '');
+      if (text.length >= 80 || cur.matches(selector)) break;
+      cur = cur.parentElement;
+    }
+    return card;
+  };
+  const closestUsefulCard = a => {
+    let card = a.closest(selector);
+    if (!card || card === root || tooBroad(card)) {
+      return growFromLink(a);
+    }
+    if (!card || card === root || !visible(card)) return a;
+    return card;
+  };
+  const dateFromText = text => {
+    const m = text.match(/\b(?:updated|published|posted)?[:\s-]*(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2},?\s+20\d{2}\b/i)
+      || text.match(/\b\d{1,2}\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?,?\s+20\d{2}\b/i)
+      || text.match(/\b20\d{2}-\d{1,2}-\d{1,2}\b/);
+    return m ? clean(m[0].replace(/^(updated|published|posted)[:\s-]*/i, '')) : '';
+  };
+  const records = [];
+  const pushRecord = (el, titleEl, sourceOrder) => {
+    if (!el || !visible(el)) return;
+    if (el.closest('nav, header, footer, aside, [aria-hidden="true"]')) return;
+    const text = clean(el.innerText || el.textContent || '');
+    if (text.length < 16) return;
+    if (el !== titleEl && tooBroad(el)) return;
+    const link = (titleEl && titleEl.closest && titleEl.closest('a[href]'))
+      || el.querySelector('h1 a[href],h2 a[href],h3 a[href],h4 a[href],a[href]');
+    const heading = titleEl || el.querySelector('h1,h2,h3,h4,[role="heading"],a[href]');
+    let title = clean(heading && (heading.innerText || heading.textContent || heading.getAttribute('aria-label') || heading.getAttribute('title')));
+    if (!title && link) title = linkText(link);
     if (!title) title = clean(text.split(/[.!?\n]/)[0]);
     title = title.slice(0, 180);
-    if (title.length < 3) continue;
+    if (rejectTitle(title)) return;
     const dateEl = el.querySelector(
       'time,[datetime],[class*="date"],[class*="Date"],[class*="time"],[class*="Time"]'
     );
     const date = clean(
-      (dateEl && (dateEl.getAttribute('datetime') || dateEl.innerText || dateEl.textContent)) || ''
+      (dateEl && (dateEl.getAttribute('datetime') || dateEl.innerText || dateEl.textContent)) || dateFromText(text)
     ).slice(0, 120);
     const url = hrefOf(link);
-    const fp = `${title.toLowerCase()}|${url}`;
-    if (seen.has(fp)) continue;
-    seen.add(fp);
-    const lower = text.toLowerCase();
-    out.push({
+    const r = el.getBoundingClientRect();
+    records.push({
       title,
       url,
       date,
-      termsMatched: terms.filter(t => lower.includes(t)),
-      text: text.slice(0, 320)
+      y: Math.round(r.top + window.scrollY),
+      x: Math.round(r.left + window.scrollX),
+      sourceOrder,
+      termsMatched: terms.filter(t => text.toLowerCase().includes(t)),
+      text: text.slice(0, 360)
+    });
+  };
+  let sourceOrder = 0;
+  for (const a of Array.from(root.querySelectorAll('a[href]'))) {
+    if (!meaningfulLink(a)) continue;
+    pushRecord(closestUsefulCard(a), a, sourceOrder++);
+  }
+  for (const el of Array.from(root.querySelectorAll(selector))) {
+    pushRecord(el, null, sourceOrder++);
+  }
+  records.sort((a, b) => (a.y - b.y) || (a.x - b.x) || (a.sourceOrder - b.sourceOrder));
+  const seen = new Set();
+  const out = [];
+  for (const record of records) {
+    if (out.length >= lim) break;
+    const fp = `${record.title.toLowerCase()}|${record.url}`;
+    if (seen.has(fp)) continue;
+    seen.add(fp);
+    out.push({
+      title: record.title,
+      url: record.url,
+      date: record.date,
+      termsMatched: record.termsMatched,
+      text: record.text
     });
   }
   return JSON.stringify({queryTerms: terms, cards: out});
