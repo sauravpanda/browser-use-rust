@@ -41,7 +41,6 @@ from browser_use_rs.agent import (  # noqa: E402
     _newegg_review_bytes_should_force,
     _task_requests_barrons_value_investing,
     _task_requests_caranddriver_subscription,
-    _task_requests_clevelandclinic_nutrition,
     _task_requests_consulting_people_sf,
     _task_requests_metacritic_low_score_tv,
     _task_requests_newegg_review_bytes,
@@ -419,20 +418,6 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertFalse(
             _task_requests_caranddriver_subscription(
                 "Find the latest Car and Driver EV review."
-            )
-        )
-
-    def test_clevelandclinic_nutrition_task_is_detected(self):
-        task = (
-            "Search for articles on nutrition and healthy eating within the "
-            "health resources. List the titles of the first three resources "
-            "you find.\nwebsite: https://clevelandclinic.org"
-        )
-
-        self.assertTrue(_task_requests_clevelandclinic_nutrition(task))
-        self.assertFalse(
-            _task_requests_clevelandclinic_nutrition(
-                "Find Cleveland Clinic billing contact information."
             )
         )
 

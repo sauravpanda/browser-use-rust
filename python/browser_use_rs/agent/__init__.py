@@ -1161,7 +1161,6 @@ class Agent:
         self._consulting_people_sf_nudged: bool = False
         self._barrons_value_investing_nudged: bool = False
         self._caranddriver_subscription_nudged: bool = False
-        self._clevelandclinic_nutrition_nudged: bool = False
         self._newegg_review_bytes_failed_probes: int = 0
         self._newegg_review_bytes_selector_timeouts: int = 0
         self._newegg_review_bytes_product_urls: set[str] = set()
@@ -1372,7 +1371,6 @@ class Agent:
         self._consulting_people_sf_nudged = False
         self._barrons_value_investing_nudged = False
         self._caranddriver_subscription_nudged = False
-        self._clevelandclinic_nutrition_nudged = False
         self._messages.append(
             UserMessage(content=_task_message_with_runtime_context(new_task))
         )
@@ -2442,9 +2440,6 @@ class Agent:
             self._maybe_inject_caranddriver_subscription_nudge(
                 state_summary, tool_results, step_n
             )
-            self._maybe_inject_clevelandclinic_nutrition_nudge(
-                state_summary, tool_results, step_n
-            )
             if await self._maybe_force_newegg_review_bytes_unavailable(
                 state_summary, completion.tool_calls, tool_results, step_n
             ):
@@ -3273,42 +3268,6 @@ class Agent:
         self._caranddriver_subscription_nudged = True
         logger.info(
             "agent: CARANDDRIVER_SUBSCRIPTION nudge at step %d (url=%s)",
-            step_n,
-            current_url,
-        )
-
-    def _maybe_inject_clevelandclinic_nutrition_nudge(
-        self,
-        state: BrowserStateSummary,
-        results: list[ActionResult],
-        step_n: int,
-    ) -> None:
-        if self._clevelandclinic_nutrition_nudged:
-            return
-        if not _task_requests_clevelandclinic_nutrition(self.task):
-            return
-        current_url = state.url or ""
-        if not _host_matches(current_url, "clevelandclinic.org"):
-            return
-
-        self._messages.append(
-            UserMessage(
-                content=(
-                    "[CLEVELANDCLINIC_NUTRITION] This task asks for the "
-                    "titles of the first three resources found in Cleveland "
-                    "Clinic health resources for `nutrition and healthy "
-                    "eating`. Use the Health Library search page "
-                    "`https://my.clevelandclinic.org/health?q=nutrition%20"
-                    "and%20healthy%20eating`. Do not re-query for more "
-                    "semantically nutrition-specific pages after the results "
-                    "load. Extract the first three visible resource titles "
-                    "in page order from that search result page and finish."
-                )
-            )
-        )
-        self._clevelandclinic_nutrition_nudged = True
-        logger.info(
-            "agent: CLEVELANDCLINIC_NUTRITION nudge at step %d (url=%s)",
             step_n,
             current_url,
         )
@@ -5725,17 +5684,6 @@ def _task_requests_caranddriver_subscription(task: str) -> bool:
         and "pricing" in task_lc
         and "digital" in task_lc
         and "print" in task_lc
-    )
-
-
-def _task_requests_clevelandclinic_nutrition(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "clevelandclinic.org" in task_lc
-        and "nutrition" in task_lc
-        and "healthy eating" in task_lc
-        and "first three" in task_lc
-        and "resources" in task_lc
     )
 
 

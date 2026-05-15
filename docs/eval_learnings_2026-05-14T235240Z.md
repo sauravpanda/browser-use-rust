@@ -3570,3 +3570,55 @@ Expected result:
   literally: first three resources found, not most relevant nutrition
   resources.
 - Cut the old Rust re-query tail toward the reference's `5` steps.
+
+## 2026-05-15T12:39:40Z Update: Cleveland Clinic Targeted Eval Launched
+
+- Commit: `5ddc1f414d96387c865d0b281223e2ad55718520`.
+- Dashboard run: `kh7eqwtym5fxjw4ntga18jz7eh86rrq7`.
+- GitHub workflow: `25918235254`.
+- Dataset lookup confirmed task `234` is index `98`, so the targeted
+  range is `start=98`, `end=99`, `total_tasks=1`.
+- Config preserves the requested reference shape:
+  `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking_level=minimal`, headed
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
+Expected result:
+
+- Finish from the first visible Cleveland Clinic Health Library search
+  result titles without re-querying for more relevant nutrition pages.
+
+## 2026-05-15T12:42:58Z Update: Cleveland Clinic Targeted Eval Rejected
+
+Targeted run:
+
+- Run `kh7eqwtym5fxjw4ntga18jz7eh86rrq7`, workflow `25918235254`,
+  commit `5ddc1f414d96387c865d0b281223e2ad55718520`.
+- Same minimal-thinking Gemini config as the other targeted runs.
+
+Result for task `234`:
+
+- Judge/self-report: failure / `success=false`.
+- Steps: `4` vs old Rust `23` and reference `5`.
+- Duration: `13.61s` vs old Rust `122.48s` and reference `16.52s`.
+- Cost: `$0.011298` vs old Rust `$0.082416` and reference `$0.004755`.
+- Action errors/access denied/tool failures: `0/0/0`.
+
+Failure reason:
+
+- The run reproduced the reference's fast answer shape
+  (`Chiropractic Adjustment`, `Diabulimia`, `Dietitian`), but the
+  current judge now marks that answer wrong because `Chiropractic
+  Adjustment` is irrelevant to the nutrition query.
+- This makes the old reference trace unsafe to imitate for this task.
+
+Decision:
+
+- Reject the Cleveland Clinic nudge.
+- Revert the code/test changes and keep the log entry. A future attempt
+  needs a different strategy that extracts actually nutrition-related
+  resources with exact search-result evidence.
