@@ -2050,6 +2050,28 @@ Local verification at `2026-05-15T14:45:19Z`:
 - `git diff --check`
 - `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`
 
+## 2026-05-15T14:46:29Z Update: Fox Sports Targeted Eval Launched
+
+Targeted run:
+
+- Run `kh70xtbxghrdz4agm1hykc3d1h86srr5`, workflow `25924161050`,
+  commit `7adfad557718916ae18279e39be214b35dc195a8`.
+- Dataset range: `start_index=6`, `end_index=7`, task `582`.
+- User message:
+  `bu-rust foxsports-nba-highlights targeted no-thinking gpt-o4-mini`.
+
+Configuration:
+
+- `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking_level=minimal`, headed
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- Dispatch used the corrected JSON-object `client_payload.script_args`
+  shape so the workflow should take the Rust path.
+- No literal `developerId` was sent in `/api/startRun`.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
