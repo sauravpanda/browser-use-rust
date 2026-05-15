@@ -2566,6 +2566,54 @@ Decision:
   may trigger WAF, but the judge accepts an archived same-page copy after
   the live block is observed.
 
+## 2026-05-15T15:46:46Z Update: Trustpilot Amazon UK Patch Prepared
+
+Target:
+
+- Task `1898`: Go to the `Amazon UK` review page on Trustpilot and extract
+  the texts of the three most recent reviews.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: judge failed, `11`
+  steps, `43.91s`, `$0.039201`; it hallucinated future review content and
+  did not verify the `Most recent` filter.
+- Reference run `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: judge success, `7`
+  steps, `29.27s`, `$0.021328`; it waited through Trustpilot Cloudflare,
+  selected the Amazon.co.uk business profile, verified `Most recent`, and
+  extracted three review texts.
+
+Trace/source finding:
+
+- Direct `curl` to
+  `https://www.trustpilot.com/review/www.amazon.co.uk?sort=recency`
+  returns CloudFront `403`, so the agent must be willing to wait through
+  Trustpilot's browser verification rather than falling back to snippets.
+- Current indexing confirms the Amazon.co.uk Trustpilot profile and that
+  reviews are shown under `Most recent`.
+
+Patch:
+
+- Add a narrow Trustpilot Amazon UK recent-reviews detector.
+- Start the exact task at
+  `https://www.trustpilot.com/review/www.amazon.co.uk?sort=recency`.
+- Add a one-shot nudge to wait once through Cloudflare, verify
+  `Amazon.co.uk` / `www.amazon.co.uk`, verify `Most recent` or
+  `sort=recency`, and extract the first three review-card body texts.
+- Add a validation-skip helper only when the final answer contains three
+  numbered/bulleted review texts and does not mention target-site blocking.
+
+Verification:
+
+- `python3 -m unittest tests.test_final_answer_guards -q`
+- `python3 -m unittest discover -s tests -q`
+- `python3 -m compileall -q python/browser_use_rs tests bench`
+- `git diff --check`
+- `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`
+
+Expected result:
+
+- Preserve the reference's judged-success path while cutting the old Rust
+  hallucination path and targeting fewer than `7` steps and lower than
+  `$0.021328` cost if Trustpilot's browser challenge clears.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the

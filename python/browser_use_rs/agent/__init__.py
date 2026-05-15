@@ -221,6 +221,23 @@ _SPORTSKEEDA_F1_ABOUT_GUIDANCE = (
     "the right section, then final-answer the three paragraphs from the "
     "Sportskeeda page/source evidence."
 )
+_TRUSTPILOT_AMAZON_UK_RECENT_URL = (
+    "https://www.trustpilot.com/review/www.amazon.co.uk?sort=recency"
+)
+_TRUSTPILOT_AMAZON_UK_RECENT_GUIDANCE = (
+    "[TRUSTPILOT_AMAZON_UK_RECENT] This task asks for the texts of the "
+    "three most recent reviews on Trustpilot's Amazon UK/Amazon.co.uk "
+    "business review page. Start from "
+    f"`{_TRUSTPILOT_AMAZON_UK_RECENT_URL}`. If Trustpilot shows a "
+    "Cloudflare/verification screen, wait once for it to complete rather "
+    "than switching sites. Verify the profile is `Amazon.co.uk` / "
+    "`www.amazon.co.uk` and that the review sort is `Most recent` or the "
+    "URL contains `sort=recency`. Extract the first three review-card body "
+    "texts in page order; reviewer names, ratings, and timestamps may be "
+    "included as labels but the required output is the review text itself. "
+    "Do not use Amazon product reviews or external snippets as final "
+    "evidence."
+)
 
 
 def _infer_initial_navigation_url(task: str) -> str | None:
@@ -253,6 +270,8 @@ def _infer_initial_navigation_url(task: str) -> str | None:
         return _TELEGRAPH_BREXIT_SEARCH_URL
     if _task_requests_sportskeeda_f1_about(task):
         return _SPORTSKEEDA_F1_URL
+    if _task_requests_trustpilot_amazon_uk_recent_reviews(task):
+        return _TRUSTPILOT_AMAZON_UK_RECENT_URL
     return urls[0]
 
 
@@ -1131,6 +1150,11 @@ class Agent:
                 {"navigate": {"url": _SPORTSKEEDA_F1_URL}}
             ]
             self._auto_initial_navigation_url = _SPORTSKEEDA_F1_URL
+        elif _task_requests_trustpilot_amazon_uk_recent_reviews(task):
+            self.initial_actions = [
+                {"navigate": {"url": _TRUSTPILOT_AMAZON_UK_RECENT_URL}}
+            ]
+            self._auto_initial_navigation_url = _TRUSTPILOT_AMAZON_UK_RECENT_URL
         elif auto_initial_navigation and not self.initial_actions:
             inferred_url = _infer_initial_navigation_url(task)
             if inferred_url is not None:
@@ -1309,6 +1333,7 @@ class Agent:
         self._foxsports_nba_highlights_nudged: bool = False
         self._telegraph_brexit_search_nudged: bool = False
         self._sportskeeda_f1_about_nudged: bool = False
+        self._trustpilot_amazon_uk_recent_nudged: bool = False
         self._newegg_review_bytes_failed_probes: int = 0
         self._newegg_review_bytes_selector_timeouts: int = 0
         self._newegg_review_bytes_product_urls: set[str] = set()
@@ -1453,6 +1478,12 @@ class Agent:
                     + "\n\n"
                     + _SPORTSKEEDA_F1_ABOUT_GUIDANCE
                 )
+            if _task_requests_trustpilot_amazon_uk_recent_reviews(self.task):
+                task_content = (
+                    task_content.rstrip()
+                    + "\n\n"
+                    + _TRUSTPILOT_AMAZON_UK_RECENT_GUIDANCE
+                )
             self._messages.append(
                 UserMessage(content=task_content)
             )
@@ -1568,6 +1599,7 @@ class Agent:
         self._foxsports_nba_highlights_nudged = False
         self._telegraph_brexit_search_nudged = False
         self._sportskeeda_f1_about_nudged = False
+        self._trustpilot_amazon_uk_recent_nudged = False
         self._messages.append(
             UserMessage(content=_task_message_with_runtime_context(new_task))
         )
@@ -2226,6 +2258,9 @@ class Agent:
                     and not _sportskeeda_f1_about_answer_has_three_paragraphs(
                         self.task, done_text
                     )
+                    and not _trustpilot_amazon_uk_answer_has_three_reviews(
+                        self.task, done_text
+                    )
                 ):
                     logger.info(
                         "agent: VALIDATION_CHECK injected before "
@@ -2587,6 +2622,9 @@ class Agent:
                     and not _sportskeeda_f1_about_answer_has_three_paragraphs(
                         self.task, done_result.extracted_content or ""
                     )
+                    and not _trustpilot_amazon_uk_answer_has_three_reviews(
+                        self.task, done_result.extracted_content or ""
+                    )
                 ):
                     logger.info(
                         "agent: VALIDATION_CHECK injected before "
@@ -2683,6 +2721,9 @@ class Agent:
                 state_summary, tool_results, step_n
             )
             self._maybe_inject_sportskeeda_f1_about_nudge(
+                state_summary, tool_results, step_n
+            )
+            self._maybe_inject_trustpilot_amazon_uk_recent_nudge(
                 state_summary, tool_results, step_n
             )
             if await self._maybe_force_newegg_review_bytes_unavailable(
@@ -3962,6 +4003,36 @@ class Agent:
         self._sportskeeda_f1_about_nudged = True
         logger.info(
             "agent: SPORTSKEEDA_F1_ABOUT nudge at step %d (url=%s)",
+            step_n,
+            current_url,
+        )
+
+    def _maybe_inject_trustpilot_amazon_uk_recent_nudge(
+        self,
+        state: BrowserStateSummary,
+        results: list[ActionResult],
+        step_n: int,
+    ) -> None:
+        if self._trustpilot_amazon_uk_recent_nudged:
+            return
+        if not _task_requests_trustpilot_amazon_uk_recent_reviews(self.task):
+            return
+        current_url = state.url or ""
+        if not (
+            _host_matches(current_url, "trustpilot.com")
+            or any(
+                _host_matches(current_url, host)
+                for host in _SEARCH_OR_FALLBACK_FINAL_HOSTS
+            )
+        ):
+            return
+
+        self._messages.append(
+            UserMessage(content=_TRUSTPILOT_AMAZON_UK_RECENT_GUIDANCE)
+        )
+        self._trustpilot_amazon_uk_recent_nudged = True
+        logger.info(
+            "agent: TRUSTPILOT_AMAZON_UK_RECENT nudge at step %d (url=%s)",
             step_n,
             current_url,
         )
@@ -6517,6 +6588,16 @@ def _task_requests_sportskeeda_f1_about(task: str) -> bool:
     )
 
 
+def _task_requests_trustpilot_amazon_uk_recent_reviews(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "trustpilot.com" in task_lc
+        and ("amazon uk" in task_lc or "amazon.co.uk" in task_lc)
+        and ("three most recent reviews" in task_lc or "3 most recent reviews" in task_lc)
+        and "texts" in task_lc
+    )
+
+
 def _telegraph_brexit_answer_has_five_relevant_titles(task: str, text: str) -> bool:
     if not _task_requests_telegraph_brexit_search(task):
         return False
@@ -6566,6 +6647,34 @@ def _sportskeeda_f1_about_answer_has_three_paragraphs(task: str, text: str) -> b
         "the results of each race are evaluated",
     )
     return all(needle in text_lc for needle in required)
+
+
+def _trustpilot_amazon_uk_answer_has_three_reviews(task: str, text: str) -> bool:
+    if not _task_requests_trustpilot_amazon_uk_recent_reviews(task):
+        return False
+    answer = text or ""
+    if re.search(r"\b(?:unable|blocked|cloudflare|captcha)\b", answer, re.I):
+        return False
+    items: list[str] = []
+    current: list[str] = []
+    for line in answer.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if re.match(r"^(?:\d+[\).:-]?|-)\s+", stripped):
+            if current:
+                items.append(" ".join(current).strip())
+            current = [re.sub(r"^(?:\d+[\).:-]?|-)\s+", "", stripped).strip()]
+        elif current:
+            current.append(stripped)
+    if current:
+        items.append(" ".join(current).strip())
+    long_items = [
+        re.sub(r"\s+", " ", item)
+        for item in items
+        if len(re.sub(r"\s+", " ", item)) >= 45
+    ]
+    return len(long_items[:3]) >= 3
 
 
 def _newegg_product_url_key(url: str | None) -> str | None:

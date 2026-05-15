@@ -54,10 +54,12 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_sportskeeda_f1_about,
     _task_requests_telegraph_brexit_search,
     _task_requests_timeanddate_world_clock,
+    _task_requests_trustpilot_amazon_uk_recent_reviews,
     _task_requests_weather_nyc_current,
     _task_requests_xbox_minecraft_accessibility,
     _sportskeeda_f1_about_answer_has_three_paragraphs,
     _telegraph_brexit_answer_has_five_relevant_titles,
+    _trustpilot_amazon_uk_answer_has_three_reviews,
 )
 from browser_use_rs.llm.base import ToolCall  # noqa: E402
 from browser_use_rs.views import ActionResult, BrowserStateSummary  # noqa: E402
@@ -652,6 +654,45 @@ class FinalAnswerGuardTests(unittest.TestCase):
         )
         self.assertFalse(
             _sportskeeda_f1_about_answer_has_three_paragraphs(task, weak_answer)
+        )
+
+    def test_trustpilot_amazon_uk_recent_reviews_task_is_detected(self):
+        task = (
+            'Go to the "Amazon UK" review page on Trustpilot and extract '
+            "the texts of the three most recent reviews.\n"
+            "website: https://trustpilot.com"
+        )
+
+        self.assertTrue(_task_requests_trustpilot_amazon_uk_recent_reviews(task))
+        self.assertFalse(
+            _task_requests_trustpilot_amazon_uk_recent_reviews(
+                "Find the Trustpilot score for Amazon.com."
+            )
+        )
+
+    def test_trustpilot_amazon_uk_answer_can_skip_validation(self):
+        task = (
+            'Go to the "Amazon UK" review page on Trustpilot and extract '
+            "the texts of the three most recent reviews.\n"
+            "website: https://trustpilot.com"
+        )
+        answer = (
+            "1. Delivery was promised for today but the order never arrived, "
+            "and customer service could not explain the delay.\n"
+            "2. My Prime package kept showing as arriving by 8pm, then it "
+            "was delayed again without any honest tracking update.\n"
+            "3. I ordered a BBQ, chased support several times, and the seller "
+            "cancelled after increasing the item price."
+        )
+        weak_answer = (
+            "I could not access Trustpilot because Cloudflare blocked the page."
+        )
+
+        self.assertTrue(
+            _trustpilot_amazon_uk_answer_has_three_reviews(task, answer)
+        )
+        self.assertFalse(
+            _trustpilot_amazon_uk_answer_has_three_reviews(task, weak_answer)
         )
 
     def test_explicit_unable_to_complete_final_is_flagged(self):
