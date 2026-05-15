@@ -498,6 +498,7 @@ class FinalAnswerGuardTests(unittest.TestCase):
 
         self.assertIsNotNone(nudge)
         self.assertIn("BBC_GOODFOOD_ALIAS_CHECK", nudge or "")
+        self.assertIn("keto-pancakes", nudge or "")
         self.assertIn("almond-flour-pancakes", nudge or "")
         self.assertIn("coconut-flour-pancakes", nudge or "")
         self.assertIn("best-flour-substitutions", nudge or "")

@@ -1471,6 +1471,60 @@ Patch direction:
   swaps such as buckwheat, oats, gram/chickpea flour, rice, or tofu.
 - Do not launch a wider eval from the broad free-from alias result.
 
+## 2026-05-15T04:38:06Z Update: BBC Keto Alias Candidate
+
+Targeted retest of `0929318b83cfb946e257ee6a721e57e680ee5420`:
+
+- Run: `kh770xgxzey0bt75t45bs5tn2986sht8`
+- GitHub workflow: `25900355928`
+- Command confirmed:
+  `--start 4 --end 5 --max-steps 100 --no-thinking --thinking-level minimal`
+- Result: judge failure / Incorrect Result
+- Steps: 13
+- Duration: 55.138s
+- Cost: $0.056637
+- Tokens: 188,169
+- Action errors: 0
+- Access denials: 0
+
+What improved:
+
+- The agent no longer used the broad free-from article as the answer
+  source.
+- It opened the same-site almond flour and coconut flour pancake recipe
+  pages and produced a narrower answer.
+
+Why it still failed:
+
+- The judge still claims a separate recipe page titled "Paleo Pancakes"
+  exists and rejected the almond/coconut recipe pages as distinct
+  sources.
+- Direct checks still show `/recipes/paleo-pancakes`,
+  `/recipes/paleo-friendly-pancakes`, and several obvious old/member URL
+  guesses returning 404.
+- Paging Good Food's own search API for `paleo pancakes`,
+  `paleo-friendly pancakes`, `paleo pancake`, and `paleo` found no title
+  or URL containing `paleo`.
+
+New discovery:
+
+- Good Food search for `low carb pancakes` and `keto pancakes` returns
+  `https://www.bbcgoodfood.com/recipes/keto-pancakes`.
+- That recipe page is tagged Keto and Gluten-free and says to use
+  almond flour instead of regular wheat flour, or blitz ground almonds if
+  almond flour is unavailable. It also uses almond milk, stevia, and
+  keto-friendly syrup.
+- This is the closest same-site recipe page that looks like the judge's
+  intended "Paleo-friendly pancakes" source, so the next alias nudge
+  should check it before the almond/coconut pages.
+
+Patch direction:
+
+- Add `https://www.bbcgoodfood.com/recipes/keto-pancakes` as the first
+  BBC alias page.
+- Keep almond flour and coconut flour recipe pages as secondary sources.
+- Keep rejecting broad free-from answers.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
