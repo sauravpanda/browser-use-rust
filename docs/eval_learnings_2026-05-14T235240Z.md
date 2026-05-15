@@ -2944,6 +2944,39 @@ Launch note:
   `--thinking-level minimal`, `--flash-mode`, `--browser local`,
   `--images-per-step 1`, `--use-vision true`, `--agent-type Agent`.
 
+## 2026-05-15T16:29:40Z Update: Daily Mail Targeted Eval Result
+
+Targeted run:
+
+- Run `kh76ffcf4j5cd4z9ekpme39s8x86rzg3`, workflow `25928949228`,
+  code-under-test commit `bf4532af2e82af2483b988c3a2a43168c57c28a9`.
+- Dataset range: `start_index=187`, `end_index=188`, task `2459`.
+
+Result for task `2459`:
+
+- Judge/self-report: failed / `success=true`.
+- Score: `0`.
+- Steps: `4` vs old Rust `4` and reference `3`.
+- Duration: `14.98s` vs old Rust `14.65s` and reference `19.61s`.
+- Cost: `$0.016969` vs old Rust `$0.013004` and reference `$0.005139`.
+- Tokens: platform `tokensUsed=43504`, usage `total_tokens=45844`.
+
+Judge finding:
+
+- The final answer contained a Daily Mail headline and publication time,
+  but the judge said the trajectory did not prove that this was the top
+  breaking-news article rather than another featured homepage article.
+
+Decision:
+
+- Reject the code patch. It fixed the self-report downgrade from the
+  `.co.uk` to `.com` redirect, but the judged task outcome stayed failed
+  and cost increased versus old Rust and the successful reference.
+- Learning: for homepage lead-story tasks, final-host correctness is not
+  enough. The trace must visibly establish lead/top placement before
+  clicking through, or the judge can reject a plausible article-page
+  timestamp as an unproven featured-story extraction.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
