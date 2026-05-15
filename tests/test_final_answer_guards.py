@@ -39,7 +39,6 @@ from browser_use_rs.agent import (  # noqa: E402
     _newegg_product_url_key,
     _newegg_review_bytes_evidence_labels,
     _newegg_review_bytes_should_force,
-    _task_requests_people_crime_featured_article,
     _task_requests_newegg_review_bytes,
 )
 from browser_use_rs.llm.base import ToolCall  # noqa: E402
@@ -359,20 +358,6 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertTrue(
             _newegg_review_bytes_should_force(
                 24, failed_probes=2, product_count=1, selector_timeouts=0
-            )
-        )
-
-    def test_people_crime_featured_article_task_is_detected(self):
-        task = (
-            'Navigate to the "Crime" section on People.com, open the '
-            "featured article, and summarize its headline in one sentence.\n"
-            "website: https://people.com"
-        )
-
-        self.assertTrue(_task_requests_people_crime_featured_article(task))
-        self.assertFalse(
-            _task_requests_people_crime_featured_article(
-                "Browse celebrity news headlines. website: https://people.com"
             )
         )
 

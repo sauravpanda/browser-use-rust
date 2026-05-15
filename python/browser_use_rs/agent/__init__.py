@@ -1157,7 +1157,6 @@ class Agent:
         self._consent_loop_nudged: bool = False
         self._southwest_deals_roundtrip_nudged: bool = False
         self._imdb_weekend_budget_nudged: bool = False
-        self._people_crime_search_nudged: bool = False
         self._newegg_review_bytes_failed_probes: int = 0
         self._newegg_review_bytes_selector_timeouts: int = 0
         self._newegg_review_bytes_product_urls: set[str] = set()
@@ -1511,12 +1510,6 @@ class Agent:
                     r for r in self._recent_blocked_state_reasons if r
                 ]
                 blocked_count = len(blocked_recent)
-                self._maybe_inject_people_crime_search_nudge(
-                    state_summary,
-                    block_reason,
-                    blocked_count,
-                    step_n,
-                )
                 if (
                     blocked_count >= 3
                     and blocked_count > self._blocked_state_nudged_at_count
@@ -3054,55 +3047,6 @@ class Agent:
             "agent: IMDB_WEEKEND_BUDGET nudge at step %d (url=%s)",
             step_n,
             current_url,
-        )
-
-    def _maybe_inject_people_crime_search_nudge(
-        self,
-        state: BrowserStateSummary,
-        block_reason: str,
-        blocked_count: int,
-        step_n: int,
-    ) -> None:
-        if self._people_crime_search_nudged:
-            return
-        if not _task_requests_people_crime_featured_article(self.task):
-            return
-        if not block_reason:
-            return
-        if blocked_count < 2 or step_n < 2:
-            return
-        if not _host_matches(state.url or "", "people.com"):
-            return
-
-        self._messages.append(
-            UserMessage(
-                content=(
-                    "[PEOPLE_CRIME_SEARCH_FALLBACK] People.com Crime is "
-                    "behind a Cloudflare/challenge page. Spend at most one "
-                    "more wait/click on the challenge, then switch to search "
-                    "evidence instead of manually editing search boxes. Use "
-                    '`web_search(query="People.com Crime section featured '
-                    'article headline", engine="google")`; if Google is '
-                    "blocked, call the same query with "
-                    '`engine="duckduckgo"`. On the results page, call '
-                    '`extract_result_cards(query="People.com crime featured '
-                    'article headline")` and use the top same-site '
-                    "people.com crime article title. Do not type new queries "
-                    "into a search input; use `web_search` so the query is "
-                    "not appended to stale text. If the article itself stays "
-                    "blocked, the final answer may state the headline based "
-                    "on the visible search-result title."
-                )
-            )
-        )
-        self._people_crime_search_nudged = True
-        logger.info(
-            "agent: PEOPLE_CRIME_SEARCH_FALLBACK nudge at step %d "
-            "(blocked_count=%d, reason=%s, url=%s)",
-            step_n,
-            blocked_count,
-            block_reason,
-            state.url or "",
         )
 
     async def _maybe_force_newegg_review_bytes_unavailable(
@@ -5475,16 +5419,6 @@ def _task_requests_imdb_weekend_budget(task: str) -> bool:
 def _task_requests_newegg_review_bytes(task: str) -> bool:
     task_lc = (task or "").lower()
     return "newegg.com" in task_lc and "review bytes" in task_lc
-
-
-def _task_requests_people_crime_featured_article(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "people.com" in task_lc
-        and "crime" in task_lc
-        and "featured article" in task_lc
-        and ("headline" in task_lc or "summarize" in task_lc)
-    )
 
 
 def _newegg_product_url_key(url: str | None) -> str | None:

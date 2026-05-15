@@ -2667,3 +2667,66 @@ Next decision gate:
 
 - Commit/push, then run targeted task-`1334` eval with the exact
   minimal-thinking Gemini config.
+
+## 2026-05-15T10:58:32Z Update: People Crime Targeted Eval Launched
+
+- Commit: `6d5b966c1a2c9f526ef2fc2c10641a8a7032ec82`.
+- Dashboard run: `kh7beezrb6z5tnpzjze8wchh5h86sjcr`.
+- GitHub workflow: `25914249711`.
+- Dataset lookup confirmed task `1334` is index `65`, so the targeted
+  range is `start=65`, `end=66`, `total_tasks=1`.
+- Dispatch config preserves the reference shape:
+  `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking_level=minimal`, headed
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`.
+- No literal `developerId` was sent in the manual `/api/startRun`
+  payload; the run should use Saurav's authenticated key identity.
+
+## 2026-05-15T11:11:39Z Update: People Crime Targeted Eval Completed
+
+Targeted run:
+
+- Run `kh7beezrb6z5tnpzjze8wchh5h86sjcr`, workflow `25914249711`,
+  commit `6d5b966c1a2c9f526ef2fc2c10641a8a7032ec82`.
+- Command shape matched the requested minimal-thinking Gemini config:
+  `xvfb-run`, `--model gemini-3-flash-preview`,
+  `--eval-model gpt-o4-mini`, `--parallel-runs 1`,
+  `--max-steps 100`, `--start 65`, `--end 66`,
+  `--max-actions-per-step 4`, `--judge-repeat-count 1`,
+  `--test-case WebBench_READ_v5`, `--proxyless`,
+  `--judge-type ComprehensiveV1`, `--no-thinking`,
+  `--thinking-level minimal`, `--flash-mode`, `--browser local`,
+  `--images-per-step 1`, `--use-vision true`, `--agent-type Agent`.
+- Platform caveat repeated: `/api/getRunResults` returned the real
+  task row plus an empty CDC row; use the task `1334` row.
+
+Result for task `1334`:
+
+- Judge/self-report: failure / `success=false`; the reference passes.
+- Steps: `27` vs old Rust `99` and Python reference `21`.
+- Duration: `383.88s` vs old Rust `740.07s` and reference `91.13s`.
+- Cost: `$0.084423` vs old Rust `$0.407383` and reference `$0.030460`.
+- Action errors/access denied/tool failures: `1/1/0`.
+- Final answer: unable to proceed because People.com remained behind a
+  Cloudflare/Turnstile challenge, despite trying mobile People.com and
+  several search engines.
+
+Trace proof:
+
+- The nudge did not produce the intended `extract_result_cards(...)`
+  recovery path.
+- The agent clicked a DuckDuckGo People.com result back into the
+  Cloudflare challenge on step `5`.
+- It later cycled through blocked search/direct-page attempts and
+  finished with an honest failure at step `27`.
+
+Decision:
+
+- Reject the People Crime nudge. It is a low-blast-radius improvement
+  over old Rust cost/steps, but it does not recover success and remains
+  materially worse than the Python reference on steps, duration, and
+  cost.
+- Revert the People-specific code/test and keep this log entry so the
+  failed experiment is traceable.
