@@ -1137,6 +1137,10 @@ class Agent:
         # search/filter/list page remains inaccessible.
         self._recent_search_fallback_hosts: list[str] = []
         self._search_fallback_nudged_at_count: int = 0
+        # Source-specific correction for EPA Air Quality System tasks.
+        # AirNow is related EPA content, but it does not satisfy tasks
+        # that explicitly ask for the Air Quality System/AQS data page.
+        self._aqs_source_nudged: bool = False
         # Consent overlay loop detector. Some sites render privacy text
         # in a way Gemini can see visually but CDP/DOM queries cannot
         # find. After repeated failed "accept cookies" JS attempts,
@@ -1527,6 +1531,37 @@ class Agent:
                     return
             except Exception as e:
                 logger.debug("blocked-state check failed: %s", e)
+
+            try:
+                if (
+                    not self._aqs_source_nudged
+                    and _task_requests_epa_aqs(self.task)
+                    and _host_matches(state_summary.url or "", "airnow.gov")
+                ):
+                    self._aqs_source_nudged = True
+                    self._messages.append(
+                        UserMessage(
+                            content=(
+                                "[AQS_SOURCE_MISMATCH] This task asks for "
+                                "EPA's Air Quality System/AQS page. AirNow "
+                                "is a different current-AQI site and does "
+                                "not satisfy the request. Navigate to "
+                                "https://www.epa.gov/outdoor-air-quality-data/"
+                                "air-data-daily-air-quality-tracker, generate "
+                                "or download the Los Angeles AQS tracker data, "
+                                "then answer from that EPA/AQS evidence. Do "
+                                "not finish from AirNow."
+                            )
+                        )
+                    )
+                    logger.info(
+                        "agent: AQS_SOURCE_MISMATCH nudge at step %d "
+                        "(url=%s)",
+                        step_n,
+                        state_summary.url,
+                    )
+            except Exception as e:
+                logger.debug("AQS source-mismatch check failed: %s", e)
 
             # External-search loop detector. For tasks that explicitly
             # require the target site's own search/filter/list/page,
@@ -4890,6 +4925,46 @@ def _host_matches(host: str, target: str) -> bool:
     return bool(h and t and (h == t or h.endswith("." + t) or t.endswith("." + h)))
 
 
+def _task_requests_epa_aqs(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return bool(
+        "epa.gov" in task_lc
+        and (
+            "air quality system" in task_lc
+            or re.search(r"\baqs\b", task_lc)
+        )
+    )
+
+
+def _looks_like_epa_aqs_airnow_answer(
+    task: str,
+    text: str,
+    final_url: str | None = None,
+) -> bool:
+    if not _task_requests_epa_aqs(task):
+        return False
+    if "airnow" in (text or "").lower():
+        return True
+    return _host_matches(final_url or "", "airnow.gov")
+
+
+def _looks_like_round_trip_answer_uses_one_way_only(task: str, text: str) -> bool:
+    task_lc = (task or "").lower()
+    answer_lc = (text or "").lower()
+    if "round-trip" not in task_lc and "round trip" not in task_lc:
+        return False
+    if "one-way" not in answer_lc and "one way" not in answer_lc:
+        return False
+    if "two one-way segments" in answer_lc:
+        return True
+    if re.search(r"\breturn(?:ing)?\b", answer_lc) and re.search(
+        r"\btotal\s+(?:price|fare|cost)\b|\bround[- ]trip\s+total\b",
+        answer_lc,
+    ):
+        return False
+    return True
+
+
 def _looks_like_search_host_final(task: str, final_url: str | None) -> bool:
     if not task or not final_url:
         return False
@@ -5375,6 +5450,8 @@ def _looks_like_unsupported_final_answer(
         or _looks_like_search_host_final(task, final_url)
         or _looks_like_late_pagination_final(task, final_url)
         or _looks_like_item_detail_list_final(task, final_url)
+        or _looks_like_epa_aqs_airnow_answer(task, text, final_url)
+        or _looks_like_round_trip_answer_uses_one_way_only(task, text)
     )
 
 

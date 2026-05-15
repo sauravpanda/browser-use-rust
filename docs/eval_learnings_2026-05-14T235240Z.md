@@ -775,3 +775,38 @@ Slice-level conclusion:
 - The next highest-value work is targeted, not broad: prevent EPA from
   drifting to AirNow when the task asks for AQS, and address Southwest's
   one-way-vs-round-trip interpretation before another slice.
+
+## 2026-05-15T02:30:21Z Update: Source-Mismatch Guards
+
+Trace review of the canceled first-10 slice found two reusable
+finalization/source failures:
+
+- Task `432` asks for EPA's Air Quality System/AQS page, but the agent
+  drifted to `airnow.gov`, briefly visited `/aqs`, then returned to
+  AirNow and finalized an AirNow AQI answer. AirNow is related EPA
+  content, but it is not the requested AQS evidence source.
+- Task `2656` asks for current round-trip flight deals, but the agent
+  finalized one-way offers and rationalized them as round-trip
+  equivalents when booked as two one-way segments.
+
+Patch:
+
+- Added an AQS source-mismatch nudge. When an EPA AQS task lands on
+  `airnow.gov`, the agent is told that AirNow does not satisfy the task
+  and is pointed back to the EPA Daily Air Quality Tracker path.
+- Added a final-answer guard so AQS tasks cannot self-report success
+  from AirNow text or an AirNow final URL.
+- Added a final-answer guard so round-trip tasks cannot self-report
+  success with one-way-only deal answers unless they include return
+  evidence and a round-trip total.
+
+Local verification:
+
+- `python3 -m unittest tests.test_final_answer_guards -q`
+- `python3 -m unittest discover -s tests -q`
+- `python3 -m compileall -q python/browser_use_rs tests bench`
+- `git diff --check`
+- `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`
+
+This is still not a release signal. These guards reduce two observed
+wrong-answer patterns, but they need targeted eval before another slice.

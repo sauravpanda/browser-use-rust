@@ -11,10 +11,12 @@ from browser_use_rs.agent import (  # noqa: E402
     _direct_section_url_for_consent_recovery,
     _looks_like_fabricated_blocked_answer,
     _looks_like_failed_consent_overlay_attempt,
+    _looks_like_epa_aqs_airnow_answer,
     _looks_like_item_detail_list_final,
     _looks_like_late_pagination_final,
     _looks_like_past_dated_forward_answer,
     _looks_like_pending_tool_action,
+    _looks_like_round_trip_answer_uses_one_way_only,
     _looks_like_search_result_query_mismatch_answer,
     _looks_like_search_host_final,
     _search_fallback_state_host,
@@ -292,6 +294,63 @@ class FinalAnswerGuardTests(unittest.TestCase):
         )
 
         self.assertTrue(_looks_like_unsupported_final_answer(task, answer))
+
+    def test_epa_aqs_task_rejects_airnow_final_answer(self):
+        task = (
+            "Find the latest update on air quality data for Los Angeles "
+            "on the EPA's Air Quality System page and record the reported "
+            "index value. website: https://epa.gov"
+        )
+        answer = (
+            "The latest air quality update from the EPA's AirNow system "
+            "reports an AQI value of 41 for Los Angeles."
+        )
+
+        self.assertTrue(_looks_like_epa_aqs_airnow_answer(task, answer))
+        self.assertTrue(
+            _looks_like_unsupported_final_answer(
+                task,
+                "The AQI value is 41.",
+                "https://www.airnow.gov/?city=Los%20Angeles",
+            )
+        )
+
+    def test_airnow_answer_allowed_when_task_asks_airnow_not_aqs(self):
+        task = (
+            "Check the AirNow page for Los Angeles and report the current "
+            "AQI. website: https://www.airnow.gov/"
+        )
+        answer = "AirNow reports an AQI of 41 for Los Angeles."
+
+        self.assertFalse(_looks_like_epa_aqs_airnow_answer(task, answer))
+
+    def test_round_trip_task_rejects_one_way_only_answer(self):
+        task = (
+            "Browse the flight deals section for current round-trip offers "
+            "and identify two deals along with their travel dates. "
+            "website: https://www.southwest.com/"
+        )
+        answer = (
+            "Albany to Orlando starts at $139 one-way for travel departing "
+            "June 16, 2026. The page presents these as round-trip offers "
+            "when booked as two one-way segments."
+        )
+
+        self.assertTrue(_looks_like_round_trip_answer_uses_one_way_only(task, answer))
+        self.assertTrue(_looks_like_unsupported_final_answer(task, answer))
+
+    def test_round_trip_task_allows_outbound_return_total_answer(self):
+        task = (
+            "Browse the flight deals section for current round-trip offers "
+            "and identify two deals along with their travel dates. "
+            "website: https://www.southwest.com/"
+        )
+        answer = (
+            "Deal 1: outbound June 16 at $139 and return June 23 at $149, "
+            "round-trip total fare $288."
+        )
+
+        self.assertFalse(_looks_like_round_trip_answer_uses_one_way_only(task, answer))
 
     def test_failed_consent_overlay_attempt_is_detected(self):
         calls = [
