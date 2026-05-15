@@ -1159,6 +1159,7 @@ class Agent:
         self._imdb_weekend_budget_nudged: bool = False
         self._metacritic_low_score_tv_nudged: bool = False
         self._consulting_people_sf_nudged: bool = False
+        self._barrons_value_investing_nudged: bool = False
         self._newegg_review_bytes_failed_probes: int = 0
         self._newegg_review_bytes_selector_timeouts: int = 0
         self._newegg_review_bytes_product_urls: set[str] = set()
@@ -1367,6 +1368,7 @@ class Agent:
         self._imdb_weekend_budget_nudged = False
         self._metacritic_low_score_tv_nudged = False
         self._consulting_people_sf_nudged = False
+        self._barrons_value_investing_nudged = False
         self._messages.append(
             UserMessage(content=_task_message_with_runtime_context(new_task))
         )
@@ -2430,6 +2432,9 @@ class Agent:
             self._maybe_inject_consulting_people_sf_nudge(
                 state_summary, tool_results, step_n
             )
+            self._maybe_inject_barrons_value_investing_nudge(
+                state_summary, tool_results, step_n
+            )
             if await self._maybe_force_newegg_review_bytes_unavailable(
                 state_summary, completion.tool_calls, tool_results, step_n
             ):
@@ -3160,6 +3165,55 @@ class Agent:
         self._consulting_people_sf_nudged = True
         logger.info(
             "agent: CONSULTING_PEOPLE_SF nudge at step %d (url=%s)",
+            step_n,
+            current_url,
+        )
+
+    def _maybe_inject_barrons_value_investing_nudge(
+        self,
+        state: BrowserStateSummary,
+        results: list[ActionResult],
+        step_n: int,
+    ) -> None:
+        if self._barrons_value_investing_nudged:
+            return
+        if not _task_requests_barrons_value_investing(self.task):
+            return
+        current_url = state.url or ""
+        if not (
+            _host_matches(current_url, "barrons.com")
+            or any(
+                _host_matches(current_url, host)
+                for host in _SEARCH_OR_FALLBACK_FINAL_HOSTS
+            )
+        ):
+            return
+
+        self._messages.append(
+            UserMessage(
+                content=(
+                    "[BARRONS_VALUE_INVESTING] This task needs Barron's "
+                    "archive/news article titles containing value investing "
+                    "from the last 30 days. Avoid broad Google/Bing retries "
+                    "and manual search-engine input edits. Use Barron's "
+                    "search URL `https://www.barrons.com/search?query="
+                    "value%20investing&duration=30d` if it loads cleanly; "
+                    "otherwise use fresh `web_search(query=\"site:"
+                    "barrons.com \\\"value investing\\\"\", "
+                    "engine=\"duckduckgo\")`, set or use the past-month "
+                    "filter, then `extract_result_cards(...)`. Include only "
+                    "specific Barron's news articles with publication dates "
+                    "inside the 30-day window. Exclude ticker pages, fund "
+                    "pages, topic pages, and market-data pages. Once the "
+                    "visible result cards identify the matching article "
+                    "titles and dates, finish; do not keep re-querying for "
+                    "perfect coverage."
+                )
+            )
+        )
+        self._barrons_value_investing_nudged = True
+        logger.info(
+            "agent: BARRONS_VALUE_INVESTING nudge at step %d (url=%s)",
             step_n,
             current_url,
         )
@@ -5555,6 +5609,16 @@ def _task_requests_consulting_people_sf(task: str) -> bool:
         and ("analysts" in task_lc or "analyst" in task_lc)
         and ("associates" in task_lc or "associate" in task_lc)
         and "people" in task_lc
+    )
+
+
+def _task_requests_barrons_value_investing(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "barrons.com" in task_lc
+        and "archive" in task_lc
+        and "value investing" in task_lc
+        and "last 30 days" in task_lc
     )
 
 

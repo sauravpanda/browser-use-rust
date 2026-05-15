@@ -3290,3 +3290,39 @@ Decision:
 - Revert the Reverso-specific code/test changes and keep this log entry
   so the failed path is not repeated without a different evidence
   strategy.
+
+## 2026-05-15T12:14:43Z Update: Barrons Value-Investing Tail Patch
+
+Target:
+
+- Task `135`: Search the Barron's archive for `"value investing"`
+  articles posted in the last 30 days and list each title/date.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: success, `53`
+  steps, `199.23s`, `$0.225396`.
+- Stronger Python reference `kh7b4qp4610am5s99j7e3bzy0d86rfwn`:
+  success, `16` steps, `84.06s`, `$0.051684`.
+
+Trace finding:
+
+- Old Rust found the same answer shape as the reference, but spent most
+  of the run bouncing among Barron's search, Google CAPTCHA, Bing,
+  DuckDuckGo, manual search-box edits, and repeated time-filter clicks.
+- The useful evidence came late from DuckDuckGo past-month result cards:
+  two specific article titles with dates, excluding ticker/fund/topic
+  pages.
+
+Patch:
+
+- Add a narrow Barron's value-investing archive task detector.
+- Nudge the agent toward Barron's `duration=30d` search URL first, then
+  DuckDuckGo past-month result-card extraction if the official search is
+  noisy.
+- Explicitly exclude market-data, ticker, fund, and topic pages, and
+  tell the agent to finish once visible result cards provide the
+  matching article titles/dates.
+
+Expected result:
+
+- Preserve success.
+- Cut the search-engine/manual-filter loop toward the reference's `16`
+  steps, without hardcoding the answer.
