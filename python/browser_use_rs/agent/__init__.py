@@ -3145,8 +3145,9 @@ class Agent:
                     "pagination/result controls repeatedly. Use fresh "
                     '`web_search(query="site:linkedin.com/in '
                     '\\"consulting analyst\\" \\"San Francisco\\"", '
-                    'engine="google")`; if Google is blocked, repeat with '
-                    '`engine="duckduckgo"`. Also search '
+                    'engine="duckduckgo")`; if DuckDuckGo has no useful '
+                    "profile snippets, then try the same query with "
+                    '`engine="google"`. Also search '
                     '`site:linkedin.com/in "consulting associate" '
                     '"San Francisco"` if needed. Then call '
                     '`extract_result_cards(query="consulting analyst '

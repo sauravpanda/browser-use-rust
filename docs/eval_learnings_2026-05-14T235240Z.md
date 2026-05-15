@@ -3001,3 +3001,75 @@ Next decision gate:
 
 - Commit/push, then launch a targeted task-`1030` eval with the exact
   reference-aligned minimal-thinking Gemini config.
+
+## 2026-05-15T11:41:42Z Update: Consulting People Targeted Eval Launched
+
+- Commit: `2c0208b935a7d5d3d3238a8c9c1b3003877af3b2`.
+- Dashboard run: `kh766yfx8kpzwp6j0hmjvmdb0986sw3f`.
+- GitHub workflow: `25915921910`.
+- Dataset range: `start=164`, `end=165`, task `1030`,
+  `total_tasks=1`.
+- Config preserves the requested reference shape:
+  `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking_level=minimal`, headed
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`.
+- No literal `developerId` was sent in `/api/startRun`.
+
+Expected result:
+
+- Preserve success.
+- Cut the old Rust search loop from `64` steps toward the reference's
+  `6` steps by using fresh `web_search(...)` and result-card extraction
+  instead of manual search-box loops.
+
+## 2026-05-15T11:47:26Z Update: Consulting People Targeted Eval Completed
+
+Targeted run:
+
+- Run `kh766yfx8kpzwp6j0hmjvmdb0986sw3f`, workflow `25915921910`,
+  commit `2c0208b935a7d5d3d3238a8c9c1b3003877af3b2`.
+- Command confirmed in GitHub logs:
+  `xvfb-run`, `--model gemini-3-flash-preview`,
+  `--eval-model gpt-o4-mini`, `--max-steps 100`,
+  `--start 164`, `--end 165`, `--max-actions-per-step 4`,
+  `--judge-repeat-count 1`, `--test-case WebBench_READ_v5`,
+  `--proxyless`, `--judge-type ComprehensiveV1`, `--no-thinking`,
+  `--thinking-level minimal`, `--flash-mode`, `--browser local`,
+  `--images-per-step 1`, `--use-vision true`, `--agent-type Agent`.
+- Platform caveat repeated: `/api/getRunResults` returned the real
+  LinkedIn row plus an empty CDC row; use the task `1030` row.
+
+Result for task `1030`:
+
+- Judge/self-report: success / `success=true`; same as old Rust and
+  reference.
+- Steps: `10` vs old Rust `64` and Python reference `6`.
+- Duration: `36.69s` vs old Rust `177.23s` and reference `44.00s`.
+- Cost: `$0.033249` vs old Rust `$0.215310` and reference `$0.010108`.
+- Action errors/access denied/tool failures: `0/1/0`.
+
+Trace proof:
+
+- The nudge moved the agent away from the old manual DuckDuckGo
+  type/click loop and into fresh `web_search(...)` calls.
+- The accepted final used LinkedIn search-result snippets, matching the
+  reference's evidence style.
+- Remaining waste: the first `web_search` used Google and hit a CAPTCHA
+  before falling back to DuckDuckGo; the trace also had one stale
+  `click(index=60)` on the search page.
+
+Decision:
+
+- Keep the patch direction. It preserves success, beats the reference on
+  duration, and cuts old Rust cost by about `85%`.
+- Try one narrow refinement before a second targeted retest: use
+  DuckDuckGo first for this exact LinkedIn-snippet task because Google
+  CAPTCHA is common in the eval environment.
+- `2026-05-15T11:49Z`: full local verification passed after the
+  DuckDuckGo-first refinement: `python3 -m unittest discover -s tests -q`,
+  `python3 -m compileall -q python/browser_use_rs tests bench`,
+  `cargo check -p bu-py`, `cargo test -p bu-browser`,
+  `git diff --check`, and
+  `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`.
