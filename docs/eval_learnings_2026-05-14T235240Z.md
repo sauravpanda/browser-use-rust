@@ -3407,6 +3407,34 @@ Configuration:
   `proxyless=true`, `parallel_runs=1`.
 - No literal `developerId` was sent in `/api/startRun`.
 
+## 2026-05-15T17:07:45Z Update: WorldAtlas Targeted Eval Completed
+
+Targeted run:
+
+- Run `kh75kjqmc6ccpr8wyearsky1fx86r8fv`, workflow `25930730384`,
+  commit `e8339c27b2dc3dd207be582524b1b9e9bd8f948f`.
+- Task `2164` produced judge success and self-report success.
+- Steps: `1` vs old Rust `6` and reference `7`.
+- Duration: `3.39s` vs old Rust `17.35s` and reference `29.62s`.
+- Cost: `$0.006729` vs old Rust `$0.016035` and reference `$0.009563`.
+- Tokens: platform `tokensUsed=10658`; usage total `11418`.
+
+Trace/result proof:
+
+- The final answer listed Yangtze, Yellow, and Mekong with WorldAtlas
+  details, and the judge accepted the answer as complete.
+- The workflow log confirmed the intended command:
+  `--start 63 --end 64 --max-steps 100 --no-thinking --thinking-level minimal`.
+
+Decision:
+
+- Keep the patch. It preserves judged success and beats both old Rust and
+  the reference on steps, duration, and cost.
+- Learning: for content lookup tasks where both traces converge on a
+  stable same-site article, a direct official article start can be better
+  than homepage/search workflows, especially when the homepage has a
+  fragile cookie overlay.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
