@@ -3225,6 +3225,48 @@ Configuration:
   `proxyless=true`, `parallel_runs=1`.
 - No literal `developerId` was sent in `/api/startRun`.
 
+## 2026-05-15T16:49:52Z Update: Coursera Targeted Eval Result
+
+Targeted run:
+
+- Run `kh729xeshns9k8k4q842kdkkx586rcxa`, workflow `25929898981`,
+  commit `7077f289bece0d17d4957eab0c867e2e642b9b45`.
+- Dataset range: `start_index=15`, `end_index=16`, task `275`.
+- Command confirmed in GitHub logs:
+  `--model gemini-3-flash-preview`, `--eval-model gpt-o4-mini`,
+  `--max-steps 100`, `--start 15`, `--end 16`,
+  `--max-actions-per-step 4`, `--judge-repeat-count 1`,
+  `--test-case WebBench_READ_v5`, `--proxyless`,
+  `--judge-type ComprehensiveV1`, `--no-thinking`,
+  `--thinking-level minimal`, `--flash-mode`, `--browser local`,
+  `--images-per-step 1`, `--use-vision true`, `--agent-type Agent`.
+
+Result for task `275`:
+
+- Judge/self-report: success / `success=true`.
+- Score: `1`.
+- Steps: `4` vs old Rust `8` and reference `4`.
+- Duration: `13.80s` vs old Rust `30.76s` and reference `21.76s`.
+- Cost: `$0.015338` vs old Rust `$0.024437` and reference `$0.018397`.
+- Tokens: platform `tokensUsed=51879`, usage `total_tokens=53588`.
+
+Trace proof:
+
+- The run navigated to Coursera's official search results for
+  `Data Science` and extracted the first five visible course
+  title-provider pairs.
+- The judge accepted the search and extraction as correct.
+
+Decision:
+
+- Keep the patch. It preserves judged success, matches the reference on
+  steps, beats the reference by `7.95s` and `$0.003059`, and cuts old
+  Rust by `4` steps, `16.96s`, and `$0.009099`.
+- Learning: direct same-site search-result URLs can be accepted for
+  generic `Search for ...` tasks when they are the exact URL produced by
+  the site's own search flow and the final answer is extracted from
+  visible result cards.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
