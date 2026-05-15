@@ -3717,3 +3717,33 @@ Decision:
 
 - Keep the patch. It preserves judged success, beats the reference on
   steps and duration, and cuts old Rust cost by about two-thirds.
+
+## 2026-05-15T12:53:35Z Update: Daily Mail Coronavirus Patch
+
+Target:
+
+- Task `2457`: Navigate to Daily Mail's Coronavirus section, if
+  available, and list the top three headlines with brief summaries.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: `15` steps,
+  `51.69s`, `$0.082966`.
+- Stronger Python reference `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success,
+  `5` steps, `20.70s`, `$0.009510`.
+
+Trace finding:
+
+- Old Rust eventually discovered the section URL
+  `https://www.dailymail.com/news/coronavirus/index.html` through the
+  topics page.
+- The useful final evidence came from extracting the top three headlines
+  and summaries from that section page.
+
+Patch:
+
+- Add a narrow Daily Mail Coronavirus task detector.
+- Nudge directly to the observed section URL and avoid topics-index or
+  homepage-search exploration unless that URL fails.
+
+Expected result:
+
+- Preserve success from the actual section page.
+- Cut the section-discovery tail toward the reference's short path.

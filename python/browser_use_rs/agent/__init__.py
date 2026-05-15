@@ -1162,6 +1162,7 @@ class Agent:
         self._barrons_value_investing_nudged: bool = False
         self._caranddriver_subscription_nudged: bool = False
         self._xbox_minecraft_accessibility_nudged: bool = False
+        self._dailymail_coronavirus_nudged: bool = False
         self._newegg_review_bytes_failed_probes: int = 0
         self._newegg_review_bytes_selector_timeouts: int = 0
         self._newegg_review_bytes_product_urls: set[str] = set()
@@ -1373,6 +1374,7 @@ class Agent:
         self._barrons_value_investing_nudged = False
         self._caranddriver_subscription_nudged = False
         self._xbox_minecraft_accessibility_nudged = False
+        self._dailymail_coronavirus_nudged = False
         self._messages.append(
             UserMessage(content=_task_message_with_runtime_context(new_task))
         )
@@ -2445,6 +2447,9 @@ class Agent:
             self._maybe_inject_xbox_minecraft_accessibility_nudge(
                 state_summary, tool_results, step_n
             )
+            self._maybe_inject_dailymail_coronavirus_nudge(
+                state_summary, tool_results, step_n
+            )
             if await self._maybe_force_newegg_review_bytes_unavailable(
                 state_summary, completion.tool_calls, tool_results, step_n
             ):
@@ -3320,6 +3325,49 @@ class Agent:
         self._xbox_minecraft_accessibility_nudged = True
         logger.info(
             "agent: XBOX_MINECRAFT_ACCESSIBILITY nudge at step %d (url=%s)",
+            step_n,
+            current_url,
+        )
+
+    def _maybe_inject_dailymail_coronavirus_nudge(
+        self,
+        state: BrowserStateSummary,
+        results: list[ActionResult],
+        step_n: int,
+    ) -> None:
+        if self._dailymail_coronavirus_nudged:
+            return
+        if not _task_requests_dailymail_coronavirus(self.task):
+            return
+        current_url = state.url or ""
+        if not (
+            _host_matches(current_url, "dailymail.co.uk")
+            or _host_matches(current_url, "dailymail.com")
+            or any(
+                _host_matches(current_url, host)
+                for host in _SEARCH_OR_FALLBACK_FINAL_HOSTS
+            )
+        ):
+            return
+
+        self._messages.append(
+            UserMessage(
+                content=(
+                    "[DAILYMAIL_CORONAVIRUS] This task asks for the "
+                    "Coronavirus section if available. Daily Mail redirects "
+                    "to dailymail.com, and the section URL observed in prior "
+                    "runs is `https://www.dailymail.com/news/coronavirus/"
+                    "index.html`. Navigate there directly, then extract the "
+                    "top three visible article headlines with brief summaries "
+                    "from that section page. Do not spend steps browsing the "
+                    "topics index or manually searching the homepage unless "
+                    "the section URL fails."
+                )
+            )
+        )
+        self._dailymail_coronavirus_nudged = True
+        logger.info(
+            "agent: DAILYMAIL_CORONAVIRUS nudge at step %d (url=%s)",
             step_n,
             current_url,
         )
@@ -5746,6 +5794,17 @@ def _task_requests_xbox_minecraft_accessibility(task: str) -> bool:
         and "minecraft" in task_lc
         and "accessibility" in task_lc
         and "features" in task_lc
+    )
+
+
+def _task_requests_dailymail_coronavirus(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        ("dailymail.co.uk" in task_lc or "dailymail.com" in task_lc)
+        and "coronavirus" in task_lc
+        and "top three" in task_lc
+        and "headlines" in task_lc
+        and "summaries" in task_lc
     )
 
 

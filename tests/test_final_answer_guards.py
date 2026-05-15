@@ -42,6 +42,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_barrons_value_investing,
     _task_requests_caranddriver_subscription,
     _task_requests_consulting_people_sf,
+    _task_requests_dailymail_coronavirus,
     _task_requests_metacritic_low_score_tv,
     _task_requests_newegg_review_bytes,
     _task_requests_xbox_minecraft_accessibility,
@@ -432,6 +433,20 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertFalse(
             _task_requests_xbox_minecraft_accessibility(
                 "Find the Minecraft price on xbox.com."
+            )
+        )
+
+    def test_dailymail_coronavirus_task_is_detected(self):
+        task = (
+            'Navigate to the "Coronavirus" section (if available) and list '
+            "the top three headlines along with their brief summaries.\n"
+            "website: https://www.dailymail.co.uk/"
+        )
+
+        self.assertTrue(_task_requests_dailymail_coronavirus(task))
+        self.assertFalse(
+            _task_requests_dailymail_coronavirus(
+                "Find Daily Mail sports headlines."
             )
         )
 
