@@ -4220,6 +4220,37 @@ Decision:
   task is constrained by prompt/page-state cost more than navigation
   steps once correctness is achieved.
 
+## 2026-05-15T18:30:47Z Update: Flickr Direct Search Patch Prepared
+
+Target:
+
+- Task `537`, dataset index `130`: Search Flickr for photos tagged
+  `"sunset"` and list the titles and usernames of the first 5 results.
+- Existing kept Rust patch run `kh723b2cwjw839yjm6cty93ckd86rtdb`:
+  success, `5` steps, `17.51s`, `$0.024927`.
+- Old Rust baseline: success, `16` steps, `54.77s`, `$0.073572`.
+- Reference run `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success, `5`
+  steps, `24.40s`, `$0.016284`.
+
+Trace finding:
+
+- The kept patch dismissed the consent overlay and navigated to
+  `https://www.flickr.com/search/?text=sunset` by step `2`, then finished
+  at step `5`.
+- Cost still trailed the reference despite better duration.
+
+Patch:
+
+- Add a Flickr sunset search URL constant for
+  `https://www.flickr.com/search/?text=sunset`.
+- For the exact task, start at that URL and include the extraction guidance
+  in the initial task message, while keeping the later nudge as a fallback.
+
+Expected result:
+
+- Avoid one model-driven navigation step and reduce prompt/cost while
+  preserving the accepted five-result Flickr answer.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
