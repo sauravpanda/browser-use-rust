@@ -3581,6 +3581,36 @@ Configuration:
   `proxyless=true`, `parallel_runs=1`.
 - No literal `developerId` was sent in `/api/startRun`.
 
+## 2026-05-15T17:20:32Z Update: Ulta Targeted Eval Completed
+
+Targeted run:
+
+- Run `kh7d6hv5m3m4b1csvzawbkc5ns86s293`, workflow `25931304518`,
+  commit `ce9b922fd3fd358790293df6bd91ced946223d13`.
+- Task `1933` produced judge success and self-report success.
+- Steps: `2` vs old Rust `9` and reference `8`.
+- Duration: `17.60s` vs old Rust `34.02s` and reference `39.98s`.
+- Cost: `$0.014900` vs old Rust `$0.034867` and reference `$0.022344`.
+- Tokens: platform `tokensUsed=35603`; usage total `37581`.
+
+Trace/result proof:
+
+- The final answer listed the first three visible Ulta haircare featured
+  products with ratings, review counts, and price ranges.
+- The judge accepted the answer and identified the source as the
+  `We think you'll like` featured section.
+- The workflow log confirmed the intended command:
+  `--start 71 --end 72 --max-steps 100 --no-thinking --thinking-level minimal`.
+
+Decision:
+
+- Keep the patch. It preserves judged success and beats both old Rust and
+  the reference on steps, duration, and cost.
+- Learning: for dynamic retail category tasks, a direct official category
+  listing URL can safely remove homepage flyout-menu churn when both
+  successful traces already converge on that listing and the final answer
+  uses live visible product-card details.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
