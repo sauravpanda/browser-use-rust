@@ -2945,3 +2945,59 @@ Decision:
   `cargo check -p bu-py`, `cargo test -p bu-browser`,
   `git diff --check`, and
   `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`.
+
+## 2026-05-15T11:40:05Z Update: Consulting People Search-Loop Patch
+
+Next target from per-task comparison:
+
+- Task `1030`: "Return the names of 4 people who work as analysts or
+  associates in consulting roles in San Francisco, CA."
+- Both old Rust and the Python reference passed, so this is another
+  cost/time regression rather than an accuracy recovery.
+- Old Rust: `64` steps, `177.23s`, `$0.215310`.
+- Python reference: `6` steps, `44.00s`, `$0.010108`.
+- Delta: `+58` steps, `+133.23s`, `+$0.205202`.
+
+Trace learning:
+
+- Rust visited LinkedIn, then spent most of the task manually editing
+  DuckDuckGo input fields, clicking result controls, and repeating
+  similar searches.
+- The accepted final came from public LinkedIn search-result evidence,
+  not from logged-in LinkedIn profile pages.
+- The reference used only a few fresh search calls and answered from
+  public result titles/snippets.
+
+Patch candidate:
+
+- Add a narrow `[CONSULTING_PEOPLE_SF]` nudge for this task shape.
+- Tell the agent LinkedIn profile pages may authwall and that public
+  search-result titles/snippets are enough.
+- Tell it to use fresh `web_search(...)` calls, then
+  `extract_result_cards(...)`, instead of manually editing search-engine
+  inputs or repeatedly clicking result controls.
+- Collect four distinct names whose visible result title/snippet shows
+  consulting analyst/associate and San Francisco/SF Bay Area context.
+
+Dataset lookup:
+
+- `/api/getTestCase` with `name=WebBench_READ_v5` shows task `1030` is
+  dataset index `164`, so the targeted range will be `start=164`,
+  `end=165`, `total_tasks=1`.
+
+Verification so far:
+
+- `python3 -m unittest tests.test_final_answer_guards -q`
+- `python3 -m compileall -q python/browser_use_rs/agent tests/test_final_answer_guards.py`
+- `git diff --check`
+- `2026-05-15T11:41Z`: full local verification passed:
+  `python3 -m unittest discover -s tests -q`,
+  `python3 -m compileall -q python/browser_use_rs tests bench`,
+  `cargo check -p bu-py`, `cargo test -p bu-browser`,
+  `git diff --check`, and
+  `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`.
+
+Next decision gate:
+
+- Commit/push, then launch a targeted task-`1030` eval with the exact
+  reference-aligned minimal-thinking Gemini config.

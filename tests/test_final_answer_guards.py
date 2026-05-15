@@ -39,6 +39,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _newegg_product_url_key,
     _newegg_review_bytes_evidence_labels,
     _newegg_review_bytes_should_force,
+    _task_requests_consulting_people_sf,
     _task_requests_metacritic_low_score_tv,
     _task_requests_newegg_review_bytes,
 )
@@ -373,6 +374,19 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertFalse(
             _task_requests_metacritic_low_score_tv(
                 "Find the latest movie reviews. website: https://metacritic.com"
+            )
+        )
+
+    def test_consulting_people_sf_task_is_detected(self):
+        task = (
+            "Return the names of 4 people who work as analysts or "
+            "associates in consulting roles in San Francisco, CA."
+        )
+
+        self.assertTrue(_task_requests_consulting_people_sf(task))
+        self.assertFalse(
+            _task_requests_consulting_people_sf(
+                "Return four consulting firms in New York."
             )
         )
 

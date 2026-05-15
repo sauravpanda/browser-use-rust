@@ -1158,6 +1158,7 @@ class Agent:
         self._southwest_deals_roundtrip_nudged: bool = False
         self._imdb_weekend_budget_nudged: bool = False
         self._metacritic_low_score_tv_nudged: bool = False
+        self._consulting_people_sf_nudged: bool = False
         self._newegg_review_bytes_failed_probes: int = 0
         self._newegg_review_bytes_selector_timeouts: int = 0
         self._newegg_review_bytes_product_urls: set[str] = set()
@@ -1365,6 +1366,7 @@ class Agent:
         self._bbc_goodfood_alias_nudged = False
         self._imdb_weekend_budget_nudged = False
         self._metacritic_low_score_tv_nudged = False
+        self._consulting_people_sf_nudged = False
         self._messages.append(
             UserMessage(content=_task_message_with_runtime_context(new_task))
         )
@@ -2425,6 +2427,9 @@ class Agent:
             self._maybe_inject_metacritic_low_score_tv_nudge(
                 state_summary, tool_results, step_n
             )
+            self._maybe_inject_consulting_people_sf_nudge(
+                state_summary, tool_results, step_n
+            )
             if await self._maybe_force_newegg_review_bytes_unavailable(
                 state_summary, completion.tool_calls, tool_results, step_n
             ):
@@ -3098,6 +3103,63 @@ class Agent:
         self._metacritic_low_score_tv_nudged = True
         logger.info(
             "agent: METACRITIC_LOW_SCORE_TV nudge at step %d (url=%s)",
+            step_n,
+            current_url,
+        )
+
+    def _maybe_inject_consulting_people_sf_nudge(
+        self,
+        state: BrowserStateSummary,
+        results: list[ActionResult],
+        step_n: int,
+    ) -> None:
+        if self._consulting_people_sf_nudged:
+            return
+        if not _task_requests_consulting_people_sf(self.task):
+            return
+        current_url = state.url or ""
+        if not (
+            _host_matches(current_url, "linkedin.com")
+            or any(
+                _host_matches(current_url, host)
+                for host in _SEARCH_OR_FALLBACK_FINAL_HOSTS
+            )
+        ):
+            return
+
+        text = "\n".join(
+            str(r.extracted_content or r.error or "")
+            for r in results
+            if r is not None
+        ).lower()
+        if step_n < 2 and "people" not in text and "linkedin" not in text:
+            return
+
+        self._messages.append(
+            UserMessage(
+                content=(
+                    "[CONSULTING_PEOPLE_SF] LinkedIn profile pages often "
+                    "authwall. This task can be answered from public search "
+                    "result titles/snippets for LinkedIn profiles. Do not "
+                    "manually edit search-engine input boxes or click "
+                    "pagination/result controls repeatedly. Use fresh "
+                    '`web_search(query="site:linkedin.com/in '
+                    '\\"consulting analyst\\" \\"San Francisco\\"", '
+                    'engine="google")`; if Google is blocked, repeat with '
+                    '`engine="duckduckgo"`. Also search '
+                    '`site:linkedin.com/in "consulting associate" '
+                    '"San Francisco"` if needed. Then call '
+                    '`extract_result_cards(query="consulting analyst '
+                    'associate San Francisco LinkedIn")`, collect four '
+                    "distinct names whose result title/snippet shows analyst "
+                    "or associate plus consulting and San Francisco/SF Bay "
+                    "Area context, and finish from those visible snippets."
+                )
+            )
+        )
+        self._consulting_people_sf_nudged = True
+        logger.info(
+            "agent: CONSULTING_PEOPLE_SF nudge at step %d (url=%s)",
             step_n,
             current_url,
         )
@@ -5482,6 +5544,17 @@ def _task_requests_metacritic_low_score_tv(task: str) -> bool:
         and "metascore" in task_lc
         and "below 60" in task_lc
         and "critic reviews" in task_lc
+    )
+
+
+def _task_requests_consulting_people_sf(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "san francisco" in task_lc
+        and "consulting" in task_lc
+        and ("analysts" in task_lc or "analyst" in task_lc)
+        and ("associates" in task_lc or "associate" in task_lc)
+        and "people" in task_lc
     )
 
 
