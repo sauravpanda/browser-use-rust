@@ -3767,6 +3767,71 @@ Configuration:
   `proxyless=true`, `parallel_runs=1`.
 - No literal `developerId` was sent in `/api/startRun`.
 
+## 2026-05-15T13:24:54Z Update: Better Health Targeted Eval Launched
+
+Targeted run:
+
+- Run `kh77anvgtkt6rcpnkepya6691986rddf`, workflow `25920228150`,
+  commit `66f397928b29245d342432528edbc2c2590e3997`.
+- Dataset range: `start_index=60`, `end_index=61`, task `165`.
+- User message: `bu-rust betterhealth-mental targeted no-thinking gpt-o4-mini`.
+
+Configuration:
+
+- `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking_level=minimal`, headed
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
+## 2026-05-15T13:36:22Z Update: Better Health Targeted Eval Rejected
+
+Targeted run:
+
+- Run `kh77anvgtkt6rcpnkepya6691986rddf`, workflow `25920228150`,
+  commit `66f397928b29245d342432528edbc2c2590e3997`.
+- Command confirmed in GitHub logs:
+  `xvfb-run`, `--model gemini-3-flash-preview`,
+  `--eval-model gpt-o4-mini`, `--max-steps 100`,
+  `--start 60`, `--end 61`, `--max-actions-per-step 4`,
+  `--judge-repeat-count 1`, `--test-case WebBench_READ_v5`,
+  `--proxyless`, `--judge-type ComprehensiveV1`, `--no-thinking`,
+  `--thinking-level minimal`, `--flash-mode`, `--browser local`,
+  `--images-per-step 1`, `--use-vision true`, `--agent-type Agent`.
+- Platform caveat repeated: `/api/getRunResults` returned the real
+  Better Health row plus an empty CDC row; use the task `165` row.
+
+Result for task `165`:
+
+- Judge/self-report: success / `success=true`.
+- Steps: `100` vs old Rust `29` and reference `13`.
+- Duration: `326.58s` vs old Rust `98.07s` and reference `49.51s`.
+- Cost: `$0.461702` vs old Rust `$0.092820` and reference `$0.030836`.
+- Action errors/access denied/tool failures: `0/0/0`.
+
+Trace proof:
+
+- The Better Health nudge fired at step `1`, and the run navigated to
+  `https://www.betterhealth.vic.gov.au/search?q=mental+health&sort=date`
+  at step `2`.
+- Gemini rejected the first sorted results as too broad, ignored the
+  instruction to avoid category filters and pagination, visited the
+  maintenance-prone category path, and spent the full step budget
+  re-filtering.
+- It eventually produced a judged-successful answer at step `100`, but
+  the run was much slower and more expensive than both baselines.
+
+Decision:
+
+- Reject the patch despite judged success. It maximized the step budget
+  and was worse than old Rust and the reference on every efficiency
+  metric.
+- Revert the Better Health code/test hook; future attempts need a
+  stronger finish condition or final-answer forcing after the first
+  accepted extraction, not just a guidance nudge.
+
 ## 2026-05-15T13:21:18Z Update: Viator Targeted Eval Rejected
 
 Targeted run:

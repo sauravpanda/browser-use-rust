@@ -1165,7 +1165,6 @@ class Agent:
         self._dailymail_coronavirus_nudged: bool = False
         self._flickr_sunset_search_nudged: bool = False
         self._getyourguide_paris_popular_nudged: bool = False
-        self._betterhealth_mental_recent_nudged: bool = False
         self._newegg_review_bytes_failed_probes: int = 0
         self._newegg_review_bytes_selector_timeouts: int = 0
         self._newegg_review_bytes_product_urls: set[str] = set()
@@ -1380,7 +1379,6 @@ class Agent:
         self._dailymail_coronavirus_nudged = False
         self._flickr_sunset_search_nudged = False
         self._getyourguide_paris_popular_nudged = False
-        self._betterhealth_mental_recent_nudged = False
         self._messages.append(
             UserMessage(content=_task_message_with_runtime_context(new_task))
         )
@@ -2462,9 +2460,6 @@ class Agent:
             self._maybe_inject_getyourguide_paris_popular_nudge(
                 state_summary, tool_results, step_n
             )
-            self._maybe_inject_betterhealth_mental_recent_nudge(
-                state_summary, tool_results, step_n
-            )
             if await self._maybe_force_newegg_review_bytes_unavailable(
                 state_summary, completion.tool_calls, tool_results, step_n
             ):
@@ -3471,50 +3466,6 @@ class Agent:
         self._getyourguide_paris_popular_nudged = True
         logger.info(
             "agent: GETYOURGUIDE_PARIS_POPULAR nudge at step %d (url=%s)",
-            step_n,
-            current_url,
-        )
-
-    def _maybe_inject_betterhealth_mental_recent_nudge(
-        self,
-        state: BrowserStateSummary,
-        results: list[ActionResult],
-        step_n: int,
-    ) -> None:
-        if self._betterhealth_mental_recent_nudged:
-            return
-        if not _task_requests_betterhealth_mental_recent(self.task):
-            return
-        current_url = state.url or ""
-        if not (
-            _host_matches(current_url, "betterhealth.vic.gov.au")
-            or any(
-                _host_matches(current_url, host)
-                for host in _SEARCH_OR_FALLBACK_FINAL_HOSTS
-            )
-        ):
-            return
-
-        self._messages.append(
-            UserMessage(
-                content=(
-                    "[BETTERHEALTH_MENTAL_RECENT] This task needs the "
-                    "titles of the five most recent Better Health Channel "
-                    "articles related to mental health. Use the site search "
-                    "URL `https://www.betterhealth.vic.gov.au/search?q="
-                    "mental+health&sort=date` or set the site's Sort by "
-                    "control to Most recent. Extract the first five titles "
-                    "from the sorted search results and finish. Do not apply "
-                    "the Mental Health And Wellbeing category filter, open "
-                    "the maintenance-prone category page, or page through "
-                    "older results after the first five sorted titles are "
-                    "visible."
-                )
-            )
-        )
-        self._betterhealth_mental_recent_nudged = True
-        logger.info(
-            "agent: BETTERHEALTH_MENTAL_RECENT nudge at step %d (url=%s)",
             step_n,
             current_url,
         )
@@ -5974,16 +5925,6 @@ def _task_requests_getyourguide_paris_popular(task: str) -> bool:
         and "most popular activity" in task_lc
         and "user ratings" in task_lc
         and "starting price" in task_lc
-    )
-
-
-def _task_requests_betterhealth_mental_recent(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "betterhealth.vic.gov.au" in task_lc
-        and "five most recent" in task_lc
-        and "mental health" in task_lc
-        and "articles" in task_lc
     )
 
 
