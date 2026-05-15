@@ -125,6 +125,19 @@ EPHEMERAL_RESULT_TOOLS: frozenset[str] = frozenset({
 
 _URL_RE = re.compile(r"https?://[^\s<>{}\\|^`\"']+")
 _URL_TRAILING_PUNCT = ".,;:!?)]}"
+_TIMEANDDATE_WORLD_CLOCK_URL = "https://www.timeanddate.com/worldclock/"
+_TIMEANDDATE_WORLD_CLOCK_GUIDANCE = (
+    "[TIMEANDDATE_WORLD_CLOCK] This task asks for the World Clock times "
+    "and time zones for New York, London, Tokyo, Sydney, and Moscow. Use "
+    f"`{_TIMEANDDATE_WORLD_CLOCK_URL}` as the starting page. The visible "
+    "clock content can be used without accepting a cookie overlay; do not "
+    "spend steps retrying stale cookie or search-box element indexes. Use "
+    "stable city links or direct same-site city URLs instead: "
+    "`/worldclock/usa/new-york`, `/worldclock/uk/london`, "
+    "`/worldclock/japan/tokyo`, `/worldclock/australia/sydney`, and "
+    "`/worldclock/russia/moscow`. For each city, capture the current local "
+    "time plus the time-zone abbreviation/name or UTC offset, then finish."
+)
 
 
 def _infer_initial_navigation_url(task: str) -> str | None:
@@ -148,7 +161,7 @@ def _infer_initial_navigation_url(task: str) -> str | None:
     if re.search(r"\b(?:do not|don't)\s+(?:go|open|navigate|visit|browse)", lowered):
         return None
     if _task_requests_timeanddate_world_clock(task):
-        return "https://www.timeanddate.com/worldclock/"
+        return _TIMEANDDATE_WORLD_CLOCK_URL
     return urls[0]
 
 
@@ -995,9 +1008,14 @@ class Agent:
                     "schema. Do NOT answer in plain text — a plain-text turn "
                     "will be treated as 'still working' and waste a step."
                 )
-        self.initial_actions = list(initial_actions or [])
         self._auto_initial_navigation_url: str | None = None
-        if auto_initial_navigation and not self.initial_actions:
+        self.initial_actions = list(initial_actions or [])
+        if _task_requests_timeanddate_world_clock(task):
+            self.initial_actions = [
+                {"navigate": {"url": _TIMEANDDATE_WORLD_CLOCK_URL}}
+            ]
+            self._auto_initial_navigation_url = _TIMEANDDATE_WORLD_CLOCK_URL
+        elif auto_initial_navigation and not self.initial_actions:
             inferred_url = _infer_initial_navigation_url(task)
             if inferred_url is not None:
                 self.initial_actions.append({"navigate": {"url": inferred_url}})
@@ -1277,8 +1295,15 @@ class Agent:
         # First-run setup: seed the conversation with the task and any
         # initial_actions the caller scripted (typically a navigate).
         if not self._messages:
+            task_content = _task_message_with_runtime_context(self.task)
+            if _task_requests_timeanddate_world_clock(self.task):
+                task_content = (
+                    task_content.rstrip()
+                    + "\n\n"
+                    + _TIMEANDDATE_WORLD_CLOCK_GUIDANCE
+                )
             self._messages.append(
-                UserMessage(content=_task_message_with_runtime_context(self.task))
+                UserMessage(content=task_content)
             )
             await self._run_initial_actions()
 
@@ -3595,21 +3620,7 @@ class Agent:
 
         self._messages.append(
             UserMessage(
-                content=(
-                    "[TIMEANDDATE_WORLD_CLOCK] This task asks for the "
-                    "World Clock times and time zones for New York, London, "
-                    "Tokyo, Sydney, and Moscow. Start from "
-                    "`https://www.timeanddate.com/worldclock/`. Avoid the "
-                    "World Clock search box if element indexes go stale; use "
-                    "stable city links or direct same-site city URLs instead: "
-                    "`/worldclock/usa/new-york`, `/worldclock/uk/london`, "
-                    "`/worldclock/japan/tokyo`, "
-                    "`/worldclock/australia/sydney`, and "
-                    "`/worldclock/russia/moscow`. For each city, capture the "
-                    "current local time plus the time-zone abbreviation/name "
-                    "or UTC offset, then finish without retrying stale "
-                    "indexes."
-                )
+                content=_TIMEANDDATE_WORLD_CLOCK_GUIDANCE
             )
         )
         self._timeanddate_world_clock_nudged = True

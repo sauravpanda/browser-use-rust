@@ -3074,6 +3074,57 @@ Expected result:
   A good result should be closer to the reference's city-page path and
   materially lower old Rust cost.
 
+## 2026-05-15T13:53:06Z Update: Timeanddate Targeted Eval Launched
+
+Targeted run:
+
+- Run `kh771cqade03b8nwr3xpdkb4zs86s06y`, workflow `25921568420`,
+  commit `d2b0d1f41d0aec9b1f8dbc41c30e3d112a2ed7a3`.
+- Dataset range: `start_index=190`, `end_index=191`, task `1846`.
+- User message: `bu-rust timeanddate-worldclock targeted no-thinking gpt-o4-mini`.
+
+Configuration:
+
+- `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking_level=minimal`, headed
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
+## 2026-05-15T13:58:05Z Update: Timeanddate First Result and Refinement
+
+Result for task `1846` on commit `d2b0d1f`:
+
+- Judge/self-report: success / `success=true`.
+- Steps: `18` vs old Rust `31` and reference `12`.
+- Duration: `61.21s` vs old Rust `85.85s` and reference `82.08s`.
+- Cost: `$0.067327` vs old Rust `$0.103345` and reference `$0.046063`.
+- Action errors/access denied/tool failures: `0/0/0`.
+
+Trace proof:
+
+- The nudge fired at step `1` and the agent then used the intended direct
+  city URLs.
+- The trace still spent the first three actions retrying a stale cookie
+  index on `https://www.timeanddate.com/`, then one failed consent
+  fallback before loading `/worldclock/`.
+- Workflow command verified the intended config:
+  `gemini-3-flash-preview`, `gpt-o4-mini`, `max_steps=100`,
+  `--no-thinking`, `--thinking-level minimal`, `WebBench_READ_v5`,
+  `ComprehensiveV1`, headed local browser, `images_per_step=1`,
+  `use_vision=true`, and `agent_type=Agent`.
+
+Refinement:
+
+- Keep the first result as an old-Rust improvement, but test one tighter
+  patch before final acceptance.
+- For this exact task, override any provided initial navigation to
+  `/worldclock/` and include the Timeanddate guidance in the initial user
+  message before the first model turn, so the agent does not spend early
+  steps retrying cookie/search-box stale indexes.
+
 ## 2026-05-15T13:38:33Z Update: CBS Featured Investigative Patch
 
 Target:
