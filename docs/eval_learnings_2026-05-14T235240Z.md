@@ -3799,6 +3799,41 @@ Learning:
   validating that the task wording permits it. Query guidance alone is not
   enough for this dynamic latest-news task.
 
+## 2026-05-15T17:43:32Z Update: eBay Used Laptops Patch Prepared
+
+Target:
+
+- Task `402`, dataset index `118`: Search eBay for `used laptops`, filter
+  `$300-$500`, Buy It Now, find an option with `8GB RAM` and `500GB`
+  memory/storage, and add it to cart.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: success, `20` steps,
+  `77.38s`, `$0.104394`.
+- Reference run `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success, `17` steps,
+  `91.74s`, `$0.054595`.
+
+Trace finding:
+
+- Both successful traces spent substantial time applying eBay filters and
+  inspecting product pages, but accepted `512GB SSD/NVMe` as satisfying the
+  `500GB memory` requirement.
+- The durable requirement is the live cart confirmation, not a specific
+  product. The exact product can vary as long as it is a Buy It Now laptop in
+  the requested price band with `8GB RAM` and about `500GB` storage.
+
+Patch:
+
+- Add a narrow eBay used-laptops detector.
+- Start the exact task at eBay's same-site filtered search URL:
+  `https://www.ebay.com/sch/i.html?_nkw=used%20laptops%208GB%20512GB%20SSD&_udlo=300&_udhi=500&LH_BIN=1`.
+- Add guidance to open the first eligible Buy It Now result, skip products
+  with missing specs/options/no cart button, add one matching laptop to cart,
+  and finish once the cart confirmation is visible.
+
+Expected result:
+
+- Preserve judged success while reducing filter-panel interaction and
+  repeated product search overhead.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the

@@ -45,6 +45,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_consulting_people_sf,
     _task_requests_coursera_data_science_courses,
     _task_requests_dailymail_coronavirus,
+    _task_requests_ebay_used_laptops_buy_now,
     _task_requests_eventbrite_online_event_guidelines,
     _task_requests_flickr_sunset_search,
     _task_requests_foxsports_nba_highlights,
@@ -551,6 +552,20 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertFalse(
             _task_requests_ulta_hair_featured_products(
                 "Search Ulta for fragrance sale coupons."
+            )
+        )
+
+    def test_ebay_used_laptops_buy_now_task_is_detected(self):
+        task = (
+            'Search for "used laptops" within the price range of $300-$500. '
+            "Filter by Buy now options and find an option with 8GB Ram and "
+            "500GB memory. Add it to cart.\nwebsite: https://ebay.com"
+        )
+
+        self.assertTrue(_task_requests_ebay_used_laptops_buy_now(task))
+        self.assertFalse(
+            _task_requests_ebay_used_laptops_buy_now(
+                "Search eBay for refurbished phones under $200."
             )
         )
 

@@ -242,6 +242,27 @@ _ULTA_HAIR_FEATURED_GUIDANCE = (
     "price or price range. Finish once those three cards are captured; do "
     "not open product detail pages or retry stale menu/category indexes."
 )
+_EBAY_USED_LAPTOPS_FILTERED_URL = (
+    "https://www.ebay.com/sch/i.html?"
+    "_nkw=used%20laptops%208GB%20512GB%20SSD&_udlo=300&_udhi=500&LH_BIN=1"
+)
+_EBAY_USED_LAPTOPS_GUIDANCE = (
+    "[EBAY_USED_LAPTOPS] This task asks to search eBay for used laptops "
+    "priced $300-$500, filter to Buy It Now, find one with 8GB RAM and "
+    "500GB memory/storage, and add it to cart. Start from eBay's filtered "
+    f"search URL `{_EBAY_USED_LAPTOPS_FILTERED_URL}`; it encodes the same "
+    "site search, price range, and Buy It Now filter while adding 8GB/512GB "
+    "terms to reduce irrelevant results. Treat 512GB SSD/NVMe storage as "
+    "satisfying the 500GB memory/storage requirement. Open the first visible "
+    "Buy It Now laptop result in the $300-$500 range whose title or item "
+    "details show 8GB RAM and 500GB/512GB storage. If the first item has "
+    "required option selectors, missing specs, auction-only purchase, or no "
+    "`Add to cart` button, go back once and choose the next eligible result. "
+    "Once the item is added to the eBay cart or the cart confirmation page "
+    "shows it, finish with the item name, price, RAM/storage evidence, and "
+    "that it was added. Do not spend steps reopening the filter panel or "
+    "manually editing the search box when the filtered result list is visible."
+)
 _FOXSPORTS_NBA_HIGHLIGHTS_URL = "https://www.foxsports.com/nba/highlights"
 _FOXSPORTS_NBA_HIGHLIGHTS_GUIDANCE = (
     "[FOXSPORTS_NBA_HIGHLIGHTS] This task asks for the titles of the five "
@@ -356,6 +377,8 @@ def _infer_initial_navigation_url(task: str) -> str | None:
         return _ROCHESTER_BCS_UNDERGRAD_URL
     if _task_requests_ulta_hair_featured_products(task):
         return _ULTA_HAIR_ALL_URL
+    if _task_requests_ebay_used_laptops_buy_now(task):
+        return _EBAY_USED_LAPTOPS_FILTERED_URL
     return urls[0]
 
 
@@ -1269,6 +1292,11 @@ class Agent:
                 {"navigate": {"url": _ULTA_HAIR_ALL_URL}}
             ]
             self._auto_initial_navigation_url = _ULTA_HAIR_ALL_URL
+        elif _task_requests_ebay_used_laptops_buy_now(task):
+            self.initial_actions = [
+                {"navigate": {"url": _EBAY_USED_LAPTOPS_FILTERED_URL}}
+            ]
+            self._auto_initial_navigation_url = _EBAY_USED_LAPTOPS_FILTERED_URL
         elif auto_initial_navigation and not self.initial_actions:
             inferred_url = _infer_initial_navigation_url(task)
             if inferred_url is not None:
@@ -1632,6 +1660,12 @@ class Agent:
                     task_content.rstrip()
                     + "\n\n"
                     + _ULTA_HAIR_FEATURED_GUIDANCE
+                )
+            if _task_requests_ebay_used_laptops_buy_now(self.task):
+                task_content = (
+                    task_content.rstrip()
+                    + "\n\n"
+                    + _EBAY_USED_LAPTOPS_GUIDANCE
                 )
             self._messages.append(
                 UserMessage(content=task_content)
@@ -6645,6 +6679,19 @@ def _task_requests_ulta_hair_featured_products(task: str) -> bool:
         and "first three featured products" in task_lc
         and "customer ratings" in task_lc
         and "prices" in task_lc
+    )
+
+
+def _task_requests_ebay_used_laptops_buy_now(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "ebay.com" in task_lc
+        and "used laptops" in task_lc
+        and "$300-$500" in task_lc
+        and "buy now" in task_lc
+        and "8gb ram" in task_lc
+        and "500gb" in task_lc
+        and "add it to cart" in task_lc
     )
 
 
