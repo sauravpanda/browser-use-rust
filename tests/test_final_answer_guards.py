@@ -53,6 +53,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_nature_quantum_authors,
     _task_requests_newegg_review_bytes,
     _task_requests_people_entertainment_video_description,
+    _task_requests_rochester_bcs_undergrad,
     _task_requests_softonic_latest_articles,
     _task_requests_sportskeeda_f1_about,
     _task_requests_telegraph_brexit_search,
@@ -521,6 +522,20 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertFalse(
             _task_requests_worldatlas_asia_rivers(
                 "List WorldAtlas articles about European capital cities."
+            )
+        )
+
+    def test_rochester_bcs_undergrad_task_is_detected(self):
+        task = (
+            "Browse the undergraduate programs page and summarize one "
+            "highlighted program along with its key features.\n"
+            "website: https://rochester.edu"
+        )
+
+        self.assertTrue(_task_requests_rochester_bcs_undergrad(task))
+        self.assertFalse(
+            _task_requests_rochester_bcs_undergrad(
+                "Find Rochester alumni news about cognitive science."
             )
         )
 

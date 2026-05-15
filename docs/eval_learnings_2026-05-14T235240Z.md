@@ -3435,6 +3435,43 @@ Decision:
   than homepage/search workflows, especially when the homepage has a
   fragile cookie overlay.
 
+## 2026-05-15T17:09:09Z Update: Rochester BCS Patch Prepared
+
+Target:
+
+- Task `1480`: Browse Rochester's undergraduate programs page and
+  summarize one highlighted program with key features.
+- Dataset lookup confirmed task `1480` is index `7`.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: success, `7` steps,
+  `25.78s`, `$0.022303`.
+- Reference run `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success, `6` steps,
+  `32.15s`, `$0.011504`.
+
+Trace finding:
+
+- Old Rust navigated through Rochester home, academics, programs, then
+  selected BS in Applied Mathematics and summarized requirements.
+- The reference clicked Rochester's academic programs page, selected Brain
+  and Cognitive Sciences, opened its undergraduate overview, and extracted
+  the same BCS details now visible on the official page.
+- The BCS undergraduate overview currently exposes the relevant evidence:
+  study areas including perception/action/thinking/language/learning/memory,
+  BA and BS options, interdisciplinary cognitive psychology/computer
+  science/neuroscience framing, MindSpace VR Laboratory, and research/skills.
+
+Patch:
+
+- Add a narrow Rochester undergraduate-program task detector.
+- Start directly on the official BCS undergraduate overview:
+  `https://www.sas.rochester.edu/bcs/undergraduate/index.html`.
+- Guide the agent to summarize the BCS program and key features without
+  walking through the homepage/program-directory click path.
+
+Expected result:
+
+- Preserve judged success while cutting the old and reference navigation
+  path to a one-step or two-step evidence read.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the

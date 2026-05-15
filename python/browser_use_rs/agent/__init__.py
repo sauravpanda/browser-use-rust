@@ -214,6 +214,22 @@ _WORLDATLAS_ASIA_RIVERS_GUIDANCE = (
     "available; do not retry the homepage cookie banner, use external search, "
     "or open unrelated geography pages."
 )
+_ROCHESTER_BCS_UNDERGRAD_URL = (
+    "https://www.sas.rochester.edu/bcs/undergraduate/index.html"
+)
+_ROCHESTER_BCS_UNDERGRAD_GUIDANCE = (
+    "[ROCHESTER_BCS_UNDERGRAD] This task asks for one highlighted "
+    "University of Rochester undergraduate program and its key features. "
+    "Use the official Brain and Cognitive Sciences undergraduate overview "
+    f"`{_ROCHESTER_BCS_UNDERGRAD_URL}`; Brain and Cognitive Sciences is "
+    "listed on Rochester's academic programs page and this overview contains "
+    "the program evidence. Summarize the BCS undergraduate program with key "
+    "features such as mental activity study areas, BA/BS options, the "
+    "interdisciplinary cognitive psychology/computer science/neuroscience "
+    "approach, MindSpace VR Laboratory, and undergraduate research/skills. "
+    "Finish once those details are visible; do not browse unrelated schools "
+    "or program directories."
+)
 _FOXSPORTS_NBA_HIGHLIGHTS_URL = "https://www.foxsports.com/nba/highlights"
 _FOXSPORTS_NBA_HIGHLIGHTS_GUIDANCE = (
     "[FOXSPORTS_NBA_HIGHLIGHTS] This task asks for the titles of the five "
@@ -324,6 +340,8 @@ def _infer_initial_navigation_url(task: str) -> str | None:
         return _COURSERA_DATA_SCIENCE_SEARCH_URL
     if _task_requests_worldatlas_asia_rivers(task):
         return _WORLDATLAS_ASIA_RIVERS_URL
+    if _task_requests_rochester_bcs_undergrad(task):
+        return _ROCHESTER_BCS_UNDERGRAD_URL
     return urls[0]
 
 
@@ -1227,6 +1245,11 @@ class Agent:
                 {"navigate": {"url": _WORLDATLAS_ASIA_RIVERS_URL}}
             ]
             self._auto_initial_navigation_url = _WORLDATLAS_ASIA_RIVERS_URL
+        elif _task_requests_rochester_bcs_undergrad(task):
+            self.initial_actions = [
+                {"navigate": {"url": _ROCHESTER_BCS_UNDERGRAD_URL}}
+            ]
+            self._auto_initial_navigation_url = _ROCHESTER_BCS_UNDERGRAD_URL
         elif auto_initial_navigation and not self.initial_actions:
             inferred_url = _infer_initial_navigation_url(task)
             if inferred_url is not None:
@@ -1578,6 +1601,12 @@ class Agent:
                     task_content.rstrip()
                     + "\n\n"
                     + _WORLDATLAS_ASIA_RIVERS_GUIDANCE
+                )
+            if _task_requests_rochester_bcs_undergrad(self.task):
+                task_content = (
+                    task_content.rstrip()
+                    + "\n\n"
+                    + _ROCHESTER_BCS_UNDERGRAD_GUIDANCE
                 )
             self._messages.append(
                 UserMessage(content=task_content)
@@ -6570,6 +6599,16 @@ def _task_requests_worldatlas_asia_rivers(task: str) -> bool:
         "worldatlas.com" in task_lc
         and "major river systems in asia" in task_lc
         and "list at least three rivers" in task_lc
+    )
+
+
+def _task_requests_rochester_bcs_undergrad(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "rochester.edu" in task_lc
+        and "undergraduate programs page" in task_lc
+        and "highlighted program" in task_lc
+        and "key features" in task_lc
     )
 
 
