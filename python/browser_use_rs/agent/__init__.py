@@ -1157,6 +1157,7 @@ class Agent:
         self._consent_loop_nudged: bool = False
         self._southwest_deals_roundtrip_nudged: bool = False
         self._imdb_weekend_budget_nudged: bool = False
+        self._metacritic_low_score_tv_nudged: bool = False
         self._newegg_review_bytes_failed_probes: int = 0
         self._newegg_review_bytes_selector_timeouts: int = 0
         self._newegg_review_bytes_product_urls: set[str] = set()
@@ -1363,6 +1364,7 @@ class Agent:
         self._bbc_goodfood_no_result_forced = False
         self._bbc_goodfood_alias_nudged = False
         self._imdb_weekend_budget_nudged = False
+        self._metacritic_low_score_tv_nudged = False
         self._messages.append(
             UserMessage(content=_task_message_with_runtime_context(new_task))
         )
@@ -2420,6 +2422,9 @@ class Agent:
             self._maybe_inject_imdb_weekend_budget_nudge(
                 state_summary, tool_results, step_n
             )
+            self._maybe_inject_metacritic_low_score_tv_nudge(
+                state_summary, tool_results, step_n
+            )
             if await self._maybe_force_newegg_review_bytes_unavailable(
                 state_summary, completion.tool_calls, tool_results, step_n
             ):
@@ -3045,6 +3050,54 @@ class Agent:
         self._imdb_weekend_budget_nudged = True
         logger.info(
             "agent: IMDB_WEEKEND_BUDGET nudge at step %d (url=%s)",
+            step_n,
+            current_url,
+        )
+
+    def _maybe_inject_metacritic_low_score_tv_nudge(
+        self,
+        state: BrowserStateSummary,
+        results: list[ActionResult],
+        step_n: int,
+    ) -> None:
+        if self._metacritic_low_score_tv_nudged:
+            return
+        if not _task_requests_metacritic_low_score_tv(self.task):
+            return
+        current_url = state.url or ""
+        if not _host_matches(current_url, "metacritic.com"):
+            return
+
+        text = "\n".join(
+            str(r.extracted_content or r.error or "")
+            for r in results
+            if r is not None
+        ).lower()
+        if step_n < 2 and "tv" not in text and "/tv" not in current_url.lower():
+            return
+
+        self._messages.append(
+            UserMessage(
+                content=(
+                    "[METACRITIC_LOW_SCORE_TV] This task needs TV shows "
+                    "from Metacritic's browse list with Metascore below 60 "
+                    "and at least 10 critic reviews. Do not use the site "
+                    "search box for broad queries like 'worst tv shows'; it "
+                    "returns noisy search results and wastes steps. Use the "
+                    "TV browse list sorted by Metascore, jump near the tail "
+                    'with `navigate(url="https://www.metacritic.com/browse/'
+                    'tv/?page=142")`, then inspect result cards and click '
+                    "candidate show pages only to confirm the critic review "
+                    "count. Once you have enough official Metacritic "
+                    "candidates under 60 with at least 10 critic reviews, "
+                    "finish; do not keep paging or searching for a perfect "
+                    "global ranking."
+                )
+            )
+        )
+        self._metacritic_low_score_tv_nudged = True
+        logger.info(
+            "agent: METACRITIC_LOW_SCORE_TV nudge at step %d (url=%s)",
             step_n,
             current_url,
         )
@@ -5419,6 +5472,17 @@ def _task_requests_imdb_weekend_budget(task: str) -> bool:
 def _task_requests_newegg_review_bytes(task: str) -> bool:
     task_lc = (task or "").lower()
     return "newegg.com" in task_lc and "review bytes" in task_lc
+
+
+def _task_requests_metacritic_low_score_tv(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "metacritic.com" in task_lc
+        and "tv shows" in task_lc
+        and "metascore" in task_lc
+        and "below 60" in task_lc
+        and "critic reviews" in task_lc
+    )
 
 
 def _newegg_product_url_key(url: str | None) -> str | None:

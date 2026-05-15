@@ -39,6 +39,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _newegg_product_url_key,
     _newegg_review_bytes_evidence_labels,
     _newegg_review_bytes_should_force,
+    _task_requests_metacritic_low_score_tv,
     _task_requests_newegg_review_bytes,
 )
 from browser_use_rs.llm.base import ToolCall  # noqa: E402
@@ -358,6 +359,20 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertTrue(
             _newegg_review_bytes_should_force(
                 24, failed_probes=2, product_count=1, selector_timeouts=0
+            )
+        )
+
+    def test_metacritic_low_score_tv_task_is_detected(self):
+        task = (
+            "Browse the TV shows category and list the titles, metascores, "
+            "and number of critic reviews for shows scoring below 60 with "
+            "at least 10 critic reviews.\nwebsite: https://metacritic.com"
+        )
+
+        self.assertTrue(_task_requests_metacritic_low_score_tv(task))
+        self.assertFalse(
+            _task_requests_metacritic_low_score_tv(
+                "Find the latest movie reviews. website: https://metacritic.com"
             )
         )
 
