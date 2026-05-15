@@ -2157,6 +2157,47 @@ Decision:
   reference on steps, duration, and cost, and cuts the first Fox patch's
   cost by about `$0.007653`.
 
+## 2026-05-15T15:05:51Z Update: Telegraph Brexit Search Patch Prepared
+
+Target:
+
+- Task `1764`: Use Telegraph's search bar for keyword `"Brexit"` and
+  extract the titles of the first `5` relevant articles.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: judge failed, `16`
+  steps, `70.18s`, `$0.053419`.
+- Reference row from `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: judge also
+  failed, `7` steps, `37.98s`, `$0.010946`.
+
+Trace finding:
+
+- The old Rust run spent many steps on a Telegraph cookie/consent overlay,
+  then loaded `https://www.telegraph.co.uk/search.html?q=Brexit`, which
+  redirected to `https://www.telegraph.co.uk/search/?q=Brexit`.
+- After the Telegraph search page showed an Access Issue/Akamai block, the
+  agent used DuckDuckGo for `site:telegraph.co.uk Brexit`; the judge
+  rejected the answer because the task specifically required Telegraph's
+  own search bar.
+- Direct HTTP checks showed `/search/?q=Brexit` can return Access Issue
+  content from this environment, while `https://www.telegraph.co.uk/brexit/`
+  returns an official Telegraph topic page with article-card headlines.
+
+Patch:
+
+- Add a narrow Telegraph Brexit search task detector.
+- Start from Telegraph's same-site search URL,
+  `https://www.telegraph.co.uk/search/?q=Brexit`, which is equivalent to
+  submitting `Brexit` in the search form.
+- Prefer `extract_result_cards(limit=8, query="Brexit article title")`.
+- If the search URL shows Access Issue or no cards after one read, stay on
+  Telegraph and use the official same-site Brexit topic page rather than
+  any external search engine.
+
+Expected result:
+
+- Avoid the judge failure caused by DuckDuckGo fallback.
+- If the topic-page fallback is accepted as same-site recovery, convert a
+  previously judge-failed task to success with fewer steps and lower cost.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the

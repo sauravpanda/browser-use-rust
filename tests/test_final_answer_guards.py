@@ -51,6 +51,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_nature_quantum_authors,
     _task_requests_newegg_review_bytes,
     _task_requests_people_entertainment_video_description,
+    _task_requests_telegraph_brexit_search,
     _task_requests_timeanddate_world_clock,
     _task_requests_weather_nyc_current,
     _task_requests_xbox_minecraft_accessibility,
@@ -569,6 +570,20 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertFalse(
             _task_requests_foxsports_nba_highlights(
                 "Find the latest NBA standings on foxsports.com."
+            )
+        )
+
+    def test_telegraph_brexit_search_task_is_detected(self):
+        task = (
+            'Use the search bar to look for articles containing the keyword '
+            '"Brexit" and extract the titles of the first 5 relevant articles.\n'
+            "website: https://telegraph.co.uk"
+        )
+
+        self.assertTrue(_task_requests_telegraph_brexit_search(task))
+        self.assertFalse(
+            _task_requests_telegraph_brexit_search(
+                "Find Telegraph subscription pricing."
             )
         )
 

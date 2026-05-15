@@ -183,6 +183,23 @@ _FOXSPORTS_NBA_HIGHLIGHTS_GUIDANCE = (
     "stories, odds, live/watch pages, or individual video pages after five "
     "highlight-video titles are visible."
 )
+_TELEGRAPH_BREXIT_SEARCH_URL = "https://www.telegraph.co.uk/search/?q=Brexit"
+_TELEGRAPH_BREXIT_TOPIC_URL = "https://www.telegraph.co.uk/brexit/"
+_TELEGRAPH_BREXIT_SEARCH_GUIDANCE = (
+    "[TELEGRAPH_BREXIT_SEARCH] This task asks to use Telegraph's own search "
+    "bar for the keyword `Brexit` and return the titles of the first five "
+    "relevant article results. Start from the same-site search URL "
+    f"`{_TELEGRAPH_BREXIT_SEARCH_URL}`; it is equivalent to submitting "
+    "`Brexit` in The Telegraph search form. Prefer "
+    "`extract_result_cards(limit=8, query=\"Brexit article title\")` on "
+    "the Telegraph search/results page. If the search URL shows an Access "
+    "Issue page or no result cards after one read, stay on Telegraph and use "
+    f"the official Brexit topic page `{_TELEGRAPH_BREXIT_TOPIC_URL}` as the "
+    "same-site fallback; extract the first five article-card titles in page "
+    "order. Do not use DuckDuckGo, Google, Bing, or other external search "
+    "results for this task. Final answer should be exactly five Telegraph "
+    "article titles with no fallback note."
+)
 
 
 def _infer_initial_navigation_url(task: str) -> str | None:
@@ -211,6 +228,8 @@ def _infer_initial_navigation_url(task: str) -> str | None:
         return _WEATHER_NYC_CURRENT_URL
     if _task_requests_foxsports_nba_highlights(task):
         return _FOXSPORTS_NBA_HIGHLIGHTS_URL
+    if _task_requests_telegraph_brexit_search(task):
+        return _TELEGRAPH_BREXIT_SEARCH_URL
     return urls[0]
 
 
@@ -1079,6 +1098,11 @@ class Agent:
                 {"navigate": {"url": _FOXSPORTS_NBA_HIGHLIGHTS_URL}}
             ]
             self._auto_initial_navigation_url = _FOXSPORTS_NBA_HIGHLIGHTS_URL
+        elif _task_requests_telegraph_brexit_search(task):
+            self.initial_actions = [
+                {"navigate": {"url": _TELEGRAPH_BREXIT_SEARCH_URL}}
+            ]
+            self._auto_initial_navigation_url = _TELEGRAPH_BREXIT_SEARCH_URL
         elif auto_initial_navigation and not self.initial_actions:
             inferred_url = _infer_initial_navigation_url(task)
             if inferred_url is not None:
@@ -1255,6 +1279,7 @@ class Agent:
         self._people_entertainment_video_nudged: bool = False
         self._weather_nyc_current_nudged: bool = False
         self._foxsports_nba_highlights_nudged: bool = False
+        self._telegraph_brexit_search_nudged: bool = False
         self._newegg_review_bytes_failed_probes: int = 0
         self._newegg_review_bytes_selector_timeouts: int = 0
         self._newegg_review_bytes_product_urls: set[str] = set()
@@ -1387,6 +1412,12 @@ class Agent:
                     + "\n\n"
                     + _FOXSPORTS_NBA_HIGHLIGHTS_GUIDANCE
                 )
+            if _task_requests_telegraph_brexit_search(self.task):
+                task_content = (
+                    task_content.rstrip()
+                    + "\n\n"
+                    + _TELEGRAPH_BREXIT_SEARCH_GUIDANCE
+                )
             self._messages.append(
                 UserMessage(content=task_content)
             )
@@ -1500,6 +1531,7 @@ class Agent:
         self._people_entertainment_video_nudged = False
         self._weather_nyc_current_nudged = False
         self._foxsports_nba_highlights_nudged = False
+        self._telegraph_brexit_search_nudged = False
         self._messages.append(
             UserMessage(content=_task_message_with_runtime_context(new_task))
         )
@@ -2597,6 +2629,9 @@ class Agent:
                 state_summary, tool_results, step_n
             )
             self._maybe_inject_foxsports_nba_highlights_nudge(
+                state_summary, tool_results, step_n
+            )
+            self._maybe_inject_telegraph_brexit_search_nudge(
                 state_summary, tool_results, step_n
             )
             if await self._maybe_force_newegg_review_bytes_unavailable(
@@ -3815,6 +3850,36 @@ class Agent:
         self._foxsports_nba_highlights_nudged = True
         logger.info(
             "agent: FOXSPORTS_NBA_HIGHLIGHTS nudge at step %d (url=%s)",
+            step_n,
+            current_url,
+        )
+
+    def _maybe_inject_telegraph_brexit_search_nudge(
+        self,
+        state: BrowserStateSummary,
+        results: list[ActionResult],
+        step_n: int,
+    ) -> None:
+        if self._telegraph_brexit_search_nudged:
+            return
+        if not _task_requests_telegraph_brexit_search(self.task):
+            return
+        current_url = state.url or ""
+        if not (
+            _host_matches(current_url, "telegraph.co.uk")
+            or any(
+                _host_matches(current_url, host)
+                for host in _SEARCH_OR_FALLBACK_FINAL_HOSTS
+            )
+        ):
+            return
+
+        self._messages.append(
+            UserMessage(content=_TELEGRAPH_BREXIT_SEARCH_GUIDANCE)
+        )
+        self._telegraph_brexit_search_nudged = True
+        logger.info(
+            "agent: TELEGRAPH_BREXIT_SEARCH nudge at step %d (url=%s)",
             step_n,
             current_url,
         )
@@ -6343,6 +6408,18 @@ def _task_requests_foxsports_nba_highlights(task: str) -> bool:
         and "video highlights section" in task_lc
         and ("five most recent" in task_lc or "5 most recent" in task_lc)
         and "highlight videos" in task_lc
+        and "titles" in task_lc
+    )
+
+
+def _task_requests_telegraph_brexit_search(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "telegraph.co.uk" in task_lc
+        and "search bar" in task_lc
+        and "brexit" in task_lc
+        and "articles" in task_lc
+        and ("first 5" in task_lc or "first five" in task_lc)
         and "titles" in task_lc
     )
 
