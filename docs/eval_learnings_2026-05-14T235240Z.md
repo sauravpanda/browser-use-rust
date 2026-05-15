@@ -2381,3 +2381,28 @@ Candidate change:
   for reliability, and sorts returned rows by distance like the frontend.
 - This should be tested on task `2027` first under the exact
   minimal-thinking Gemini config before any 20-task slice run.
+
+## 2026-05-15T09:53:52Z Update: Dataset Index For VA Task Is 17, Not 26
+
+Mis-indexed targeted run:
+
+- Run `kh7ckadn9cmw2p1k4cjvkavfes86r7np`, workflow `25911463835`,
+  commit `cedf7683331ad466f77bd313438de7ceaa81679c`.
+- Command was otherwise correct:
+  `--max-steps 100`, `--no-thinking`, `--thinking-level minimal`,
+  `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`, headed/xvfb,
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, vision on.
+- The assumed `--start 26 --end 27` slot ran task `895`
+  (Investopedia), not task `2027`.
+- Result is not evidence for or against the VA locator patch:
+  task `895` failed again after 15 steps, 50.14s, `$0.056592`,
+  with one access-denied count.
+
+Corrected dataset lookup:
+
+- Fetching `WebBench_READ_v5` from `/api/getTestCase` showed task
+  `2027` is dataset index `17`.
+- The comparable 20-task slice `10..30` order begins:
+  `2226, 91, 954, 1840, 1494, 275, 1510, 2027, ...`.
+- Use `--start 17 --end 18` for the VA locator retest.
