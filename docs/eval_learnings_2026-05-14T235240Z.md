@@ -3106,6 +3106,28 @@ Expected result:
 - Preserve judged success while cutting the old Rust navigation and
   re-reading path toward a direct page-read answer.
 
+## 2026-05-15T16:39:49Z Update: Softonic Targeted Eval Launched
+
+Targeted run:
+
+- Run `kh78xymwhn9z1jmwym4tpq17q186ss3p`, workflow `25929578690`,
+  commit `cfc4630238f001b23097420b5e5dcfe0570565d8`.
+- Dataset range: `start_index=127`, `end_index=128`, task `2249`.
+- User message:
+  `bu-rust softonic-latest-articles targeted no-thinking gpt-o4-mini`.
+
+Configuration:
+
+- Same corrected object-shaped dispatch and minimal-thinking Gemini
+  config: `runtime=rs`, `gemini-3-flash-preview`,
+  `eval_model=gpt-o4-mini`, `max_steps=100`, `--no-thinking`,
+  `thinking_level=minimal`, headed local browser,
+  `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
