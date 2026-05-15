@@ -336,6 +336,20 @@ _SPORTSKEEDA_F1_ABOUT_GUIDANCE = (
     "the right section, then final-answer the three paragraphs from the "
     "Sportskeeda page/source evidence."
 )
+_DAILYMAIL_CORONAVIRUS_URL = (
+    "https://www.dailymail.co.uk/news/coronavirus/index.html"
+)
+_DAILYMAIL_CORONAVIRUS_GUIDANCE = (
+    "[DAILYMAIL_CORONAVIRUS] This task asks for Daily Mail's Coronavirus "
+    "section if available. Start from the official section URL "
+    f"`{_DAILYMAIL_CORONAVIRUS_URL}`; Daily Mail may redirect between "
+    "dailymail.co.uk and dailymail.com. If the section page already shows "
+    "article cards, extract the top three visible headlines with brief "
+    "summaries and finish immediately. Do not spend steps browsing the "
+    "topics index, manually searching the homepage, or opening individual "
+    "articles unless the section page does not show enough headline/summary "
+    "evidence."
+)
 _EVENTBRITE_ONLINE_EVENT_URL = (
     "https://www.eventbrite.com/help/en-us/articles/337081/"
     "how-to-set-up-an-online-only-event/"
@@ -384,6 +398,8 @@ def _infer_initial_navigation_url(task: str) -> str | None:
         return _TELEGRAPH_BREXIT_SEARCH_URL
     if _task_requests_sportskeeda_f1_about(task):
         return _SPORTSKEEDA_F1_URL
+    if _task_requests_dailymail_coronavirus(task):
+        return _DAILYMAIL_CORONAVIRUS_URL
     if _task_requests_eventbrite_online_event_guidelines(task):
         return _EVENTBRITE_ONLINE_EVENT_URL
     if _task_requests_webmd_health_news_top_story(task):
@@ -1280,6 +1296,11 @@ class Agent:
                 {"navigate": {"url": _SPORTSKEEDA_F1_URL}}
             ]
             self._auto_initial_navigation_url = _SPORTSKEEDA_F1_URL
+        elif _task_requests_dailymail_coronavirus(task):
+            self.initial_actions = [
+                {"navigate": {"url": _DAILYMAIL_CORONAVIRUS_URL}}
+            ]
+            self._auto_initial_navigation_url = _DAILYMAIL_CORONAVIRUS_URL
         elif _task_requests_eventbrite_online_event_guidelines(task):
             self.initial_actions = [
                 {"navigate": {"url": _EVENTBRITE_ONLINE_EVENT_URL}}
@@ -1647,6 +1668,12 @@ class Agent:
                     task_content.rstrip()
                     + "\n\n"
                     + _SPORTSKEEDA_F1_ABOUT_GUIDANCE
+                )
+            if _task_requests_dailymail_coronavirus(self.task):
+                task_content = (
+                    task_content.rstrip()
+                    + "\n\n"
+                    + _DAILYMAIL_CORONAVIRUS_GUIDANCE
                 )
             if _task_requests_eventbrite_online_event_guidelines(self.task):
                 task_content = (
@@ -3842,17 +3869,7 @@ class Agent:
 
         self._messages.append(
             UserMessage(
-                content=(
-                    "[DAILYMAIL_CORONAVIRUS] This task asks for the "
-                    "Coronavirus section if available. Daily Mail redirects "
-                    "to dailymail.com, and the section URL observed in prior "
-                    "runs is `https://www.dailymail.com/news/coronavirus/"
-                    "index.html`. Navigate there directly, then extract the "
-                    "top three visible article headlines with brief summaries "
-                    "from that section page. Do not spend steps browsing the "
-                    "topics index or manually searching the homepage unless "
-                    "the section URL fails."
-                )
+                content=_DAILYMAIL_CORONAVIRUS_GUIDANCE
             )
         )
         self._dailymail_coronavirus_nudged = True

@@ -4157,6 +4157,38 @@ Decision:
   for CBS, likely because the homepage page-state payload dominates prompt
   cost and the lead story still needs multiple browser actions.
 
+## 2026-05-15T18:21:48Z Update: Daily Mail Coronavirus Direct Patch Prepared
+
+Target:
+
+- Task `2457`, dataset index `58`: Navigate to Daily Mail's Coronavirus
+  section, if available, and list the top three headlines with brief
+  summaries.
+- Existing kept Rust patch run `kh75ptqwbph5y08jqv18srz6nh86rpc3`:
+  success, `5` steps, `30.94s`, `$0.020824`.
+- Old Rust baseline: `15` steps, `51.69s`, `$0.082966`.
+- Reference run `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success, `5`
+  steps, `20.70s`, `$0.009510`.
+
+Trace finding:
+
+- The kept patch succeeded, but it reached the direct Coronavirus section
+  URL only by step `3`; the useful extraction happened from that section
+  page at step `4`.
+
+Patch:
+
+- Add a Daily Mail Coronavirus section URL constant:
+  `https://www.dailymail.co.uk/news/coronavirus/index.html`.
+- For the exact task, start with that section URL and inject the section
+  guidance in the initial task message.
+- Keep the existing later nudge as a fallback using the same guidance.
+
+Expected result:
+
+- Remove section-discovery overhead, preserve judged success, and reduce
+  steps/duration/cost versus the kept Rust patch and the reference.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
