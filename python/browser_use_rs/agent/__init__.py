@@ -3260,6 +3260,11 @@ class Agent:
 
         async def _safe_screenshot() -> tuple[str | None, str]:
             try:
+                if self.use_vision and hasattr(self.session, "screenshot_jpeg_scaled"):
+                    jpg = await asyncio.wait_for(
+                        self.session.screenshot_jpeg_scaled(60, 0.5), timeout=15.0
+                    )
+                    return base64.b64encode(jpg).decode("ascii"), "image/jpeg"
                 if self.use_vision and hasattr(self.session, "screenshot_jpeg"):
                     jpg = await asyncio.wait_for(
                         self.session.screenshot_jpeg(60), timeout=15.0

@@ -1,6 +1,8 @@
 import sys
 import time
 import unittest
+import asyncio
+import base64
 from pathlib import Path
 
 
@@ -67,6 +69,49 @@ class PromptMetricsTests(unittest.TestCase):
         self.assertIsInstance(content, list)
         image = next(part for part in content if isinstance(part, ImagePart))
         self.assertEqual(image.media_type, "image/png")
+
+    def test_capture_state_prefers_scaled_jpeg_for_vision(self):
+        class FakeSnapshot:
+            elements = []
+
+            def to_llm_string(self):
+                return ""
+
+        class FakeSession:
+            def __init__(self):
+                self.scaled_args = None
+
+            async def current_url(self):
+                return "https://example.com"
+
+            async def screenshot_jpeg_scaled(self, quality, scale):
+                self.scaled_args = (quality, scale)
+                return b"scaled-jpeg"
+
+            async def screenshot_jpeg(self, quality):
+                raise AssertionError("unscaled JPEG should not be used")
+
+            async def screenshot(self):
+                raise AssertionError("PNG screenshot should not be used")
+
+            async def dom_snapshot(self):
+                return FakeSnapshot()
+
+        session = FakeSession()
+        agent = Agent.__new__(Agent)
+        agent.use_vision = True
+        agent.session = session
+        agent._prev_selectors = set()
+        agent.state = type("State", (), {"n_steps": 1})()
+
+        state = asyncio.run(agent._capture_state())
+
+        self.assertEqual(session.scaled_args, (60, 0.5))
+        self.assertEqual(
+            state.screenshot,
+            base64.b64encode(b"scaled-jpeg").decode("ascii"),
+        )
+        self.assertEqual(state.screenshot_media_type, "image/jpeg")
 
     def test_compute_call_metrics_splits_history_and_read_state_bytes(self):
         agent = Agent.__new__(Agent)

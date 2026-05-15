@@ -1984,3 +1984,60 @@ Next measurement:
   Gemini config (`gemini-3-flash-preview`, `--no-thinking`,
   `thinking_level=minimal`, `max_steps=100`) to confirm whether JPEG
   shrinks `prompt_image_bytes` and total cost without hurting success.
+
+## 2026-05-15T06:40:39Z Update: JPEG-Only Measurement and Scaled Screenshot Patch
+
+Targeted JPEG-only evals, exact minimal-thinking Gemini config:
+
+- Run `kh75a4nbhq9r0w7d84nt50311n86swar`, workflow `25903924829`,
+  dataset `24..25`, task `607` / GameRant:
+  - Result: failed / `selfReportSuccess=false`
+  - Steps: 19 vs previous current-head 28
+  - Duration: 67.733s vs previous current-head 95.555s
+  - Cost: `$0.072677` vs previous current-head `$0.118792`
+  - Prompt image bytes: 1.27MB total / 137KB max vs previous
+    current-head 17.43MB total / 1.58MB max
+  - Trace note: this run hit direct-site browser errors and forced final
+    from repeated external-search fallback pages. The failure looks like
+    site-access/path variance, not necessarily JPEG readability.
+- Run `kh70vpzqhwts7wzjb8p35qy3ph86skrw`, workflow `25904127027`,
+  dataset `10..11`, mapped to task `2226` / Zara:
+  - Result: success
+  - Steps: 15 vs previous current-head 14
+  - Duration: 41.717s vs previous current-head 47.467s
+  - Cost: `$0.041915` vs previous current-head `$0.039176`
+  - Prompt image bytes: 1.15MB total / 138KB max vs previous
+    current-head 12.61MB total / 1.86MB max
+
+Learning:
+
+- JPEG quality compression dramatically reduces base64/payload size and
+  uploaded screenshot bytes, but it does not reliably reduce Gemini cost.
+- For Gemini vision, the token/cost lever appears to be image dimensions,
+  not encoded byte size. A same-resolution JPEG can be much smaller on
+  the wire while still costing roughly the same, and step variance can
+  swamp the payload win.
+- The next cost lever should preserve `use_vision=true` while reducing
+  the LLM image dimensions.
+
+Patch:
+
+- Added `screenshot_jpeg_scaled(quality=60, scale=0.5)` using
+  `Page.getLayoutMetrics` plus `Page.captureScreenshot` clip scale, so
+  the LLM sees a half-scale viewport JPEG without changing the actual
+  browser viewport/layout.
+- Changed automatic vision-state capture to prefer the scaled JPEG path,
+  falling back to unscaled JPEG and then the existing PNG path.
+- Kept the explicit screenshot tool on PNG.
+- Added a unit test proving `_capture_state()` selects the scaled JPEG
+  path for `use_vision=True`.
+
+Local verification:
+
+- `python3 -m unittest tests.test_prompt_metrics -q`
+- `cargo check -p bu-py`
+- `python3 -m compileall -q python/browser_use_rs tests bench`
+- `python3 -m unittest discover -s tests -q`
+- `cargo test -p bu-browser`
+- `git diff --check`
+- `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`
