@@ -1329,6 +1329,57 @@ Local verification:
 - `git diff --check`
 - `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`
 
+## 2026-05-15T04:12:50Z Update: `3af14b8` BBC Retest
+
+Commit `3af14b89b2e951ee804e824a314c3a49237415e9` was tested on BBC
+Good Food task `2370` with the same reference-aligned worker flags:
+headed/xvfb, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+`max_steps=100`, `max_actions_per_step=4`, `judge_repeat_count=1`,
+`test_case=WebBench_READ_v5`, `judge_type=ComprehensiveV1`,
+`--no-thinking`, `thinking_level=minimal`, `flash_mode=true`,
+`browser=local`, `images_per_step=1`, `use_vision=true`, and
+`agent_type=Agent`.
+
+BBC Good Food task `2370`:
+
+- Run: `kh76adfv4ezsscf5pcsh7rdcq986s3vf`
+- GitHub workflow: `25899646179`
+- Installed Rust ref:
+  `3af14b89b2e951ee804e824a314c3a49237415e9`
+- Result: judge failure / Give Up
+- Steps: 43
+- Duration: 150.429s
+- Cost: $0.166718
+- Tokens: 584,299
+- Action errors: 0
+- Access denials: 1
+
+What changed:
+
+- The new evidence detector fired early on the generic BBC search cards:
+  `bbc_search_no_exact_recipe` at step 4.
+- It later collected `bbc_search_no_results` and force-finaled at step
+  44 with source-safe wording.
+- The final answer no longer fabricated substitutions. It explicitly
+  refused to invent generic substitutions without the exact BBC source.
+
+Why it still failed:
+
+- The judge claims a "Paleo-friendly pancakes" recipe exists on BBC Good
+  Food and contains the requested substitutions.
+- The run did not find that page. It tried BBC internal search, DuckDuckGo,
+  and Bing; external search also hit CAPTCHA/access friction.
+- The patch improved cost and honesty, but it did not recover correctness.
+
+Current conclusion:
+
+- Do not launch a wider slice from this signal. Southwest recovered, but
+  BBC remains an unresolved correctness miss.
+- The next BBC-specific work should discover the alleged
+  "Paleo-friendly pancakes" same-site URL or add a deterministic
+  same-site search path for BBC Good Food recipe/article aliases before
+  another retest.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
