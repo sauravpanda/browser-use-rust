@@ -2445,3 +2445,53 @@ Decision:
 - The targeted result supports the VA locator tool, but it adds about
   0.7KB to the tool payload. Run the exact `10..30` 20-task slice before
   keeping it as a release candidate.
+
+## 2026-05-15T10:35:43Z Update: VA Locator Tool Rejected On 20-Task Slice
+
+20-task slice:
+
+- Run `kh7eqqw5hhresta0wwtvkzy6zx86s7s4`, workflow `25911901300`,
+  commit `f85cf82e30591b971492cb917ab422e6d1c06f4d`.
+- Command confirmed:
+  `--start 10 --end 30`, `--max-steps 100`, `--no-thinking`,
+  `--thinking-level minimal`, `gemini-3-flash-preview`,
+  `eval_model=gpt-o4-mini`, headed/xvfb local browser,
+  `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `browser=local`, `images_per_step=1`, `use_vision=true`,
+  `agent_type=Agent`.
+- Platform caveat repeated: pre-created run showed
+  `completedTasks=30`, `progress=150`; use the 20 rows with non-null
+  `steps`.
+
+Result vs prior exact-config baseline `kh7e6asf9bjg77sj0gxhqwxze986rs40`:
+
+- Success: `14/20` vs `16/20` (`-10pp`).
+- Total cost: `$1.007799` vs `$0.934796` (`+7.8%`).
+- Average cost: `$0.050390` vs `$0.046740`.
+- Steps: `275` vs `262`.
+- Average duration: `53.29s` vs `51.20s`.
+- Access denied: `3` vs `3`.
+- Action errors: `0` vs `0`.
+
+What improved:
+
+- Task `2027` flipped from failure to success.
+- `2027` dropped from 25 steps / `$0.088803` in the prior exact slice
+  to 2 steps / `$0.006578` in the slice run.
+
+What regressed:
+
+- Baseline-failed tasks still failed: `895`, `1494`, `2657`.
+- New failures versus the prior exact slice: `1510`, `607`, `2423`.
+- The new tool increased `prompt_tools_bytes` from about `32268` to
+  `32994` on the VA trace, and the broad slice lost more behavior than
+  the single VA win recovered.
+
+Decision:
+
+- Reject the always-registered VA locator tool for release.
+- Revert the code and test while keeping these learnings in this file.
+- If this idea is revisited, it needs a lower-blast-radius route than a
+  globally visible tool, such as a task-specific nudge or a conditional
+  tool surface.
