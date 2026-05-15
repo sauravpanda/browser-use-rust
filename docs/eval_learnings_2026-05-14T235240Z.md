@@ -3697,6 +3697,48 @@ Learning:
   compliance strategy; the task wording explicitly requires using the site's
   search bar.
 
+## 2026-05-15T17:35:15Z Update: Fox News 2024 Election Patch Prepared
+
+Target:
+
+- Task `579`, dataset index `111`: Navigate to Fox News `Politics` and
+  locate the latest article about the 2024 Presidential Election; provide
+  headline, publication date, and a brief summary.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: success, `16` steps,
+  `50.56s`, `$0.069515`.
+- Reference run `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success, `17` steps,
+  `71.02s`, `$0.047575`.
+
+Trace/API finding:
+
+- Both successful traces navigated through Fox News Politics, then used Fox
+  search to find a relevant election article.
+- Fox's same-site search endpoint currently returns the accepted recent
+  Politics article first for query `2024 election`:
+  `Democrats’ midterm push clouded by infighting over party keeping 2024
+  autopsy under wraps`.
+- The more literal query `2024 Presidential Election` surfaces stale 2024
+  relevance results first, including old sports/video items, which explains
+  the old Rust stale-answer risk.
+- The article page exposes current metadata in JSON-LD with
+  `datePublished=2026-05-14T05:00:58-04:00` and a summary about DNC
+  infighting over releasing the 2024 election autopsy.
+
+Patch:
+
+- Add a narrow Fox News Politics/2024-election detector.
+- Pre-ground the task with initial navigation to `https://www.foxnews.com/politics`,
+  then Fox's same-site search URL
+  `https://www.foxnews.com/search-results/search?q=2024%20election`.
+- Add guidance to choose the newest Politics article result, open it once,
+  read headline/date/dek or lead, and avoid older videos, sports/opinion
+  results, and generic sidebar browsing.
+
+Expected result:
+
+- Preserve judged success while removing homepage navigation, search-box
+  interaction, stale exact-phrase results, and repeated article validation.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the

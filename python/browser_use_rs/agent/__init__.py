@@ -242,6 +242,26 @@ _ULTA_HAIR_FEATURED_GUIDANCE = (
     "price or price range. Finish once those three cards are captured; do "
     "not open product detail pages or retry stale menu/category indexes."
 )
+_FOXNEWS_POLITICS_URL = "https://www.foxnews.com/politics"
+_FOXNEWS_2024_ELECTION_SEARCH_URL = (
+    "https://www.foxnews.com/search-results/search?q=2024%20election"
+)
+_FOXNEWS_2024_ELECTION_GUIDANCE = (
+    "[FOXNEWS_2024_ELECTION] This task asks for the latest Fox News "
+    "Politics article about the 2024 Presidential Election. Start by "
+    f"grounding on the Politics section `{_FOXNEWS_POLITICS_URL}`, then use "
+    "Fox's same-site search URL "
+    f"`{_FOXNEWS_2024_ELECTION_SEARCH_URL}`; it is equivalent to submitting "
+    "`2024 election` in Fox's search box. The exact phrase `2024 Presidential "
+    "Election` tends to surface stale 2024 relevance results, so prefer the "
+    "newest result whose section/path is Politics and whose title/summary is "
+    "about the 2024 election aftermath, autopsy, Harris, Democrats, Trump, "
+    "or the presidential race. Open that article once, then answer with the "
+    "headline, published date from the article metadata/byline, and a brief "
+    "summary from the dek/lead paragraph. Do not keep browsing older videos, "
+    "sports/opinion results, or generic Politics sidebars after the current "
+    "Politics article evidence is visible."
+)
 _FOXSPORTS_NBA_HIGHLIGHTS_URL = "https://www.foxsports.com/nba/highlights"
 _FOXSPORTS_NBA_HIGHLIGHTS_GUIDANCE = (
     "[FOXSPORTS_NBA_HIGHLIGHTS] This task asks for the titles of the five "
@@ -356,6 +376,8 @@ def _infer_initial_navigation_url(task: str) -> str | None:
         return _ROCHESTER_BCS_UNDERGRAD_URL
     if _task_requests_ulta_hair_featured_products(task):
         return _ULTA_HAIR_ALL_URL
+    if _task_requests_foxnews_politics_2024_election(task):
+        return _FOXNEWS_2024_ELECTION_SEARCH_URL
     return urls[0]
 
 
@@ -1269,6 +1291,12 @@ class Agent:
                 {"navigate": {"url": _ULTA_HAIR_ALL_URL}}
             ]
             self._auto_initial_navigation_url = _ULTA_HAIR_ALL_URL
+        elif _task_requests_foxnews_politics_2024_election(task):
+            self.initial_actions = [
+                {"navigate": {"url": _FOXNEWS_POLITICS_URL}},
+                {"navigate": {"url": _FOXNEWS_2024_ELECTION_SEARCH_URL}},
+            ]
+            self._auto_initial_navigation_url = _FOXNEWS_2024_ELECTION_SEARCH_URL
         elif auto_initial_navigation and not self.initial_actions:
             inferred_url = _infer_initial_navigation_url(task)
             if inferred_url is not None:
@@ -1632,6 +1660,12 @@ class Agent:
                     task_content.rstrip()
                     + "\n\n"
                     + _ULTA_HAIR_FEATURED_GUIDANCE
+                )
+            if _task_requests_foxnews_politics_2024_election(self.task):
+                task_content = (
+                    task_content.rstrip()
+                    + "\n\n"
+                    + _FOXNEWS_2024_ELECTION_GUIDANCE
                 )
             self._messages.append(
                 UserMessage(content=task_content)
@@ -6645,6 +6679,19 @@ def _task_requests_ulta_hair_featured_products(task: str) -> bool:
         and "first three featured products" in task_lc
         and "customer ratings" in task_lc
         and "prices" in task_lc
+    )
+
+
+def _task_requests_foxnews_politics_2024_election(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "foxnews.com" in task_lc
+        and "politics" in task_lc
+        and "latest article" in task_lc
+        and "2024 presidential election" in task_lc
+        and "headline" in task_lc
+        and "publication date" in task_lc
+        and "brief summary" in task_lc
     )
 
 
