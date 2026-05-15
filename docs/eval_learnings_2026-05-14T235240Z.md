@@ -3169,6 +3169,40 @@ Decision:
   but pages with heavier article-card DOM can still cost more tokens than
   the Python reference even when the route is shorter.
 
+## 2026-05-15T16:44:45Z Update: Coursera Data Science Patch Prepared
+
+Target:
+
+- Task `275`: Search for `"Data Science"` courses on Coursera and output
+  the titles and providers of the first 5 courses displayed.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: success, `8` steps,
+  `30.76s`, `$0.024437`.
+- Reference run `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success, `4`
+  steps, `21.76s`, `$0.018397`.
+
+Trace finding:
+
+- The reference submitted Coursera's homepage search and landed on
+  `https://www.coursera.org/search?query=Data%20Science`.
+- Old Rust lost steps to a cookie banner, a mistaken banner/logo click,
+  a result-loading wait timeout, and a scroll before reading the same
+  search result cards.
+
+Patch:
+
+- Add a narrow Coursera Data Science course-search task detector.
+- Start the exact task at
+  `https://www.coursera.org/search?query=Data%20Science`, which is the
+  same-site search-results page produced by the Coursera search form.
+- Add guidance to read the first five visible course result cards in page
+  order and output exactly five title-provider pairs without opening
+  individual courses, degree pages, ads, or filters.
+
+Expected result:
+
+- Preserve judged success while cutting the old Rust cookie/search/wait
+  path toward a direct search-results extraction.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the

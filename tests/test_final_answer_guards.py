@@ -43,6 +43,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_caranddriver_subscription,
     _task_requests_cbs_featured_investigative,
     _task_requests_consulting_people_sf,
+    _task_requests_coursera_data_science_courses,
     _task_requests_dailymail_coronavirus,
     _task_requests_eventbrite_online_event_guidelines,
     _task_requests_flickr_sunset_search,
@@ -491,6 +492,20 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertFalse(
             _task_requests_softonic_latest_articles(
                 "Find Softonic download pages for video editors."
+            )
+        )
+
+    def test_coursera_data_science_courses_task_is_detected(self):
+        task = (
+            'Search for "Data Science" courses on Coursera and output the '
+            "titles and providers of the first 5 courses displayed.\n"
+            "website: https://coursera.org"
+        )
+
+        self.assertTrue(_task_requests_coursera_data_science_courses(task))
+        self.assertFalse(
+            _task_requests_coursera_data_science_courses(
+                "Search Coursera for project management certificates."
             )
         )
 

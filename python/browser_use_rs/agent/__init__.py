@@ -188,6 +188,19 @@ _SOFTONIC_ARTICLES_GUIDANCE = (
     "headlines. Do not open individual articles, app-download pages, reviews, "
     "or category pages after the latest article list is visible."
 )
+_COURSERA_DATA_SCIENCE_SEARCH_URL = (
+    "https://www.coursera.org/search?query=Data%20Science"
+)
+_COURSERA_DATA_SCIENCE_GUIDANCE = (
+    "[COURSERA_DATA_SCIENCE] This task asks for the first five Coursera "
+    "course results for `Data Science` with each title and provider. Start "
+    "from the official Coursera search results page "
+    f"`{_COURSERA_DATA_SCIENCE_SEARCH_URL}`. Read the first five visible "
+    "course result cards in page order, using the provider/organization shown "
+    "on each card. Finish with exactly five title-provider pairs. Do not open "
+    "individual course pages, degree pages, ads, or filter panels after the "
+    "first five course cards are visible."
+)
 _FOXSPORTS_NBA_HIGHLIGHTS_URL = "https://www.foxsports.com/nba/highlights"
 _FOXSPORTS_NBA_HIGHLIGHTS_GUIDANCE = (
     "[FOXSPORTS_NBA_HIGHLIGHTS] This task asks for the titles of the five "
@@ -294,6 +307,8 @@ def _infer_initial_navigation_url(task: str) -> str | None:
         return _WEBMD_HEALTH_NEWS_URL
     if _task_requests_softonic_latest_articles(task):
         return _SOFTONIC_ARTICLES_URL
+    if _task_requests_coursera_data_science_courses(task):
+        return _COURSERA_DATA_SCIENCE_SEARCH_URL
     return urls[0]
 
 
@@ -1187,6 +1202,11 @@ class Agent:
                 {"navigate": {"url": _SOFTONIC_ARTICLES_URL}}
             ]
             self._auto_initial_navigation_url = _SOFTONIC_ARTICLES_URL
+        elif _task_requests_coursera_data_science_courses(task):
+            self.initial_actions = [
+                {"navigate": {"url": _COURSERA_DATA_SCIENCE_SEARCH_URL}}
+            ]
+            self._auto_initial_navigation_url = _COURSERA_DATA_SCIENCE_SEARCH_URL
         elif auto_initial_navigation and not self.initial_actions:
             inferred_url = _infer_initial_navigation_url(task)
             if inferred_url is not None:
@@ -1526,6 +1546,12 @@ class Agent:
                     task_content.rstrip()
                     + "\n\n"
                     + _SOFTONIC_ARTICLES_GUIDANCE
+                )
+            if _task_requests_coursera_data_science_courses(self.task):
+                task_content = (
+                    task_content.rstrip()
+                    + "\n\n"
+                    + _COURSERA_DATA_SCIENCE_GUIDANCE
                 )
             self._messages.append(
                 UserMessage(content=task_content)
@@ -6498,6 +6524,17 @@ def _task_requests_softonic_latest_articles(task: str) -> bool:
         and "news page" in task_lc
         and "latest tech news articles" in task_lc
         and "three most recent posts" in task_lc
+    )
+
+
+def _task_requests_coursera_data_science_courses(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "coursera.org" in task_lc
+        and "data science" in task_lc
+        and "courses" in task_lc
+        and "first 5" in task_lc
+        and "titles and providers" in task_lc
     )
 
 
