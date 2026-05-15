@@ -5324,16 +5324,19 @@ def _final_answer_recovery_nudge(
     final_url: str | None = None,
 ) -> str | None:
     del final_url
-    if _looks_like_bbc_goodfood_generic_substitution_answer(task, text):
+    if _looks_like_bbc_goodfood_generic_substitution_answer(
+        task, text
+    ) or _looks_like_bbc_goodfood_broad_free_from_answer(task, text):
         return (
             "[BBC_GOODFOOD_SOURCE_GUARD] The proposed answer uses "
-            "typical or generic Paleo Pancakes substitutions instead of "
-            "source-backed substitutions from the exact BBC Good Food "
-            "recipe page. Do not provide generic substitutions. Continue "
-            "only if there is a concrete same-site path to the exact "
-            "recipe; otherwise finalize by stating that the exact page "
-            "was not located and no BBC-sourced substitutions can be "
-            "provided."
+            "typical, generic, or broad free-from substitutions instead "
+            "of source-backed Paleo-compatible substitutions from a Good "
+            "Food recipe page. Do not list broad non-paleo swaps such as "
+            "buckwheat, oats, gram/chickpea flour, rice, or tofu. Re-open "
+            "the same-site almond flour and coconut flour pancake recipe "
+            "pages and answer only from that recipe evidence; if no "
+            "source-backed Paleo-compatible substitutions are observed, "
+            "finalize by stating that limitation."
         )
     if _looks_like_southwest_roundtrip_answer_needs_more_evidence(task, text):
         return (
@@ -5671,18 +5674,19 @@ def _bbc_goodfood_alias_recovery_nudge(
     return (
         "[BBC_GOODFOOD_ALIAS_CHECK] BBC internal search did not show an "
         "exact 'Paleo Pancakes' recipe URL. Before giving up, check the "
-        "same-site Good Food free-from/paleo-friendly aliases that are "
-        "likely to contain the requested substitutions: "
-        "navigate(url=\"https://www.bbcgoodfood.com/health/special-diets/"
-        "10-ways-to-make-your-pancake-day-free-from\"), then inspect the "
-        "coconut flour, almond flour, dairy-free milk, oats, and buckwheat "
-        "pancake sections. Also check "
+        "closest same-site Paleo-compatible Good Food recipe pages first: "
         "navigate(url=\"https://www.bbcgoodfood.com/recipes/"
         "almond-flour-pancakes\") and "
         "navigate(url=\"https://www.bbcgoodfood.com/recipes/"
-        "coconut-flour-pancakes\"). If those Good Food pages provide "
-        "substitutions or swaps, answer from that source-backed evidence. "
-        "Do not use non-Good-Food sites or training knowledge."
+        "coconut-flour-pancakes\"). These are the pages to inspect for "
+        "recipe-backed swaps such as almond flour or coconut flour, "
+        "almond milk or milk of choice, maple syrup, and any binding/liquid "
+        "adjustments. You may use "
+        "navigate(url=\"https://www.bbcgoodfood.com/health/special-diets/"
+        "best-flour-substitutions\") only to confirm flour-substitution "
+        "ratios for almond or coconut flour. Do not use the broad free-from "
+        "article as the answer source, and do not list non-paleo swaps such "
+        "as buckwheat, oats, gram/chickpea flour, rice, or tofu."
     )
 
 
@@ -5722,6 +5726,43 @@ def _looks_like_bbc_goodfood_generic_substitution_answer(
         )
     )
     return admits_no_exact_source and generic_substitutions
+
+
+def _looks_like_bbc_goodfood_broad_free_from_answer(
+    task: str,
+    text: str,
+) -> bool:
+    if not _task_requests_bbc_goodfood_paleo_pancakes(task):
+        return False
+    answer_lc = (text or "").lower()
+    if len(answer_lc) < 80:
+        return False
+    has_bbc_goodfood_context = any(
+        phrase in answer_lc
+        for phrase in (
+            "bbc good food",
+            "good food",
+            "free-from",
+            "free from",
+            "pancake day",
+        )
+    )
+    has_target_context = "paleo" in answer_lc and "pancake" in answer_lc
+    broad_non_paleo_hits = sum(
+        1
+        for phrase in (
+            "buckwheat",
+            "oat flour",
+            "oats",
+            "gram flour",
+            "chickpea flour",
+            "rice flour",
+            "silken tofu",
+            "tofu",
+        )
+        if phrase in answer_lc
+    )
+    return has_bbc_goodfood_context and has_target_context and broad_non_paleo_hits >= 2
 
 
 def _looks_like_unmet_requested_data_answer(task: str, text: str) -> bool:
@@ -6020,6 +6061,7 @@ def _looks_like_unsupported_final_answer(
         or _looks_like_round_trip_answer_uses_one_way_only(task, text)
         or _looks_like_southwest_roundtrip_answer_needs_more_evidence(task, text)
         or _looks_like_bbc_goodfood_generic_substitution_answer(task, text)
+        or _looks_like_bbc_goodfood_broad_free_from_answer(task, text)
     )
 
 

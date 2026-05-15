@@ -13,6 +13,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _bbc_goodfood_alias_recovery_nudge,
     _direct_section_url_for_consent_recovery,
     _final_answer_recovery_nudge,
+    _looks_like_bbc_goodfood_broad_free_from_answer,
     _looks_like_bbc_goodfood_generic_substitution_answer,
     _looks_like_fabricated_blocked_answer,
     _looks_like_failed_consent_overlay_attempt,
@@ -497,9 +498,10 @@ class FinalAnswerGuardTests(unittest.TestCase):
 
         self.assertIsNotNone(nudge)
         self.assertIn("BBC_GOODFOOD_ALIAS_CHECK", nudge or "")
-        self.assertIn("10-ways-to-make-your-pancake-day-free-from", nudge or "")
         self.assertIn("almond-flour-pancakes", nudge or "")
         self.assertIn("coconut-flour-pancakes", nudge or "")
+        self.assertIn("best-flour-substitutions", nudge or "")
+        self.assertIn("Do not use the broad free-from article", nudge or "")
 
     def test_bbc_goodfood_generic_substitution_answer_is_recoverable(self):
         task = (
@@ -521,6 +523,23 @@ class FinalAnswerGuardTests(unittest.TestCase):
         )
         self.assertTrue(_looks_like_unsupported_final_answer(task, answer))
         self.assertIn("BBC_GOODFOOD_SOURCE_GUARD", _final_answer_recovery_nudge(task, answer))
+
+    def test_bbc_goodfood_broad_free_from_answer_is_recoverable(self):
+        task = (
+            'Open the "Paleo Pancakes" recipe page and compile a list of '
+            "the suggested ingredient substitutions provided. "
+            "website: https://www.bbcgoodfood.com/"
+        )
+        answer = (
+            "Based on the BBC Good Food free-from Pancake Day article, "
+            "these Paleo Pancakes substitutions include coconut flour, "
+            "almond flour, buckwheat, oat flour, gram flour, rice flour, "
+            "and silken tofu."
+        )
+
+        self.assertTrue(_looks_like_bbc_goodfood_broad_free_from_answer(task, answer))
+        self.assertTrue(_looks_like_unsupported_final_answer(task, answer))
+        self.assertIn("non-paleo swaps", _final_answer_recovery_nudge(task, answer))
 
     def test_failed_consent_overlay_attempt_is_detected(self):
         calls = [

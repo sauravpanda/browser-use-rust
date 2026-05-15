@@ -1415,6 +1415,62 @@ Local verification:
 - `git diff --check`
 - `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`
 
+## 2026-05-15T04:28:20Z Update: BBC Alias Retest and Narrowing
+
+Targeted retest of `ef50baa8b9a473302ad7445db7d3699befc990c7`:
+
+- Run: `kh7anj6gbwxe9gger1z7fhzr0x86sc37`
+- GitHub workflow: `25899939058`
+- Command shape confirmed:
+  `--start 4 --end 5 --max-steps 100 --no-thinking --thinking-level minimal`
+- Result: judge failure / Incorrect Result
+- Steps: 8
+- Duration: 26.062s
+- Cost: $0.034992
+- Tokens: 107,378
+- Action errors: 0
+- Access denials: 0
+
+What happened:
+
+- The alias nudge fired at step 3 after `bbc_search_no_exact_recipe`.
+- The model opened the broad `10-ways-to-make-your-pancake-day-free-from`
+  article and finalized from that article without checking the almond
+  flour or coconut flour recipe pages.
+- The judge rejected the answer because it did not open a specific
+  recipe page and listed broad free-from items that are not
+  Paleo-compatible, including buckwheat, oats, gram flour, rice, and
+  silken tofu.
+
+Follow-up investigation:
+
+- `https://www.bbcgoodfood.com/recipes/paleo-pancakes` returns 404.
+- Good Food search for `paleo pancakes` and `paleo-friendly pancakes`
+  returns generic pancake recipes first, not a Paleo recipe.
+- The sitemap crawl found `paleo` only in the recipe collection path
+  `https://www.bbcgoodfood.com/recipes/collection/paleo-recipes`, not an
+  exact Paleo Pancakes recipe URL.
+- The closest same-site recipe pages remain:
+  `https://www.bbcgoodfood.com/recipes/almond-flour-pancakes` and
+  `https://www.bbcgoodfood.com/recipes/coconut-flour-pancakes`.
+- The useful substitution article is
+  `https://www.bbcgoodfood.com/health/special-diets/best-flour-substitutions`,
+  because it gives almond/coconut flour substitution guidance without
+  inviting unrelated free-from pancake sections.
+
+Patch direction:
+
+- Keep the eval config on minimal-thinking Gemini:
+  `gemini-3-flash-preview`, `--no-thinking`,
+  `--thinking-level minimal`, and `--max-steps 100`.
+- Narrow `[BBC_GOODFOOD_ALIAS_CHECK]` to open the almond flour and
+  coconut flour recipe pages first.
+- Allow `best-flour-substitutions` only as a supporting source for
+  almond/coconut flour ratios.
+- Add a source guard for broad free-from answers that list non-paleo
+  swaps such as buckwheat, oats, gram/chickpea flour, rice, or tofu.
+- Do not launch a wider eval from the broad free-from alias result.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
