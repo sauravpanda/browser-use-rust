@@ -2041,3 +2041,35 @@ Local verification:
 - `cargo test -p bu-browser`
 - `git diff --check`
 - `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`
+
+## 2026-05-15T06:46:15Z Update: Half-Scale Screenshot Rejected
+
+Scaled-image eval:
+
+- Run `kh78d0q3vgegz9pdf8d31hj4f186rmkm`, workflow `25904357478`,
+  dataset `10..11`, task `2226` / Zara, exact minimal-thinking Gemini
+  config.
+- Result: success
+- Steps: 20
+- Duration: 53.215s
+- Cost: `$0.058764`
+- Prompt image bytes: 530KB total / 52KB max
+
+Comparison:
+
+- Previous current-head PNG-state task `2226`: success, 14 steps,
+  47.467s, `$0.039176`, prompt image bytes 12.61MB total / 1.86MB max.
+- JPEG-only task `2226`: success, 15 steps, 41.717s, `$0.041915`,
+  prompt image bytes 1.15MB total / 138KB max.
+- Half-scale JPEG task `2226`: success, 20 steps, 53.215s,
+  `$0.058764`, prompt image bytes 530KB total / 52KB max.
+
+Decision:
+
+- Half-scale screenshots reduce payload bytes further, but they do not
+  reduce Gemini token cost on this task and they appear to hurt the
+  agent's path efficiency.
+- The scaled screenshot path should not ship as release behavior.
+- Automatic LLM state capture was reverted to full-viewport JPEG for
+  now. The broader release candidate still needs a different cost lever;
+  image encoding/scale alone is not enough to beat the reference on cost.

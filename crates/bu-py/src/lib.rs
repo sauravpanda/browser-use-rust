@@ -254,26 +254,6 @@ impl BrowserSession {
         })
     }
 
-    #[pyo3(signature = (quality=60, scale=0.5))]
-    fn screenshot_jpeg_scaled<'py>(
-        &self,
-        py: Python<'py>,
-        quality: u8,
-        scale: f64,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        let inner = self.inner.clone();
-        future_into_py(py, async move {
-            let bytes = {
-                let guard = inner.lock().await;
-                let s = guard
-                    .as_ref()
-                    .ok_or_else(|| map_err("session not started — call start() first"))?;
-                s.screenshot_jpeg_scaled(quality, scale).await.map_err(map_err)?
-            };
-            Python::with_gil(|py| Ok(PyBytes::new(py, &bytes).unbind()))
-        })
-    }
-
     fn pdf<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         future_into_py(py, async move {

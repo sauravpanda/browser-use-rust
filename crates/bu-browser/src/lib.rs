@@ -931,60 +931,25 @@ impl BrowserSession {
     }
 
     pub async fn screenshot(&self) -> Result<Vec<u8>> {
-        self.capture_screenshot(json!({ "format": "png" })).await
+        self.screenshot_with_format("png", None).await
     }
 
     pub async fn screenshot_jpeg(&self, quality: u8) -> Result<Vec<u8>> {
-        self.capture_screenshot(json!({
-            "format": "jpeg",
-            "quality": quality.clamp(1, 100),
-        }))
-        .await
+        self.screenshot_with_format("jpeg", Some(quality.clamp(1, 100))).await
     }
 
-    pub async fn screenshot_jpeg_scaled(&self, quality: u8, scale: f64) -> Result<Vec<u8>> {
+    async fn screenshot_with_format(
+        &self,
+        format: &str,
+        quality: Option<u8>,
+    ) -> Result<Vec<u8>> {
         let sid = self.session_id().await;
-        let metrics = self
-            .conn
-            .send("Page.getLayoutMetrics", json!({}), Some(&sid))
-            .await?;
-        let viewport = metrics.get("cssVisualViewport");
-        let x = viewport
-            .and_then(|v| v.get("pageX"))
-            .and_then(Value::as_f64)
-            .unwrap_or(0.0);
-        let y = viewport
-            .and_then(|v| v.get("pageY"))
-            .and_then(Value::as_f64)
-            .unwrap_or(0.0);
-        let width = viewport
-            .and_then(|v| v.get("clientWidth"))
-            .and_then(Value::as_f64)
-            .unwrap_or(0.0);
-        let height = viewport
-            .and_then(|v| v.get("clientHeight"))
-            .and_then(Value::as_f64)
-            .unwrap_or(0.0);
-        if width <= 0.0 || height <= 0.0 {
-            return self.screenshot_jpeg(quality).await;
+        let mut params = json!({ "format": format });
+        if format == "jpeg" {
+            if let Some(quality) = quality {
+                params["quality"] = json!(quality);
+            }
         }
-
-        self.capture_screenshot(json!({
-            "format": "jpeg",
-            "quality": quality.clamp(1, 100),
-            "clip": {
-                "x": x,
-                "y": y,
-                "width": width,
-                "height": height,
-                "scale": scale.clamp(0.1, 1.0),
-            },
-        }))
-        .await
-    }
-
-    async fn capture_screenshot(&self, params: Value) -> Result<Vec<u8>> {
-        let sid = self.session_id().await;
         let r = self
             .conn
             .send(
