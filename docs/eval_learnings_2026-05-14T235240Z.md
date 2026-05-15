@@ -808,6 +808,82 @@ Local verification:
 - `git diff --check`
 - `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`
 
+## 2026-05-15T02:51:20Z Update: `faa02b4` Southwest Retest
+
+Commit `faa02b4c371ed67b248ff8769673cb49078ec062` was pushed with the
+site technical-error detector and retested on Southwest task `2656`.
+
+Run details:
+
+- Run: `kh766j11m8xdb07pktja3p3x1n86sqnc`
+- GitHub workflow: `25897456513`
+- Task: `2656`
+- Installed Rust ref:
+  `faa02b4c371ed67b248ff8769673cb49078ec062`
+- Worker config: headed/xvfb, `gemini-3-flash-preview`,
+  `eval_model=gpt-o4-mini`, `max_steps=100`,
+  `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `test_case=WebBench_READ_v5`, `judge_type=ComprehensiveV1`,
+  `--no-thinking`, `thinking_level=minimal`, `flash_mode=true`,
+  `browser=local`, `images_per_step=1`, `use_vision=true`,
+  `agent_type=Agent`.
+- Result: judge success
+- Steps: 20
+- Duration: 64.461s
+- Cost: $0.075149
+- Action errors: 0
+- Access denials: 0
+
+Comparison:
+
+- Previous Rust Southwest retest `kh79pcrec07c66kyg569fkcav586sqtr`:
+  failed / Give Up, 71 steps, 329.293s, $0.401476.
+- Stronger Python reference `kh7b4qp4610am5s99j7e3bzy0d86rfwn` on the
+  same task: failed / Incorrect Result, 52 steps, 242.801s.
+- The latest Rust retest is materially better than both on this single
+  task, but it is only one sampled run.
+
+Trace learning:
+
+- The technical-error cutoff did not fire in this retest. There was no
+  repeated Low Fare Calendar modal loop like the previous Rust trace.
+- The agent followed a shorter path through the sale/current-specials
+  pages, then used `extract_structured_data` on hidden or below-fold
+  deal content.
+- It first found two explicit-looking round-trip offers from Albany to
+  Atlanta and Baltimore/Washington for June 4-7, 2026, but final-answer
+  validation continued the run.
+- It then extracted visible one-way starting fares and finalized two
+  round-trip totals by doubling one-way starts:
+  - Albany to Chicago (Midway), departing June 9, 2026:
+    `$153` one-way -> `$306` round-trip.
+  - Albany to Nashville, departing June 9, 2026:
+    `$160` one-way -> `$320` round-trip.
+- The external judge accepted this as satisfying the task, with the
+  judgement that the agent identified two deals, calculated round-trip
+  prices from listed one-way starts, and provided travel dates.
+
+Guard learning:
+
+- The Rust final-answer guard remained more conservative than the judge:
+  `selfReportSuccess=false` because the final answer still mentioned
+  one-way-derived evidence.
+- For eval scoring, this is acceptable because the external judge marked
+  success, but it shows the round-trip guard may be stricter than
+  necessary for Southwest-style "one-way starting at" fare pages.
+- Do not loosen the guard yet from a single accepted sample; the previous
+  reference and Rust failures show this task can also produce fabricated
+  unsupported round-trip totals.
+
+Current release signal:
+
+- Targeted evidence now validates improvements on EPA task `432` and
+  Southwest task `2656`.
+- This still does not justify a full 198-task release by itself. The
+  canceled first-10 slice also had the BBC Good Food consent failure and
+  only five executed tasks. A fresh small slice on `faa02b4` is the next
+  reasonable gate before considering a broad release run.
+
 This is still not a release signal. These guards reduce two observed
 wrong-answer patterns, but they need targeted eval before another slice.
 
