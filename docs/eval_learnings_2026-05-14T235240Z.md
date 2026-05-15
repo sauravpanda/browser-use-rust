@@ -3073,3 +3073,65 @@ Decision:
   `cargo check -p bu-py`, `cargo test -p bu-browser`,
   `git diff --check`, and
   `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`.
+
+## 2026-05-15T11:49:15Z Update: Consulting DuckDuckGo-First Retest Launched
+
+- Commit: `70f69544302788e30102e8718c5e1dc1fe1d025c`.
+- Dashboard run: `kh7apndhkt4ya3gknjc60tmhq586sq2m`.
+- GitHub workflow: `25916213628`.
+- Dataset range remains `start=164`, `end=165`, task `1030`.
+- Config is unchanged from the first consulting targeted run:
+  `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking_level=minimal`, headed
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`.
+- No literal `developerId` was sent in `/api/startRun`.
+
+Expected result:
+
+- Preserve success.
+- Avoid the Google CAPTCHA step from run
+  `kh766yfx8kpzwp6j0hmjvmdb0986sw3f`.
+- Keep only if it improves or at least does not regress the first
+  consulting targeted run on steps, duration, and cost.
+
+## 2026-05-15T11:52:57Z Update: Consulting DuckDuckGo-First Retest Completed
+
+Targeted run:
+
+- Run `kh7apndhkt4ya3gknjc60tmhq586sq2m`, workflow `25916213628`,
+  commit `70f69544302788e30102e8718c5e1dc1fe1d025c`.
+- Command confirmed in GitHub logs:
+  `xvfb-run`, `--model gemini-3-flash-preview`,
+  `--eval-model gpt-o4-mini`, `--max-steps 100`,
+  `--start 164`, `--end 165`, `--max-actions-per-step 4`,
+  `--judge-repeat-count 1`, `--test-case WebBench_READ_v5`,
+  `--proxyless`, `--judge-type ComprehensiveV1`, `--no-thinking`,
+  `--thinking-level minimal`, `--flash-mode`, `--browser local`,
+  `--images-per-step 1`, `--use-vision true`, `--agent-type Agent`.
+- Platform caveat repeated: `/api/getRunResults` returned the real
+  LinkedIn row plus an empty CDC row; use the task `1030` row.
+
+Result for task `1030`:
+
+- Judge/self-report: success / `success=true`; success preserved.
+- Steps: `11` vs the first consulting targeted run's `10`.
+- Duration: `39.45s` vs the first consulting targeted run's `36.69s`.
+- Cost: `$0.046164` vs the first consulting targeted run's `$0.033249`.
+- Action errors/access denied/tool failures: `0/0/0`.
+
+Trace proof:
+
+- DuckDuckGo-first did not prevent search churn: the trace still hit
+  Google CAPTCHA, then Bing, then DuckDuckGo again.
+- It also introduced stale result clicks before finishing from snippets.
+- The output remained valid, but the refinement regressed the important
+  metrics for the objective.
+
+Decision:
+
+- Reject the DuckDuckGo-first refinement.
+- Restore the prior Google-first wording from commit `2c0208b` while
+  preserving the broader consulting nudge because that patch is still
+  the better candidate.
