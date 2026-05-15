@@ -3806,6 +3806,41 @@ Decision:
   step count, beats the reference on duration, and reduces old Rust cost
   by about two-thirds. The reference still has lower cost.
 
+## 2026-05-15T13:08:41Z Update: GetYourGuide Paris Patch
+
+Target:
+
+- Task `645`: Browse the homepage to identify the most popular activity
+  in Paris based on user ratings and note its name and starting price.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: success, `16`
+  steps, `56.23s`, `$0.059767`.
+- Stronger Python reference `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success,
+  `4` steps, `14.20s`, `$0.007393`.
+
+Trace finding:
+
+- Old Rust spent most of the run retrying stale Usercentrics cookie
+  banner indices on the homepage.
+- It eventually succeeded only after navigating directly to
+  `https://www.getyourguide.com/paris-l16/`, extracting activity cards,
+  and identifying `Paris: 1-Hour Seine Cruise departing from the Eiffel
+  Tower` as the highest-review activity with starting price `EUR17`.
+- The reference reached the Paris page from the homepage and finished as
+  soon as the visible cards supplied the same evidence.
+
+Patch:
+
+- Add a narrow GetYourGuide Paris popularity task detector.
+- Nudge directly to the Paris city page, wait briefly for skeleton cards
+  if needed, compare visible activity cards by review count/user ratings,
+  and finish after extracting the activity name, evidence, and starting
+  price.
+
+Expected result:
+
+- Preserve success while removing the old Rust cookie-banner and
+  re-verification tail.
+
 ## 2026-05-15T12:59:13Z Update: Daily Mail Targeted Eval Completed
 
 Targeted run:

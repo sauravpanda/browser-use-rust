@@ -1164,6 +1164,7 @@ class Agent:
         self._xbox_minecraft_accessibility_nudged: bool = False
         self._dailymail_coronavirus_nudged: bool = False
         self._flickr_sunset_search_nudged: bool = False
+        self._getyourguide_paris_popular_nudged: bool = False
         self._newegg_review_bytes_failed_probes: int = 0
         self._newegg_review_bytes_selector_timeouts: int = 0
         self._newegg_review_bytes_product_urls: set[str] = set()
@@ -1377,6 +1378,7 @@ class Agent:
         self._xbox_minecraft_accessibility_nudged = False
         self._dailymail_coronavirus_nudged = False
         self._flickr_sunset_search_nudged = False
+        self._getyourguide_paris_popular_nudged = False
         self._messages.append(
             UserMessage(content=_task_message_with_runtime_context(new_task))
         )
@@ -2455,6 +2457,9 @@ class Agent:
             self._maybe_inject_flickr_sunset_search_nudge(
                 state_summary, tool_results, step_n
             )
+            self._maybe_inject_getyourguide_paris_popular_nudge(
+                state_summary, tool_results, step_n
+            )
             if await self._maybe_force_newegg_review_bytes_unavailable(
                 state_summary, completion.tool_calls, tool_results, step_n
             ):
@@ -3416,6 +3421,51 @@ class Agent:
         self._flickr_sunset_search_nudged = True
         logger.info(
             "agent: FLICKR_SUNSET_SEARCH nudge at step %d (url=%s)",
+            step_n,
+            current_url,
+        )
+
+    def _maybe_inject_getyourguide_paris_popular_nudge(
+        self,
+        state: BrowserStateSummary,
+        results: list[ActionResult],
+        step_n: int,
+    ) -> None:
+        if self._getyourguide_paris_popular_nudged:
+            return
+        if not _task_requests_getyourguide_paris_popular(self.task):
+            return
+        current_url = state.url or ""
+        if not (
+            _host_matches(current_url, "getyourguide.com")
+            or any(
+                _host_matches(current_url, host)
+                for host in _SEARCH_OR_FALLBACK_FINAL_HOSTS
+            )
+        ):
+            return
+
+        self._messages.append(
+            UserMessage(
+                content=(
+                    "[GETYOURGUIDE_PARIS_POPULAR] This task asks for the "
+                    "most popular Paris activity based on user ratings and "
+                    "its starting price. Avoid spending steps on stale "
+                    "cookie-banner indices or unrelated homepage city links. "
+                    "Use the Paris city page "
+                    "`https://www.getyourguide.com/paris-l16/`, wait briefly "
+                    "if activity cards are still skeleton-loading, then "
+                    "compare visible activity cards by review count/user "
+                    "ratings. Report the activity name, rating/review count "
+                    "as evidence, and starting price. Once that evidence is "
+                    "extracted from the Paris page, finish; do not retry "
+                    "cookie buttons or re-verify the same extracted data."
+                )
+            )
+        )
+        self._getyourguide_paris_popular_nudged = True
+        logger.info(
+            "agent: GETYOURGUIDE_PARIS_POPULAR nudge at step %d (url=%s)",
             step_n,
             current_url,
         )
@@ -5864,6 +5914,17 @@ def _task_requests_flickr_sunset_search(task: str) -> bool:
         and "first 5" in task_lc
         and "titles" in task_lc
         and "usernames" in task_lc
+    )
+
+
+def _task_requests_getyourguide_paris_popular(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "getyourguide.com" in task_lc
+        and "paris" in task_lc
+        and "most popular activity" in task_lc
+        and "user ratings" in task_lc
+        and "starting price" in task_lc
     )
 
 

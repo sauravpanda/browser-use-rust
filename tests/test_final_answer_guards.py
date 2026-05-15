@@ -44,6 +44,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_consulting_people_sf,
     _task_requests_dailymail_coronavirus,
     _task_requests_flickr_sunset_search,
+    _task_requests_getyourguide_paris_popular,
     _task_requests_metacritic_low_score_tv,
     _task_requests_newegg_review_bytes,
     _task_requests_xbox_minecraft_accessibility,
@@ -462,6 +463,20 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertFalse(
             _task_requests_flickr_sunset_search(
                 "Search Flickr for camera groups."
+            )
+        )
+
+    def test_getyourguide_paris_popular_task_is_detected(self):
+        task = (
+            "Browse the homepage to identify the most popular activity in "
+            "Paris based on user ratings, and note its name and starting "
+            "price.\nwebsite: https://getyourguide.com"
+        )
+
+        self.assertTrue(_task_requests_getyourguide_paris_popular(task))
+        self.assertFalse(
+            _task_requests_getyourguide_paris_popular(
+                "Find GetYourGuide activities in Rome."
             )
         )
 
