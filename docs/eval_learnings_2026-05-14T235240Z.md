@@ -2298,6 +2298,51 @@ Configuration:
   `proxyless=true`, `parallel_runs=1`.
 - No literal `developerId` was sent in `/api/startRun`.
 
+## 2026-05-15T15:19:19Z Update: Telegraph Brexit Refined Eval Result
+
+Result for task `1764`:
+
+- Run `kh74s27y8hv26z8b311xmmvrp986s3yp`, workflow `25925583250`,
+  commit `ab763c086fdbb10576e3d4364a879ca63d12bb8b`.
+- Judge/self-report: success / `success=true`; score `1.0`.
+- Steps: `5` vs old Rust `16` and reference `7`.
+- Duration: `43.14s` vs old Rust `70.18s` and reference `37.98s`.
+- Cost: `$0.017614` vs old Rust `$0.053419` and reference
+  `$0.010946`.
+- Tokens: `62,249` reported by the platform; usage total tokens
+  `64,157`; model `gemini-3-flash-preview`.
+- Action errors/access denied/tool failures: `0/0/0`.
+
+Trace proof:
+
+- Workflow command confirmed the exact intended config: `BU_RUNTIME=rs`,
+  browser-use-rs, headed `xvfb-run`,
+  `--model gemini-3-flash-preview`, `--eval-model gpt-o4-mini`,
+  `--max-steps 100`, `--start 119`, `--end 120`,
+  `--max-actions-per-step 4`, `--judge-repeat-count 1`,
+  `--test-case WebBench_READ_v5`, `--proxyless`,
+  `--judge-type ComprehensiveV1`, `--no-thinking`,
+  `--thinking-level minimal`, `--flash-mode`, `--browser local`,
+  `--images-per-step 1`, `--use-vision true`, and
+  `--agent-type Agent`.
+- Final answer stayed on the Telegraph same-site path and listed five
+  Brexit/EU-relevant titles:
+  `Farage: I was given GBP5m as a reward for Brexit`; `Rejoin the EU
+  single market, says Labour's favourite think tank`; `Starmer opens
+  door to rejoining EU single market`; `Bank of England boss backs
+  Starmer's EU reset`; `Starmer to seek even closer ties to EU`.
+- The judge accepted the result: "The agent navigated to the search
+  results for 'Brexit' and then to the Brexit section page, successfully
+  extracting and listing five relevant article titles as requested."
+
+Decision:
+
+- Keep the patch. It converts a failed old Rust path into a judged pass
+  while cutting old Rust steps by `68.8%`, duration by `38.5%`, and cost
+  by `67.0%`.
+- Against the reference run, this is a better task outcome and uses fewer
+  steps, but it does not beat reference duration or cost.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
