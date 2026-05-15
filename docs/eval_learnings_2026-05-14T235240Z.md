@@ -3389,3 +3389,55 @@ Decision:
 - Try one narrow refinement before finalizing: direct the agent to the
   DuckDuckGo past-month URL and explicitly forbid Google/Bing, `after:`
   queries, and manual DuckDuckGo input edits for this exact task.
+
+## 2026-05-15T12:23:13Z Update: Barrons Direct-DuckDuckGo Retest Launched
+
+- Commit: `242c07a3a27273b8f6866312aaff34e61b13d1a4`.
+- Dashboard run: `kh7ean29z2ww1afqnpt35yqskn86rq2p`.
+- GitHub workflow: `25917545792`.
+- Dataset range remains `start=54`, `end=55`, task `135`.
+- Config is unchanged from the first Barron's targeted run:
+  `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking_level=minimal`, headed
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
+Expected result:
+
+- Preserve success.
+- Improve on the first Barron's targeted run by avoiding the Google
+  CAPTCHA and DuckDuckGo search-box edit loop.
+
+## 2026-05-15T12:29:25Z Update: Barrons Direct-DuckDuckGo Retest Rejected
+
+Targeted run:
+
+- Run `kh7ean29z2ww1afqnpt35yqskn86rq2p`, workflow `25917545792`,
+  commit `242c07a3a27273b8f6866312aaff34e61b13d1a4`.
+- Same minimal-thinking Gemini config as the first Barron's targeted
+  run.
+
+Result for task `135`:
+
+- Judge/self-report: failure / `success=true`.
+- Steps: `16` vs first Barron's targeted run `22`.
+- Duration: `63.71s` vs first Barron's targeted run `79.74s`.
+- Cost: `$0.074795` vs first Barron's targeted run `$0.101730`.
+- Action errors/access denied/tool failures: `0/0/0`.
+
+Failure reason:
+
+- The direct-DuckDuckGo wording reduced steps and cost, but the agent
+  over-broadened the result set.
+- The final included historical Barron's value-investing articles from
+  2020-2021 and assigned them only a filter-derived date range, not
+  exact publication dates inside the last 30 days.
+
+Decision:
+
+- Reject the direct-DuckDuckGo refinement.
+- Restore the first Barron's nudge wording from commit `e86b980`,
+  which preserved judged success while improving old Rust materially.
