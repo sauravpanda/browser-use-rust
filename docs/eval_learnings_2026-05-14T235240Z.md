@@ -4051,6 +4051,51 @@ Learning:
   signal and star rating is supporting evidence, while keeping the one-line
   answer format.
 
+## 2026-05-15T18:11:18Z Update: GetYourGuide Review-Count Retest Completed
+
+Targeted run:
+
+- Run `kh7a8dz8w4vzjytbam6hzztvh186s8sw`, workflow `25933642237`,
+  commit `365c172eba2cc92e8c84746a63b4ffffa16214b7`.
+- Dataset range: `start_index=89`, `end_index=90`, task `645`.
+- User message: `bu-rust getyourguide-review-count targeted no-thinking
+  gpt-o4-mini`.
+
+Configuration:
+
+- `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking=false`,
+  `thinking_level=minimal`, headed local browser,
+  `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+
+Result:
+
+- Judge/self-report: success / `success=true`.
+- Steps: `1` vs kept patch `8`, old Rust `16`, and reference `4`.
+- Duration: `5.30s` vs kept patch `25.58s`, old Rust `56.23s`, and
+  reference `14.20s`.
+- Cost: `$0.007072` vs kept patch `$0.028878`, old Rust `$0.059767`,
+  and reference `$0.007393`.
+- Final answer returned the reference-aligned winner:
+  `Paris: 1-Hour Seine Cruise departing from the Eiffel Tower - 4.4
+  (83,091 reviews), starts at €17.`
+
+Decision:
+
+- Keep commit `365c172eba2cc92e8c84746a63b4ffffa16214b7`.
+- It is not the cheapest GetYourGuide retest (`71fba47` was `$0.006583`)
+  but that run chose Disneyland by weighting star rating over review
+  count. The current commit is more semantically stable for "most popular"
+  and still beats the reference on steps, duration, and cost.
+- The `20%` cost target appears unlikely for this task without deeper
+  runtime changes, because the exact one-line answer prompt still incurred
+  about the same Gemini completion-token overhead. The current patch cuts
+  cost by `88.2%` from old Rust and `75.5%` from the previously kept Rust
+  patch, but only `4.3%` from the stronger reference.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
