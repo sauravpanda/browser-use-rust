@@ -3128,6 +3128,47 @@ Configuration:
   `proxyless=true`, `parallel_runs=1`.
 - No literal `developerId` was sent in `/api/startRun`.
 
+## 2026-05-15T16:42:35Z Update: Softonic Targeted Eval Result
+
+Targeted run:
+
+- Run `kh78xymwhn9z1jmwym4tpq17q186ss3p`, workflow `25929578690`,
+  commit `cfc4630238f001b23097420b5e5dcfe0570565d8`.
+- Dataset range: `start_index=127`, `end_index=128`, task `2249`.
+- Command confirmed in GitHub logs:
+  `--model gemini-3-flash-preview`, `--eval-model gpt-o4-mini`,
+  `--max-steps 100`, `--start 127`, `--end 128`,
+  `--max-actions-per-step 4`, `--judge-repeat-count 1`,
+  `--test-case WebBench_READ_v5`, `--proxyless`,
+  `--judge-type ComprehensiveV1`, `--no-thinking`,
+  `--thinking-level minimal`, `--flash-mode`, `--browser local`,
+  `--images-per-step 1`, `--use-vision true`, `--agent-type Agent`.
+
+Result for task `2249`:
+
+- Judge/self-report: success / `success=true`.
+- Score: `1`.
+- Steps: `2` vs old Rust `5` and reference `3`.
+- Duration: `6.44s` vs old Rust `17.69s` and reference `15.34s`.
+- Cost: `$0.006421` vs old Rust `$0.015128` and reference `$0.003490`.
+- Tokens: platform `tokensUsed=21847`, usage `total_tokens=23089`.
+
+Trace proof:
+
+- The run navigated to Softonic's official articles page and extracted the
+  first three visible recent headlines from the page.
+- The judge accepted the page and extracted headlines as the requested
+  latest Softonic news/articles result.
+
+Decision:
+
+- Keep the patch. It preserves judged success, beats the reference on
+  steps and duration, and cuts old Rust by `3` steps, `11.26s`, and
+  `$0.008707`. Cost remains higher than the reference.
+- Learning: direct same-site section starts are strong step/time reducers,
+  but pages with heavier article-card DOM can still cost more tokens than
+  the Python reference even when the route is shorter.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
