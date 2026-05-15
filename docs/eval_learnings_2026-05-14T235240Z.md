@@ -3302,6 +3302,27 @@ Expected result:
 - Preserve judged success while cutting homepage cookie/search overhead
   and keeping the final answer grounded in Oxford page evidence.
 
+## 2026-05-15T16:54:52Z Update: Oxford Targeted Eval Launched
+
+Targeted run:
+
+- Run `kh7f0rpe7ra5e7hnae7zeq54q986rnf5`, workflow `25930232177`,
+  commit `fe37602e6df9c0ac1c7a8b5357081093356df057`.
+- Dataset range: `start_index=47`, `end_index=48`, task `2625`.
+- User message: `bu-rust oxford-integrity targeted no-thinking gpt-o4-mini`.
+
+Configuration:
+
+- Same corrected object-shaped dispatch and minimal-thinking Gemini
+  config: `runtime=rs`, `gemini-3-flash-preview`,
+  `eval_model=gpt-o4-mini`, `max_steps=100`, `--no-thinking`,
+  `thinking_level=minimal`, headed local browser,
+  `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
