@@ -2122,6 +2122,41 @@ Configuration:
   `proxyless=true`, `parallel_runs=1`.
 - No literal `developerId` was sent in `/api/startRun`.
 
+## 2026-05-15T14:58:45Z Update: Fox Sports Card-Extract Eval Result
+
+Result for task `582`:
+
+- Judge/self-report: success / `success=true`.
+- Steps: `2` vs old Rust `11`, reference `6`, and first Fox patch `2`.
+- Duration: `7.29s` vs old Rust `47.12s`, reference `30.64s`, and first
+  Fox patch `10.51s`.
+- Cost: `$0.009733` vs old Rust `$0.052419`, reference `$0.013789`, and
+  first Fox patch `$0.017386`.
+- Action errors/access denied/tool failures: `0/0/0`.
+
+Trace proof:
+
+- Workflow logs confirmed `BU_RUNTIME=rs`, browser-use-rs installation,
+  headed `xvfb-run`, `--model gemini-3-flash-preview`,
+  `--eval-model gpt-o4-mini`, `--max-steps 100`, `--start 6`,
+  `--end 7`, `--proxyless`, `--judge-type ComprehensiveV1`,
+  `--no-thinking`, `--thinking-level minimal`, `--flash-mode`,
+  `--browser local`, `--images-per-step 1`, `--use-vision true`, and
+  `--agent-type Agent`.
+- The agent loaded `https://www.foxsports.com/nba/highlights`, used
+  `extract_result_cards` in step `1`, and finished in step `2` without
+  calling `extract_structured_data`.
+- The external judgement accepted the answer and gave score `1.0`.
+- Platform caveat repeated: `/api/getRunResults?format=only_judge`
+  returned the real Fox Sports row plus the empty CDC task `232`; use
+  task `582`.
+
+Decision:
+
+- Keep the card-extract refinement. It preserves success, beats the
+  reference on steps, duration, and cost, and cuts the first Fox patch's
+  cost by about `$0.007653`.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
