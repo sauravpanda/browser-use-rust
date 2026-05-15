@@ -559,7 +559,11 @@ class FinalAnswerGuardTests(unittest.TestCase):
 
         self.assertTrue(_looks_like_imdb_weekend_budget_bad_answer(task, answer))
         self.assertTrue(_looks_like_unsupported_final_answer(task, answer))
-        self.assertIn("IMDB_WEEKEND_BUDGET_GUARD", _final_answer_recovery_nudge(task, answer))
+        nudge = _final_answer_recovery_nudge(task, answer)
+        self.assertIn("IMDB_WEEKEND_BUDGET_GUARD", nudge)
+        self.assertIn("exact date/header", nudge)
+        self.assertNotIn("May 15, 2026", nudge)
+        self.assertNotIn("$55,000,000", nudge)
 
     def test_imdb_weekend_budget_supported_values_need_context(self):
         task = (
@@ -577,7 +581,10 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertFalse(_looks_like_imdb_weekend_budget_bad_answer(task, answer))
         self.assertTrue(_looks_like_imdb_weekend_budget_thin_answer(task, answer))
         self.assertTrue(_looks_like_unsupported_final_answer(task, answer))
-        self.assertIn("IMDB_WEEKEND_BUDGET_CONTEXT", _final_answer_recovery_nudge(task, answer))
+        nudge = _final_answer_recovery_nudge(task, answer)
+        self.assertIn("IMDB_WEEKEND_BUDGET_CONTEXT", nudge)
+        self.assertIn("observed in this run", nudge)
+        self.assertNotIn("May 15, 2026 cluster", nudge)
 
     def test_imdb_weekend_budget_contextual_reference_shape_is_not_flagged(self):
         task = (
@@ -588,11 +595,31 @@ class FinalAnswerGuardTests(unittest.TestCase):
         )
         answer = (
             "IMDb's release calendar for this weekend showed the May 15, "
-            "2026 releases In the Grey, Obsession, Is God Is, Driver's Ed, "
-            "Magic Hour, Life Hack, and Mobile Suit Gundam Hathaway. "
+            "2026 releases included In the Grey, Obsession, Is God Is, "
+            "Driver's Ed, Magic Hour, Life Hack, and Mobile Suit Gundam "
+            "Hathaway. "
             "In the Grey was the highest budget at $55,000,000; Obsession "
             "was the lowest at approximately $1,000,000. The difference "
             "is $54,000,000."
+        )
+
+        self.assertFalse(_looks_like_imdb_weekend_budget_bad_answer(task, answer))
+        self.assertFalse(_looks_like_imdb_weekend_budget_thin_answer(task, answer))
+        self.assertFalse(_looks_like_unsupported_final_answer(task, answer))
+
+    def test_imdb_weekend_budget_context_does_not_require_fixed_release_set(self):
+        task = (
+            "Determine which movie release this weekend had the highest "
+            "box office budget, then compare it with the movie with the "
+            "lowest box office budget and return the difference. "
+            "website: https://imdb.com"
+        )
+        answer = (
+            "IMDb's release calendar for the weekend of May 15, 2026 "
+            "showed releases including In the Grey, Obsession, Is God Is, "
+            "Driver's Ed, and Magic Hour. In the Grey was the highest "
+            "budget at $55,000,000; Obsession was the lowest at "
+            "approximately $1,000,000. The difference is $54,000,000."
         )
 
         self.assertFalse(_looks_like_imdb_weekend_budget_bad_answer(task, answer))

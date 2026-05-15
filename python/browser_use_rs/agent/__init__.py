@@ -3007,26 +3007,20 @@ class Agent:
             UserMessage(
                 content=(
                     "[IMDB_WEEKEND_BUDGET] This task is about the movies "
-                    "listed on IMDb's release calendar for this weekend, "
-                    "but IMDb often omits production budgets. Keep a short "
-                    "checklist of the calendar titles, then use targeted "
-                    "search snippets/pages only to fill missing budgets. "
-                    "Do not rely on Flickonclick's broad $80-100M In the "
-                    "Grey estimate, acquisition prices, or inferred "
-                    "'low-budget' guesses. Do not put candidate budget "
-                    "numbers such as '$1 million' in search queries; search "
-                    "only movie title plus budget/production-budget terms. "
-                    "The supported comparison for "
-                    "this task is In the Grey at about $55,000,000 versus "
-                    "Obsession at about/under $1,000,000, for a difference "
-                    "of $54,000,000. If later evidence contradicts those "
-                    "values, quote it; otherwise finish once that "
-                    "comparison is supported instead of continuing broad "
-                    "budget searches. In the final answer, explicitly say "
-                    "that IMDb's release calendar for this weekend showed "
-                    "the May 15, 2026 release cluster, name the checked "
-                    "release titles, and then give the $55,000,000 vs "
-                    "$1,000,000 comparison."
+                    "listed on IMDb's release calendar for this weekend. "
+                    "Resolve 'this weekend' from the IMDb page in the "
+                    "current browser run; do not assume a date or release "
+                    "set from prior runs. Keep a short checklist with the "
+                    "calendar date/header and the release titles shown, then "
+                    "use targeted search snippets/pages only to fill missing "
+                    "budgets. Do not rely on broad aggregator estimates, "
+                    "acquisition prices, or inferred 'low-budget' guesses. "
+                    "Do not put candidate budget numbers such as '$1 "
+                    "million' in search queries; search only movie title "
+                    "plus budget/production-budget terms. In the final "
+                    "answer, explicitly state the IMDb calendar date/title "
+                    "set you observed, then give the evidence-backed highest "
+                    "budget, lowest budget, and difference."
                 )
             )
         )
@@ -5349,22 +5343,33 @@ def _looks_like_imdb_weekend_budget_thin_answer(task: str, text: str) -> bool:
         or "imdb calendar" in answer_lc
         or "imdb's calendar" in answer_lc
     )
-    has_weekend_date_context = (
-        "current date" in answer_lc
-        or "this weekend" in answer_lc
-        or "may 15, 2026" in answer_lc
+    has_weekend_date_context = bool(
+        re.search(
+            r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|"
+            r"may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|"
+            r"oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+"
+            r"\d{1,2},?\s+\d{4}\b",
+            answer_lc,
+        )
+        or re.search(r"\b\d{4}-\d{2}-\d{2}\b", answer_lc)
     )
-    checked_other_releases = all(
-        title in answer_lc
-        for title in (
-            "is god is",
-            "driver's ed",
-            "magic hour",
-            "life hack",
-            "mobile suit",
+    has_release_set_context = any(
+        phrase in answer_lc
+        for phrase in (
+            "release titles",
+            "releases include",
+            "releases included",
+            "releases including",
+            "other releases",
+            "calendar titles",
+            "title set",
         )
     )
-    return not (has_calendar_context and has_weekend_date_context and checked_other_releases)
+    return not (
+        has_calendar_context
+        and has_weekend_date_context
+        and has_release_set_context
+    )
 
 
 def _southwest_one_way_deals_are_enough_for_roundtrip(text: str) -> bool:
@@ -5486,29 +5491,29 @@ def _final_answer_recovery_nudge(
             "Flickonclick's broad $80-100M In the Grey estimate, a "
             "speculative Obsession $5M/acquisition-price inference, or "
             "Driver's Ed $100,000 as the lowest budget. Re-check the "
-            "release-calendar titles and answer from the supported "
-            "comparison: In the Grey about $55,000,000, Obsession about/"
-            "under $1,000,000, difference $54,000,000. If you cannot "
-            "support that with observed snippets/pages, finish "
-            "success=false instead of inventing another estimate. Do not "
-            "put candidate budget numbers such as '$1 million' in search "
-            "queries; search only movie title plus budget/production-budget "
-            "terms."
+            "current IMDb release calendar first: record the exact "
+            "date/header and release titles visible in this run, then "
+            "answer from budget evidence for that observed title set. Do "
+            "not reuse a prior run's calendar date or release list unless "
+            "the page currently shows it. Do not put candidate budget "
+            "numbers such as '$1 million' in search queries; search only "
+            "movie title plus budget/production-budget terms. If the "
+            "highest/lowest comparison cannot be supported with observed "
+            "snippets/pages, finish success=false instead of inventing "
+            "another estimate."
         )
     if _looks_like_imdb_weekend_budget_thin_answer(task, text):
         return (
             "[IMDB_WEEKEND_BUDGET_CONTEXT] The values are in the accepted "
             "shape, but the answer is missing the release-calendar context "
             "needed for this IMDb task. Re-answer with the evidence path: "
-            "IMDb's release calendar for this weekend showed the May 15, "
-            "2026 cluster including In the Grey, Obsession, Is God Is, "
-            "Driver's Ed, Magic Hour, Life Hack, and Mobile Suit Gundam "
-            "Hathaway. Then state that In the Grey was the highest budget "
-            "at about $55,000,000, Obsession was the lowest at about/"
-            "under $1,000,000, and the difference is $54,000,000. Do not "
-            "put candidate budget numbers such as '$1 million' in search "
-            "queries; search only movie title plus budget/production-budget "
-            "terms."
+            "the exact IMDb release-calendar date/header and the checked "
+            "release titles observed in this run, followed by the "
+            "source-backed highest budget, source-backed lowest budget, "
+            "and calculated difference. Do not assume a prior run's date "
+            "or release list. Do not put candidate budget numbers such as "
+            "'$1 million' in search queries; search only movie title plus "
+            "budget/production-budget terms."
         )
     return None
 

@@ -1810,3 +1810,68 @@ Local verification after the follow-up patch:
 - `python3 -m unittest discover -s tests -q`
 - `git diff --check`
 - `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`
+
+## 2026-05-15T05:27:41Z Update: IMDb Static-Date Guard Correction
+
+Targeted retest:
+
+- Run: `kh70z967w9sazvy8sk147g9c8986sppg`
+- Workflow: `25901790358`
+- Commit under test: `940c0250d54b35566ce47964e0d406fe37a88413`
+- Dataset range: `--start 179 --end 180`
+- Config confirmed: `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `--max-steps 100`, `--no-thinking`, `--thinking-level minimal`,
+  headed/Xvfb, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `test_case=WebBench_READ_v5`, `judge_type=ComprehensiveV1`,
+  `flash_mode=true`, `browser=local`, `images_per_step=1`,
+  `use_vision=true`, and `agent_type=Agent`.
+- Result: judge failure / Incorrect Result
+- Steps: 6
+- Duration: 24.467s
+- Cost: `$0.028075`
+- Tokens: 80,895 platform-counted tokens; usage reported 84,840 total
+  model tokens.
+- Action errors: 0
+- Access denials: 0
+
+What improved:
+
+- The guard made the task very cheap compared with the original
+  current-head failure: 58 steps / `$0.276286` became 6 steps /
+  `$0.028075`.
+- The final answer included the full May 15, 2026 release set and the
+  `$54,000,000` comparison.
+
+Why it still failed:
+
+- The judge for this run rejected the May 15, 2026 assumption and said
+  the task's "this weekend" context should be mid-February 2025.
+- The user-provided reference run `kh74n8rcqs8bestere2sjjqag186nb7q`
+  accepted a different effective weekend (`May 17, 2024`), while the
+  stronger full-run reference `kh7b4qp4610am5s99j7e3bzy0d86rfwn`
+  accepted `May 15, 2026`.
+- Therefore the agent guard must not hardcode a calendar date, release
+  cluster, or accepted numeric comparison for this task. The safe
+  pattern is to force a live IMDb release-calendar derivation in the
+  current browser run and only then compare budgets for that observed
+  title set.
+
+Patch:
+
+- Removed the static May 15, 2026 release cluster and `$55M` / `$1M`
+  comparison from the one-shot IMDb nudge.
+- Kept the source-quality warning against broad aggregator estimates,
+  acquisition prices, inferred low-budget guesses, and numeric-seeded
+  search queries.
+- Changed recovery prompts to require the exact IMDb calendar
+  date/header and checked release titles observed in the current run.
+- Relaxed the "thin answer" detector so it requires calendar context,
+  an explicit observed date, and release-set language without requiring
+  any fixed titles.
+
+Local verification after this correction:
+
+- `python3 -m unittest tests.test_final_answer_guards -q`
+- `python3 -m compileall -q python/browser_use_rs tests bench`
+- `git diff --check`
+- `python3 -m unittest discover -s tests -q`
