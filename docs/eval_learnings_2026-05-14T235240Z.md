@@ -3647,6 +3647,28 @@ Expected result:
 - Preserve judged success while reducing old Rust's search and validation
   overhead, aiming for a four-step path that also lowers cost.
 
+## 2026-05-15T17:26:20Z Update: Virginia Targeted Eval Launched
+
+Targeted run:
+
+- Run `kh7a30wd78tshqdjzcj9atvnjx86r641`, workflow `25931705826`,
+  commit `4a3d0d4185c727a491c5e9580ffb4fce9555390b`.
+- Dataset lookup confirmed task `2042` is index `79`; range is
+  `start_index=79`, `end_index=80`.
+- User message: `bu-rust virginia-covid-search targeted no-thinking gpt-o4-mini`.
+
+Configuration:
+
+- Same corrected object-shaped dispatch and minimal-thinking Gemini
+  config: `runtime=rs`, `gemini-3-flash-preview`,
+  `eval_model=gpt-o4-mini`, `max_steps=100`, `--no-thinking`,
+  `thinking_level=minimal`, headed local browser,
+  `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
