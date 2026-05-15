@@ -1111,6 +1111,9 @@ class Agent:
         # with no actual tool call. We nudge at most twice to avoid
         # creating an infinite finalization loop.
         self._pending_action_final_nudges: int = 0
+        # Guard against provider edge cases where the model returns
+        # neither tool calls nor final text. That is not an answer.
+        self._empty_output_nudges: int = 0
         # Track selectors seen in the previous snapshot. Used to mark
         # NEW elements (those whose selector wasn't in the prior step's
         # snapshot) with a `*` prefix in the next page-state injection.
@@ -1345,6 +1348,7 @@ class Agent:
     async def add_new_task(self, new_task: str) -> None:
         """Append a follow-up user instruction. Next run() picks it up."""
         self._pending_action_final_nudges = 0
+        self._empty_output_nudges = 0
         self._messages.append(
             UserMessage(content=_task_message_with_runtime_context(new_task))
         )
@@ -1864,6 +1868,45 @@ class Agent:
             if not completion.tool_calls:
                 done_text = completion.text or ""
                 candidate_done_text = self._strip_state_tags_for_answer(done_text)
+                if (
+                    not candidate_done_text.strip()
+                    and step_n < max_steps
+                    and self._empty_output_nudges < 2
+                ):
+                    self._empty_output_nudges += 1
+                    logger.info(
+                        "agent: EMPTY_MODEL_OUTPUT nudge at step %d "
+                        "(nudge=%d)",
+                        step_n,
+                        self._empty_output_nudges,
+                    )
+                    self._messages.append(
+                        AssistantMessage(text=done_text, tool_calls=[])
+                    )
+                    self._messages.append(
+                        UserMessage(
+                            content=(
+                                "[EMPTY_MODEL_OUTPUT] Your last turn did "
+                                "not call a tool and did not provide a "
+                                "final answer. Continue the task from the "
+                                "current page. If you need the typed query "
+                                "submitted, call `press_keys(keys=\"Enter\")` "
+                                "or click the visible search button. If the "
+                                "task is complete, call `done(...)` with a "
+                                "non-empty answer."
+                            )
+                        )
+                    )
+                    self._append_history(
+                        state_summary,
+                        AgentOutput(text=done_text, tool_calls=[]),
+                        [ActionResult(extracted_content="", is_done=False)],
+                        t0,
+                        step_n,
+                    )
+                    if on_step_end is not None:
+                        await _maybe_await(on_step_end())
+                    continue
                 proposed_failure_answer = _looks_like_unsupported_final_answer(
                     self.task,
                     candidate_done_text,
