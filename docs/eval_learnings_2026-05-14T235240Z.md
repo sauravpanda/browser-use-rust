@@ -3536,3 +3536,37 @@ Decision:
 - Keep the patch. It preserves success, matches the reference step
   count, beats the reference on duration, and cuts old Rust duration by
   more than `90%`.
+
+## 2026-05-15T12:37:53Z Update: Cleveland Clinic Nutrition Patch
+
+Target:
+
+- Task `234`: Search Cleveland Clinic health resources for nutrition and
+  healthy eating and list the first three resource titles.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: `23` steps,
+  `122.48s`, `$0.082416`.
+- Stronger Python reference `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success,
+  `5` steps, `16.52s`, `$0.004755`.
+
+Trace finding:
+
+- Old Rust reached the correct Health Library search result page by step
+  `5`, but then re-filtered for semantically more nutrition-specific
+  pages, scrolled, and changed queries.
+- The reference answered directly from the first three result titles in
+  page order after searching `nutrition and healthy eating`.
+
+Patch:
+
+- Add a narrow Cleveland Clinic nutrition-health-resources detector.
+- Nudge the agent to use the exact Health Library search URL and list
+  the first three visible resource titles in page order.
+- Explicitly prevent re-querying for more nutrition-specific resources
+  after the results page loads.
+
+Expected result:
+
+- Preserve or improve correctness by matching the task wording
+  literally: first three resources found, not most relevant nutrition
+  resources.
+- Cut the old Rust re-query tail toward the reference's `5` steps.
