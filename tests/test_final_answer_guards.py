@@ -36,6 +36,10 @@ from browser_use_rs.agent import (  # noqa: E402
     _looks_like_unmet_requested_data_answer,
     _looks_like_unsupported_final_answer,
     _looks_like_wrong_host_final,
+    _newegg_product_url_key,
+    _newegg_review_bytes_evidence_labels,
+    _newegg_review_bytes_should_force,
+    _task_requests_newegg_review_bytes,
 )
 from browser_use_rs.llm.base import ToolCall  # noqa: E402
 from browser_use_rs.views import ActionResult, BrowserStateSummary  # noqa: E402
@@ -272,6 +276,90 @@ class FinalAnswerGuardTests(unittest.TestCase):
         )
 
         self.assertTrue(_looks_like_unmet_requested_data_answer(task, answer))
+
+    def test_newegg_review_bytes_failed_probe_is_detected(self):
+        task = (
+            'Search for "NVIDIA RTX 3080" on Newegg, then review the '
+            '"Review Bytes" summary for this product and output the '
+            "three key performance highlights. website: https://newegg.com"
+        )
+        tool_calls = [
+            ToolCall(
+                id="t1",
+                name="search_page",
+                args={"pattern": "Review Bytes"},
+            )
+        ]
+        results = [
+            ActionResult(
+                extracted_content='No matches found for "Review Bytes" on page.'
+            )
+        ]
+
+        self.assertTrue(_task_requests_newegg_review_bytes(task))
+        self.assertEqual(
+            _newegg_product_url_key(
+                "https://www.newegg.com/msi-rtx-3080/p/N82E16814137677?x=1"
+            ),
+            "www.newegg.com/p/N82E16814137677",
+        )
+        self.assertEqual(
+            _newegg_review_bytes_evidence_labels(
+                task,
+                "https://www.newegg.com/msi-rtx-3080/p/N82E16814137677",
+                tool_calls,
+                results,
+            ),
+            {"review_bytes_not_found"},
+        )
+
+    def test_newegg_review_bytes_selector_timeout_is_detected(self):
+        task = (
+            'Search for "NVIDIA RTX 3080" on Newegg, then review the '
+            '"Review Bytes" summary for this product and output the '
+            "three key performance highlights. website: https://newegg.com"
+        )
+        tool_calls = [
+            ToolCall(
+                id="t1",
+                name="wait_for",
+                args={"selector": ".review-bytes, #customerReviews"},
+            )
+        ]
+        results = [
+            ActionResult(
+                extracted_content=(
+                    "timeout - '.review-bytes, #customerReviews' not found"
+                )
+            )
+        ]
+
+        self.assertEqual(
+            _newegg_review_bytes_evidence_labels(
+                task,
+                "https://www.newegg.com/gigabyte-rtx-3080/p/N82E16814932460",
+                tool_calls,
+                results,
+            ),
+            {"selector_timeout"},
+        )
+
+    def test_newegg_review_bytes_force_threshold_waits_for_repeated_misses(self):
+        self.assertFalse(
+            _newegg_review_bytes_should_force(
+                23, failed_probes=2, product_count=1, selector_timeouts=0
+            )
+        )
+        self.assertFalse(
+            _newegg_review_bytes_should_force(
+                24, failed_probes=1, product_count=1, selector_timeouts=0
+            )
+        )
+        self.assertTrue(
+            _newegg_review_bytes_should_force(
+                24, failed_probes=2, product_count=1, selector_timeouts=0
+            )
+        )
 
     def test_explicit_unable_to_complete_final_is_flagged(self):
         task = (

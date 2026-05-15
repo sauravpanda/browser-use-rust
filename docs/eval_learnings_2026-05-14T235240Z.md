@@ -2495,3 +2495,61 @@ Decision:
 - If this idea is revisited, it needs a lower-blast-radius route than a
   globally visible tool, such as a task-specific nudge or a conditional
   tool surface.
+
+## 2026-05-15T10:44:06Z Update: Newegg Review Bytes Tail Targeted
+
+Reference alignment remains `gemini-3-flash-preview`,
+`--no-thinking`, `--thinking-level minimal`, `max_steps=100`,
+`eval_model=gpt-o4-mini`, headed local browser, and the same
+WebBench/Judge settings as the reference run.
+
+Trace comparison for task `1211`:
+
+- Task: Search Newegg for `"NVIDIA RTX 3080"`, review the `"Review
+  Bytes"` summary, and output three key performance highlights.
+- Rust full run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: failed honestly
+  after `99` steps, `360.86s`, and `$0.630196`.
+- Python reference `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: also failed
+  honestly, but after `29` steps, `144.37s`, and `$0.102309`.
+
+Observed Rust failure pattern:
+
+- The task is not a success-regression candidate; the reference also
+  could not retrieve Review Bytes.
+- The waste is a repeated product-page tail: multiple RTX 3080 product
+  pages, repeated `search_page("Review Bytes")` not-found results, and
+  repeated `.review-bytes` / `#customerReviews` selector timeouts before
+  finalizing.
+- The existing final-answer guard correctly downgrades invented
+  Review Bytes highlights, but only after the tail has already burned
+  the step and token budget.
+
+Patch candidate:
+
+- Add a narrow Newegg Review Bytes availability guard.
+- Count failed Review Bytes probes across Newegg product pages.
+- Force an honest final when repeated product-page probes show the
+  feature is unavailable, and explicitly forbid invented RTX 3080
+  performance highlights from snippets or general knowledge.
+- After reviewing the old Rust trace, the guard is tuned to allow a
+  force-final after step `24` once there are at least two direct Review
+  Bytes misses. In that trace this should cut the task near step `25`
+  instead of step `99`; requiring two product pages would wait until
+  about step `53` and leave too much cost on a task the reference also
+  failed honestly.
+
+Verification so far:
+
+- Focused final-answer guard tests pass.
+- `compileall` for the touched agent/test paths passes.
+- `2026-05-15T10:46:00Z`: full local verification passed:
+  `python3 -m unittest discover -s tests -q`,
+  `python3 -m compileall -q python/browser_use_rs tests bench`,
+  `cargo check -p bu-py`, `cargo test -p bu-browser`,
+  `git diff --check`, and
+  `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`.
+
+Next decision gate:
+
+- Commit/push and launch a targeted task-`1211` eval using the exact
+  minimal-thinking Gemini config before any broader slice.

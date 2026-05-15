@@ -1157,6 +1157,10 @@ class Agent:
         self._consent_loop_nudged: bool = False
         self._southwest_deals_roundtrip_nudged: bool = False
         self._imdb_weekend_budget_nudged: bool = False
+        self._newegg_review_bytes_failed_probes: int = 0
+        self._newegg_review_bytes_selector_timeouts: int = 0
+        self._newegg_review_bytes_product_urls: set[str] = set()
+        self._newegg_review_bytes_forced: bool = False
         self._final_answer_recovery_nudges: int = 0
         self._bbc_goodfood_no_result_evidence: set[str] = set()
         self._bbc_goodfood_no_result_forced: bool = False
@@ -2416,6 +2420,10 @@ class Agent:
             self._maybe_inject_imdb_weekend_budget_nudge(
                 state_summary, tool_results, step_n
             )
+            if await self._maybe_force_newegg_review_bytes_unavailable(
+                state_summary, completion.tool_calls, tool_results, step_n
+            ):
+                return
 
             # All-error streak guard. Model can self-correct from one bad
             # turn; multiple in a row means it's stuck.
@@ -2516,6 +2524,16 @@ class Agent:
                         "was not observed, say the exact recipe page could "
                         "not be located and that no source-backed "
                         "substitutions can be provided."
+                    )
+                if _task_requests_newegg_review_bytes(self.task):
+                    prompt += (
+                        " For the Newegg Review Bytes task, do NOT invent "
+                        "performance highlights from general GPU knowledge "
+                        "or search snippets. If the Review Bytes section "
+                        "did not render after the observed product-page "
+                        "probes, state that the requested Review Bytes "
+                        "summary could not be retrieved and set no "
+                        "unverified highlights as facts."
                     )
             self._messages.append(UserMessage(content=prompt))
             completion = await asyncio.wait_for(
@@ -3030,6 +3048,88 @@ class Agent:
             step_n,
             current_url,
         )
+
+    async def _maybe_force_newegg_review_bytes_unavailable(
+        self,
+        state: BrowserStateSummary,
+        tool_calls: list[ToolCall],
+        results: list[ActionResult],
+        step_n: int,
+    ) -> bool:
+        if self._newegg_review_bytes_forced:
+            return False
+        labels = _newegg_review_bytes_evidence_labels(
+            self.task,
+            state.url,
+            tool_calls,
+            results,
+        )
+        if not labels:
+            return False
+
+        self._newegg_review_bytes_failed_probes += 1
+        if "selector_timeout" in labels:
+            self._newegg_review_bytes_selector_timeouts += 1
+        product_url = _newegg_product_url_key(state.url)
+        if product_url:
+            self._newegg_review_bytes_product_urls.add(product_url)
+
+        product_count = len(self._newegg_review_bytes_product_urls)
+        logger.info(
+            "agent: NEWEGG_REVIEW_BYTES evidence at step %d "
+            "(labels=%s, probes=%d, products=%d, selector_timeouts=%d)",
+            step_n,
+            sorted(labels),
+            self._newegg_review_bytes_failed_probes,
+            product_count,
+            self._newegg_review_bytes_selector_timeouts,
+        )
+
+        should_force = _newegg_review_bytes_should_force(
+            step_n,
+            failed_probes=self._newegg_review_bytes_failed_probes,
+            product_count=product_count,
+            selector_timeouts=self._newegg_review_bytes_selector_timeouts,
+        )
+        if not should_force:
+            return False
+
+        self._newegg_review_bytes_forced = True
+        evidence = ", ".join(sorted(labels))
+        self._messages.append(
+            UserMessage(
+                content=(
+                    "[NEWEGG_REVIEW_BYTES_UNAVAILABLE] Multiple Newegg "
+                    "product-page probes failed to reveal the requested "
+                    f"Review Bytes summary ({evidence}; "
+                    f"{self._newegg_review_bytes_failed_probes} failed "
+                    f"probe(s) across {product_count} product page(s)). "
+                    "Stop scrolling or trying more RTX product pages. "
+                    "Finish honestly from the observed evidence: if the "
+                    "Review Bytes summary did not render, state that the "
+                    "three requested highlights could not be retrieved. "
+                    "Do not invent performance highlights from general "
+                    "RTX 3080 knowledge or external snippets."
+                )
+            )
+        )
+        logger.info(
+            "agent: NEWEGG_REVIEW_BYTES force-final at step %d "
+            "(probes=%d, products=%d, selector_timeouts=%d)",
+            step_n,
+            self._newegg_review_bytes_failed_probes,
+            product_count,
+            self._newegg_review_bytes_selector_timeouts,
+        )
+        await self._force_final_answer(
+            state,
+            step_n,
+            reason=(
+                "Newegg Review Bytes unavailable after repeated "
+                "product-page probes"
+            ),
+        )
+        return True
 
     def _format_action_line(
         self, step_n: int, tc: ToolCall, result: ActionResult
@@ -5313,6 +5413,100 @@ def _task_requests_imdb_weekend_budget(task: str) -> bool:
         and "lowest" in task_lc
         and "budget" in task_lc
         and "difference" in task_lc
+    )
+
+
+def _task_requests_newegg_review_bytes(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return "newegg.com" in task_lc and "review bytes" in task_lc
+
+
+def _newegg_product_url_key(url: str | None) -> str | None:
+    if not _host_matches(url or "", "newegg.com"):
+        return None
+    try:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url or "")
+    except Exception:
+        return None
+    match = re.search(r"/p/(N82E\w+)", parsed.path or "", re.IGNORECASE)
+    if match:
+        return f"{parsed.hostname or 'newegg.com'}/p/{match.group(1).upper()}"
+    if "/p/" in (parsed.path or "").lower():
+        return f"{parsed.hostname or 'newegg.com'}{parsed.path.rstrip('/')}"
+    return None
+
+
+def _newegg_review_bytes_evidence_labels(
+    task: str,
+    current_url: str | None,
+    tool_calls: list[ToolCall],
+    results: list[ActionResult],
+) -> set[str]:
+    if not _task_requests_newegg_review_bytes(task):
+        return set()
+    if not _host_matches(current_url or "", "newegg.com"):
+        return set()
+    tool_text = " ".join(
+        f"{getattr(tc, 'name', '')} "
+        f"{json.dumps(getattr(tc, 'args', {}) or {}, default=str)}"
+        for tc in tool_calls
+    )
+    result_text = " ".join(
+        str(r.extracted_content or r.error or "")
+        for r in results
+        if r is not None
+    )
+    combined = f"{tool_text}\n{result_text}"
+    combined_lc = combined.lower()
+    labels: set[str] = set()
+
+    asked_for_review_bytes = "review bytes" in combined_lc
+    if asked_for_review_bytes and (
+        "no matches found" in combined_lc
+        or "not found" in combined_lc
+        or "(text not found)" in combined_lc
+        or re.search(r"\bnot\s+visible\b", combined_lc)
+    ):
+        labels.add("review_bytes_not_found")
+
+    selector_probe = (
+        ".review-bytes" in combined_lc
+        or "#customerreviews" in combined_lc
+        or ".reviews-title" in combined_lc
+        or ".review-title" in combined_lc
+    )
+    if selector_probe and (
+        "timeout" in combined_lc
+        or "not found" in combined_lc
+        or "not visible" in combined_lc
+    ):
+        labels.add("selector_timeout")
+
+    if "review bytes" in combined_lc and "there are no reviews yet" in combined_lc:
+        labels.add("reviews_empty_state")
+    if "review" in combined_lc and "loading" in combined_lc:
+        labels.add("reviews_loading")
+
+    return labels
+
+
+def _newegg_review_bytes_should_force(
+    step_n: int,
+    *,
+    failed_probes: int,
+    product_count: int,
+    selector_timeouts: int,
+) -> bool:
+    return (
+        step_n >= 24 and failed_probes >= 2
+    ) or (
+        step_n >= 24 and product_count >= 2 and failed_probes >= 3
+    ) or (
+        step_n >= 30 and selector_timeouts >= 2
+    ) or (
+        step_n >= 36 and failed_probes >= 5
     )
 
 
