@@ -3962,6 +3962,37 @@ Learning:
   the final answer one concise sentence with only the winner, rating/review
   evidence, and starting price.
 
+## 2026-05-15T17:59:06Z Update: GetYourGuide Concise Retest Completed
+
+Targeted run:
+
+- Run `kh77bjpn3e02r2cqj0mbazxvzh86sh0v`, workflow `25933081555`,
+  commit `b4fab9d99719ff13582c3bc677d85d871023d8f6`.
+- Dataset range: `start_index=89`, `end_index=90`, task `645`.
+- User message: `bu-rust getyourguide-concise-paris targeted no-thinking
+  gpt-o4-mini`.
+
+Result:
+
+- Judge/self-report: success / `success=true`.
+- Steps: `2` vs prior direct patch `1`, kept patch `8`, old Rust `16`,
+  and reference `4`.
+- Duration: `6.67s` vs prior direct patch `6.38s`, kept patch `25.58s`,
+  old Rust `56.23s`, and reference `14.20s`.
+- Cost: `$0.008949` vs prior direct patch `$0.010632`, kept patch
+  `$0.028878`, old Rust `$0.059767`, and reference `$0.007393`.
+
+Learning:
+
+- The concise-answer wording reduced cost by about `15.8%` from the
+  direct patch but still did not beat the reference cost.
+- The run used `2` steps, so the remaining cost is not just final-answer
+  length; an avoidable wait/recheck turn can erase the savings from a
+  concise final answer.
+- Tighten the task guidance again: if the first Paris page state already
+  contains visible cards with review counts and prices, answer immediately
+  without waiting or rechecking. Keep the final answer under `35` words.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
