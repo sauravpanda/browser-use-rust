@@ -201,6 +201,19 @@ _COURSERA_DATA_SCIENCE_GUIDANCE = (
     "individual course pages, degree pages, ads, or filter panels after the "
     "first five course cards are visible."
 )
+_WORLDATLAS_ASIA_RIVERS_URL = (
+    "https://www.worldatlas.com/articles/the-longest-rivers-in-asia.html"
+)
+_WORLDATLAS_ASIA_RIVERS_GUIDANCE = (
+    "[WORLDATLAS_ASIA_RIVERS] This task asks for major river systems in "
+    "Asia from WorldAtlas. Start from the official WorldAtlas article "
+    f"`{_WORLDATLAS_ASIA_RIVERS_URL}`, which contains the relevant list. "
+    "Use the visible article bullets, contents list, and river sections to "
+    "name at least three rivers and include a short detail for each, such as "
+    "length or countries/regions crossed. Finish once the river list is "
+    "available; do not retry the homepage cookie banner, use external search, "
+    "or open unrelated geography pages."
+)
 _FOXSPORTS_NBA_HIGHLIGHTS_URL = "https://www.foxsports.com/nba/highlights"
 _FOXSPORTS_NBA_HIGHLIGHTS_GUIDANCE = (
     "[FOXSPORTS_NBA_HIGHLIGHTS] This task asks for the titles of the five "
@@ -309,6 +322,8 @@ def _infer_initial_navigation_url(task: str) -> str | None:
         return _SOFTONIC_ARTICLES_URL
     if _task_requests_coursera_data_science_courses(task):
         return _COURSERA_DATA_SCIENCE_SEARCH_URL
+    if _task_requests_worldatlas_asia_rivers(task):
+        return _WORLDATLAS_ASIA_RIVERS_URL
     return urls[0]
 
 
@@ -1207,6 +1222,11 @@ class Agent:
                 {"navigate": {"url": _COURSERA_DATA_SCIENCE_SEARCH_URL}}
             ]
             self._auto_initial_navigation_url = _COURSERA_DATA_SCIENCE_SEARCH_URL
+        elif _task_requests_worldatlas_asia_rivers(task):
+            self.initial_actions = [
+                {"navigate": {"url": _WORLDATLAS_ASIA_RIVERS_URL}}
+            ]
+            self._auto_initial_navigation_url = _WORLDATLAS_ASIA_RIVERS_URL
         elif auto_initial_navigation and not self.initial_actions:
             inferred_url = _infer_initial_navigation_url(task)
             if inferred_url is not None:
@@ -1552,6 +1572,12 @@ class Agent:
                     task_content.rstrip()
                     + "\n\n"
                     + _COURSERA_DATA_SCIENCE_GUIDANCE
+                )
+            if _task_requests_worldatlas_asia_rivers(self.task):
+                task_content = (
+                    task_content.rstrip()
+                    + "\n\n"
+                    + _WORLDATLAS_ASIA_RIVERS_GUIDANCE
                 )
             self._messages.append(
                 UserMessage(content=task_content)
@@ -6535,6 +6561,15 @@ def _task_requests_coursera_data_science_courses(task: str) -> bool:
         and "courses" in task_lc
         and "first 5" in task_lc
         and "titles and providers" in task_lc
+    )
+
+
+def _task_requests_worldatlas_asia_rivers(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "worldatlas.com" in task_lc
+        and "major river systems in asia" in task_lc
+        and "list at least three rivers" in task_lc
     )
 
 

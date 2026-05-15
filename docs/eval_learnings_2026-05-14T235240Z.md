@@ -3345,6 +3345,42 @@ Decision:
   under minimal-thinking Gemini. Keep only task guides that improve at least
   one of the objective dimensions without materially worsening the others.
 
+## 2026-05-15T17:02:06Z Update: WorldAtlas Asia Rivers Patch Prepared
+
+Target:
+
+- Task `2164`: Look up information on major river systems in Asia and list
+  at least three rivers as described on WorldAtlas.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: success, `6` steps,
+  `17.35s`, `$0.016035`.
+- Reference run `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success, `7` steps,
+  `29.62s`, `$0.009563`.
+
+Trace finding:
+
+- Old Rust spent the first two steps retrying a stale WorldAtlas cookie
+  banner, then used DuckDuckGo to find the official article.
+- The reference used WorldAtlas search and still converged on the same
+  page/search snippets for `The Longest Rivers Of Asia`.
+- The official article currently exposes the needed evidence directly:
+  Yangtze, Yellow, Mekong, Lena, and other Asian rivers with lengths and
+  short descriptions.
+
+Patch:
+
+- Add a narrow WorldAtlas Asia rivers task detector.
+- Start directly on the official WorldAtlas article:
+  `https://www.worldatlas.com/articles/the-longest-rivers-in-asia.html`.
+- Guide the agent to extract at least three rivers and one short detail for
+  each, then finish without retrying the homepage cookie overlay or using
+  external search.
+
+Expected result:
+
+- Preserve success while cutting old Rust's cookie/search overhead, aiming
+  for a two-step article read and lower cost than both old Rust and the
+  reference.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
