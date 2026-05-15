@@ -3767,6 +3767,45 @@ Configuration:
   `proxyless=true`, `parallel_runs=1`.
 - No literal `developerId` was sent in `/api/startRun`.
 
+## 2026-05-15T13:07:14Z Update: Flickr Targeted Eval Completed
+
+Targeted run:
+
+- Run `kh723b2cwjw839yjm6cty93ckd86rtdb`, workflow `25919289322`,
+  commit `31e7547a3af397fb03a8b7753942a01cec791e46`.
+- Command confirmed in GitHub logs:
+  `xvfb-run`, `--model gemini-3-flash-preview`,
+  `--eval-model gpt-o4-mini`, `--max-steps 100`,
+  `--start 130`, `--end 131`, `--max-actions-per-step 4`,
+  `--judge-repeat-count 1`, `--test-case WebBench_READ_v5`,
+  `--proxyless`, `--judge-type ComprehensiveV1`, `--no-thinking`,
+  `--thinking-level minimal`, `--flash-mode`, `--browser local`,
+  `--images-per-step 1`, `--use-vision true`, `--agent-type Agent`.
+- Platform caveat repeated: `/api/getRunResults` returned the real
+  Flickr row plus an empty CDC row; use the task `537` row.
+
+Result for task `537`:
+
+- Judge/self-report: success / `success=true`.
+- Steps: `5` vs old Rust `16` and reference `5`.
+- Duration: `17.51s` vs old Rust `54.77s` and reference `24.40s`.
+- Cost: `$0.024927` vs old Rust `$0.073572` and reference `$0.016284`.
+- Action errors/access denied/tool failures: `0/0/0`.
+
+Trace proof:
+
+- The run dismissed the Flickr consent overlay in one action, navigated
+  to `https://www.flickr.com/search/?text=sunset` by step `2`, and
+  finished at step `5`.
+- The old Rust run spent repeated steps on the TrustArc iframe and
+  re-verification after already extracting the result list.
+
+Decision:
+
+- Keep the patch. It preserves judged success, matches the reference
+  step count, beats the reference on duration, and reduces old Rust cost
+  by about two-thirds. The reference still has lower cost.
+
 ## 2026-05-15T12:59:13Z Update: Daily Mail Targeted Eval Completed
 
 Targeted run:
@@ -3835,3 +3874,22 @@ Expected result:
 
 - Preserve success while cutting the old Rust consent and verification
   tail toward the reference's five-step path.
+
+## 2026-05-15T13:03:40Z Update: Flickr Targeted Eval Launched
+
+Targeted run:
+
+- Run `kh723b2cwjw839yjm6cty93ckd86rtdb`, workflow `25919289322`,
+  commit `31e7547a3af397fb03a8b7753942a01cec791e46`.
+- Dataset range: `start_index=130`, `end_index=131`, task `537`.
+- User message: `bu-rust flickr-sunset targeted no-thinking gpt-o4-mini`.
+
+Configuration:
+
+- `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking_level=minimal`, headed
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
