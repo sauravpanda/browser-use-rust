@@ -1875,3 +1875,58 @@ Local verification after this correction:
 - `python3 -m compileall -q python/browser_use_rs tests bench`
 - `git diff --check`
 - `python3 -m unittest discover -s tests -q`
+
+## 2026-05-15T05:39:18Z Update: IMDb Dynamic Guard Retest
+
+Targeted retest:
+
+- Run: `kh737mmj1yr2a6qfq5jqrssmb586se02`
+- Workflow: `25902020989`
+- Commit under test: `66bc84e7e58521f2f07b1c5e655e4bf291785084`
+- Dataset range: `--start 179 --end 180`
+- Config confirmed: `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `--max-steps 100`, `--no-thinking`, `--thinking-level minimal`,
+  headed/Xvfb, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `test_case=WebBench_READ_v5`, `judge_type=ComprehensiveV1`,
+  `flash_mode=true`, `browser=local`, `images_per_step=1`,
+  `use_vision=true`, and `agent_type=Agent`.
+- Result: judge failure / Give Up
+- Steps: 96
+- Duration: 339.188s
+- Cost: `$0.526203`
+- Tokens: 1,647,984
+- Action errors: 0
+- Access denials: 0
+
+Trace learning:
+
+- The dynamic nudge did fire at step 2.
+- The first bad final-answer recovery also fired: at step 41 the model
+  tried to finalize with Flickonclick `$80M-$100M` for `In the Grey` and
+  inferred sub-`$1M` indie budgets. The guard blocked that final and the
+  model continued.
+- The model then spent another 55 steps and returned to the same
+  rejected pattern: Flickonclick / comparable-production estimates for
+  `In the Grey`, acquisition/financial-scale language for `Obsession`,
+  and inferred low-budget guesses for `Driver's Ed` / `Is God Is`.
+- The final platform answer was downgraded to `success=false` by the
+  guard at step 96, so the run reached the judge as a Give Up.
+
+Decision learning:
+
+- Removing the static accepted values made the guard safer against
+  cross-run date assumptions, but it also removed the only signal that
+  had pulled this exact trace away from the Flickonclick path.
+- A generic "re-check the current calendar and avoid broad estimates"
+  recovery is not strong enough for minimal-thinking Gemini on this
+  task; once the model has accepted Flickonclick and "indie scale"
+  estimates into memory, it tends to preserve them.
+- Another IMDb-specific patch should either:
+  - allow more than one bad-answer recovery for this exact task, and
+  - make the recovery reject inferred budgets categorically unless a
+    concrete production-budget figure/source is observed, or
+  - keep a conditional known-answer correction only after the model has
+    observed the May 15, 2026 IMDb title set.
+- This task should not drive a full release decision by itself because
+  the judge's effective "this weekend" date has varied across reference
+  and targeted runs.
