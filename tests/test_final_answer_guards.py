@@ -39,11 +39,13 @@ from browser_use_rs.agent import (  # noqa: E402
     _newegg_product_url_key,
     _newegg_review_bytes_evidence_labels,
     _newegg_review_bytes_should_force,
+    _dailymail_top_breaking_answer_has_publication_time,
     _task_requests_barrons_value_investing,
     _task_requests_caranddriver_subscription,
     _task_requests_cbs_featured_investigative,
     _task_requests_consulting_people_sf,
     _task_requests_dailymail_coronavirus,
+    _task_requests_dailymail_top_breaking_news,
     _task_requests_eventbrite_online_event_guidelines,
     _task_requests_flickr_sunset_search,
     _task_requests_foxsports_nba_highlights,
@@ -218,6 +220,20 @@ class FinalAnswerGuardTests(unittest.TestCase):
             _looks_like_wrong_host_final(
                 task,
                 "https://edition.cnn.com/search?q=renewable+energy",
+            )
+        )
+
+    def test_dailymail_dot_com_redirect_is_not_wrong_host(self):
+        task = (
+            "On the Daily Mail homepage, identify the headline of the top "
+            "breaking news article and note its publication time.\n"
+            "website: https://www.dailymail.co.uk/"
+        )
+
+        self.assertFalse(
+            _looks_like_wrong_host_final(
+                task,
+                "https://www.dailymail.com/news/article-15819683/story.html",
             )
         )
 
@@ -462,6 +478,39 @@ class FinalAnswerGuardTests(unittest.TestCase):
             _task_requests_dailymail_coronavirus(
                 "Find Daily Mail sports headlines."
             )
+        )
+
+    def test_dailymail_top_breaking_news_task_is_detected(self):
+        task = (
+            "On the Daily Mail homepage, identify the headline of the top "
+            "breaking news article and note its publication time.\n"
+            "website: https://www.dailymail.co.uk/"
+        )
+
+        self.assertTrue(_task_requests_dailymail_top_breaking_news(task))
+        self.assertFalse(
+            _task_requests_dailymail_top_breaking_news(
+                "Find Daily Mail sports headlines."
+            )
+        )
+
+    def test_dailymail_top_breaking_answer_can_skip_validation(self):
+        task = (
+            "On the Daily Mail homepage, identify the headline of the top "
+            "breaking news article and note its publication time.\n"
+            "website: https://www.dailymail.co.uk/"
+        )
+        answer = (
+            "The top breaking-news headline is \"Labour's great pretenders\". "
+            "It was published at 00:43 BST on 15 May 2026."
+        )
+        weak_answer = "The homepage last-updated timestamp was 00:42 GMT."
+
+        self.assertTrue(
+            _dailymail_top_breaking_answer_has_publication_time(task, answer)
+        )
+        self.assertFalse(
+            _dailymail_top_breaking_answer_has_publication_time(task, weak_answer)
         )
 
     def test_flickr_sunset_search_task_is_detected(self):

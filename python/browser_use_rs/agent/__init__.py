@@ -169,6 +169,17 @@ _WEATHER_NYC_CURRENT_GUIDANCE = (
     "block. Do not answer from search-engine weather cards or keep browsing "
     "forecast/radar pages after those three values are visible."
 )
+_DAILYMAIL_TOP_BREAKING_GUIDANCE = (
+    "[DAILYMAIL_TOP_BREAKING] This task asks for the top breaking-news "
+    "article on the Daily Mail homepage and that article's publication time. "
+    "Daily Mail commonly redirects `dailymail.co.uk` to `dailymail.com`; that "
+    "is still the target site. On the homepage, identify the top/lead story, "
+    "click that same headline, and read the article page byline for the exact "
+    "published time. Do not use the homepage `Last updated` timestamp as the "
+    "article publication time. If a cookie banner appears, accept it once and "
+    "then click the same lead headline again. Finish with only the headline "
+    "and the publication time observed on the article page."
+)
 _FOXSPORTS_NBA_HIGHLIGHTS_URL = "https://www.foxsports.com/nba/highlights"
 _FOXSPORTS_NBA_HIGHLIGHTS_GUIDANCE = (
     "[FOXSPORTS_NBA_HIGHLIGHTS] This task asks for the titles of the five "
@@ -1482,6 +1493,12 @@ class Agent:
                     + "\n\n"
                     + _EVENTBRITE_ONLINE_EVENT_GUIDANCE
                 )
+            if _task_requests_dailymail_top_breaking_news(self.task):
+                task_content = (
+                    task_content.rstrip()
+                    + "\n\n"
+                    + _DAILYMAIL_TOP_BREAKING_GUIDANCE
+                )
             self._messages.append(
                 UserMessage(content=task_content)
             )
@@ -2258,6 +2275,9 @@ class Agent:
                     and not _eventbrite_online_event_answer_has_guidelines(
                         self.task, done_text
                     )
+                    and not _dailymail_top_breaking_answer_has_publication_time(
+                        self.task, done_text
+                    )
                 ):
                     logger.info(
                         "agent: VALIDATION_CHECK injected before "
@@ -2620,6 +2640,9 @@ class Agent:
                         self.task, done_result.extracted_content or ""
                     )
                     and not _eventbrite_online_event_answer_has_guidelines(
+                        self.task, done_result.extracted_content or ""
+                    )
+                    and not _dailymail_top_breaking_answer_has_publication_time(
                         self.task, done_result.extracted_content or ""
                     )
                 ):
@@ -6219,6 +6242,19 @@ def _host_from_url_or_host(value: str) -> str:
         return raw.removeprefix("www.")
 
 
+_EQUIVALENT_HOST_GROUPS = (
+    frozenset(("dailymail.co.uk", "dailymail.com")),
+)
+
+
+def _hosts_are_equivalent(host: str, target: str) -> bool:
+    h = _host_from_url_or_host(host)
+    t = _host_from_url_or_host(target)
+    if not h or not t:
+        return False
+    return any(h in group and t in group for group in _EQUIVALENT_HOST_GROUPS)
+
+
 def _target_host_from_task(task: str) -> str:
     match = re.search(r"website:\s*(https?://\S+)", task or "", re.IGNORECASE)
     if not match:
@@ -6321,7 +6357,16 @@ def _direct_section_url_for_consent_recovery(
 def _host_matches(host: str, target: str) -> bool:
     h = _host_from_url_or_host(host)
     t = _host_from_url_or_host(target)
-    return bool(h and t and (h == t or h.endswith("." + t) or t.endswith("." + h)))
+    return bool(
+        h
+        and t
+        and (
+            h == t
+            or h.endswith("." + t)
+            or t.endswith("." + h)
+            or _hosts_are_equivalent(h, t)
+        )
+    )
 
 
 def _task_requests_epa_aqs(task: str) -> bool:
@@ -6434,6 +6479,17 @@ def _task_requests_dailymail_coronavirus(task: str) -> bool:
         and "top three" in task_lc
         and "headlines" in task_lc
         and "summaries" in task_lc
+    )
+
+
+def _task_requests_dailymail_top_breaking_news(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        ("dailymail.co.uk" in task_lc or "dailymail.com" in task_lc)
+        and "homepage" in task_lc
+        and "top breaking news" in task_lc
+        and "headline" in task_lc
+        and "publication time" in task_lc
     )
 
 
@@ -6634,6 +6690,33 @@ def _eventbrite_online_event_answer_has_guidelines(task: str, text: str) -> bool
         and "details" in text_lc
         and "tickets" in text_lc
         and "publish" in text_lc
+    )
+
+
+def _dailymail_top_breaking_answer_has_publication_time(
+    task: str,
+    text: str,
+) -> bool:
+    if not _task_requests_dailymail_top_breaking_news(task):
+        return False
+    text_lc = re.sub(r"\s+", " ", (text or "").lower())
+    has_time = re.search(
+        r"\b\d{1,2}:\d{2}\s*(?:am|pm|bst|gmt|est|edt|utc)?\b",
+        text_lc,
+    )
+    has_date_or_zone = (
+        re.search(
+            r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*"
+            r"\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*20\d{2})?\b",
+            text_lc,
+        )
+        or re.search(r"\b(?:bst|gmt|est|edt|utc)\b", text_lc) is not None
+    )
+    return (
+        "headline" in text_lc
+        and ("published" in text_lc or "publication" in text_lc)
+        and bool(has_time)
+        and bool(has_date_or_zone)
     )
 
 

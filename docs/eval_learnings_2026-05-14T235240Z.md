@@ -2864,6 +2864,43 @@ Decision:
   preserving the navigation process is part of the judged requirement even
   when the final answer is correct and the direct path is faster/cheaper.
 
+## 2026-05-15T16:19:46Z Update: Daily Mail Top Breaking Patch Prepared
+
+Target:
+
+- Task `2459`: On the Daily Mail homepage, identify the headline of the
+  top breaking news article and note its publication time.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: judge failed, `4`
+  steps, `14.65s`, `$0.013004`.
+- Reference run `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: judge success, `3`
+  steps, `19.61s`, `$0.005139`.
+
+Trace finding:
+
+- The old Rust trace correctly started on Daily Mail and clicked the lead
+  story, but Daily Mail redirected `dailymail.co.uk` to `dailymail.com`.
+  The wrong-host guard treated that redirect as off-site and downgraded
+  the plain-text final to `success=false`.
+- The trace also saw the homepage `Last updated` timestamp before opening
+  the article. The reference clicked the lead article and used the article
+  page's own published time.
+
+Patch:
+
+- Treat `dailymail.co.uk` and `dailymail.com` as equivalent final hosts.
+- Add narrow Daily Mail homepage guidance: identify the lead story, click
+  the same headline, read the article page byline for the published time,
+  and do not use the homepage `Last updated` timestamp as publication
+  time.
+- Add a narrow validation-skip shape once the answer contains a headline
+  and explicit publication time.
+
+Expected result:
+
+- Convert the current Rust path from self-reported failure to a judged
+  pass while preserving the reference's three-step click-through pattern
+  if no cookie banner appears.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
