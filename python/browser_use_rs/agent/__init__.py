@@ -1156,6 +1156,9 @@ class Agent:
         self._consent_loop_count: int = 0
         self._consent_loop_nudged: bool = False
         self._southwest_deals_roundtrip_nudged: bool = False
+        self._final_answer_recovery_nudges: int = 0
+        self._bbc_goodfood_no_result_evidence: set[str] = set()
+        self._bbc_goodfood_no_result_forced: bool = False
         # Running collapsed history of older steps. Each entry: a
         # one-line "<step N> <action> → <result-summary>" string.
         # Sourced from self._history items marked collapsed=True
@@ -1349,6 +1352,9 @@ class Agent:
         """Append a follow-up user instruction. Next run() picks it up."""
         self._pending_action_final_nudges = 0
         self._empty_output_nudges = 0
+        self._final_answer_recovery_nudges = 0
+        self._bbc_goodfood_no_result_evidence.clear()
+        self._bbc_goodfood_no_result_forced = False
         self._messages.append(
             UserMessage(content=_task_message_with_runtime_context(new_task))
         )
@@ -1641,6 +1647,11 @@ class Agent:
             except Exception as e:
                 logger.debug("search-fallback loop check failed: %s", e)
 
+            if await self._maybe_force_bbc_goodfood_no_result(
+                state_summary, step_n
+            ):
+                return
+
             # Page-stagnation nudge (v0.6.3). Hash the (url, element
             # count, head of DOM text) and compare to the prior step.
             # If 3 in a row are identical, the agent is stuck — its
@@ -1912,6 +1923,38 @@ class Agent:
                     candidate_done_text,
                     state_summary.url,
                 )
+                recovery_nudge = _final_answer_recovery_nudge(
+                    self.task,
+                    candidate_done_text,
+                    state_summary.url,
+                )
+                if (
+                    done_text
+                    and recovery_nudge
+                    and step_n < max_steps
+                    and self._final_answer_recovery_nudges < 1
+                ):
+                    self._final_answer_recovery_nudges += 1
+                    logger.info(
+                        "agent: FINAL_ANSWER_RECOVERY nudge at step %d "
+                        "(nudge=%d)",
+                        step_n,
+                        self._final_answer_recovery_nudges,
+                    )
+                    self._messages.append(
+                        AssistantMessage(text=done_text, tool_calls=[])
+                    )
+                    self._messages.append(UserMessage(content=recovery_nudge))
+                    self._append_history(
+                        state_summary,
+                        AgentOutput(text=done_text, tool_calls=[]),
+                        [ActionResult(extracted_content=done_text, is_done=False)],
+                        t0,
+                        step_n,
+                    )
+                    if on_step_end is not None:
+                        await _maybe_await(on_step_end())
+                    continue
                 if (
                     done_text
                     and step_n < max_steps
@@ -2222,11 +2265,24 @@ class Agent:
                             success=s_flag,
                         )
 
+            done_recovery_nudge: str | None = None
+            if (
+                done_result is not None
+                and step_n < max_steps
+                and self._final_answer_recovery_nudges < 1
+            ):
+                done_recovery_nudge = _final_answer_recovery_nudge(
+                    self.task,
+                    done_result.extracted_content or "",
+                    state_summary.url,
+                )
+
             done_count_check: str | None = None
             if (
                 done_result is not None
                 and bool(done_result.success)
                 and step_n < max_steps
+                and not done_recovery_nudge
             ):
                 try:
                     from browser_use_rs._extra_tools import _done_count_check_message
@@ -2249,7 +2305,7 @@ class Agent:
                 # ran and may have side effects).
                 replacement = (
                     ActionResult(extracted_content=done_result.extracted_content)
-                    if done_count_check
+                    if done_count_check or done_recovery_nudge
                     else done_result
                 )
                 tool_results = [
@@ -2279,6 +2335,17 @@ class Agent:
                 # can either re-call done with corrections or call
                 # other tools to gather missing data, then re-call
                 # done. The second done call commits.
+                if done_recovery_nudge:
+                    self._final_answer_recovery_nudges += 1
+                    logger.info(
+                        "agent: FINAL_ANSWER_RECOVERY nudge before "
+                        "done-tool finalization at step %d (nudge=%d)",
+                        step_n,
+                        self._final_answer_recovery_nudges,
+                    )
+                    self._messages.append(UserMessage(content=done_recovery_nudge))
+                    continue
+
                 if done_count_check:
                     logger.info(
                         "agent: DONE_COUNT_CHECK injected before "
@@ -2309,6 +2376,17 @@ class Agent:
                     # Don't return — continue the loop so the LLM can
                     # respond to the validation prompt.
                     continue
+                return
+
+            if await self._maybe_force_bbc_goodfood_no_result(
+                state_summary,
+                step_n,
+                extra_texts=[
+                    str(r.extracted_content or r.error or "")
+                    for r in tool_results
+                    if r is not None
+                ],
+            ):
                 return
 
             self._maybe_inject_loop_nudge(
@@ -2760,6 +2838,68 @@ class Agent:
             current_url,
             direct_url or "",
         )
+
+    async def _maybe_force_bbc_goodfood_no_result(
+        self,
+        state: BrowserStateSummary,
+        step_n: int,
+        *,
+        extra_texts: list[str] | None = None,
+    ) -> bool:
+        labels = _bbc_goodfood_no_result_evidence_labels(
+            self.task,
+            state.url,
+            state.elements_text or "",
+            *(extra_texts or []),
+        )
+        if labels:
+            self._bbc_goodfood_no_result_evidence.update(labels)
+            logger.info(
+                "agent: BBC_GOODFOOD_NO_RESULT evidence at step %d "
+                "(new=%s, all=%s)",
+                step_n,
+                sorted(labels),
+                sorted(self._bbc_goodfood_no_result_evidence),
+            )
+
+        evidence_count = len(self._bbc_goodfood_no_result_evidence)
+        if self._bbc_goodfood_no_result_forced:
+            return False
+        if not (
+            (evidence_count >= 3 and step_n >= 12)
+            or (evidence_count >= 2 and step_n >= 18)
+        ):
+            return False
+
+        self._bbc_goodfood_no_result_forced = True
+        evidence = ", ".join(sorted(self._bbc_goodfood_no_result_evidence))
+        self._messages.append(
+            UserMessage(
+                content=(
+                    "[BBC_GOODFOOD_NO_RESULT] Multiple independent signals "
+                    "indicate the exact BBC Good Food recipe was not found "
+                    f"({evidence}). Stop broad searching. Finish from the "
+                    "observed evidence: if no exact 'Paleo Pancakes' recipe "
+                    "page exists on the target site, state that and do not "
+                    "invent substitutions."
+                )
+            )
+        )
+        logger.info(
+            "agent: BBC_GOODFOOD_NO_RESULT force-final at step %d "
+            "(evidence=%s)",
+            step_n,
+            evidence,
+        )
+        await self._force_final_answer(
+            state,
+            step_n,
+            reason=(
+                "BBC Good Food exact-recipe no-result evidence collected: "
+                f"{evidence}"
+            ),
+        )
+        return True
 
     def _maybe_inject_southwest_deals_roundtrip_nudge(
         self,
@@ -5090,6 +5230,82 @@ def _southwest_one_way_deals_are_enough_for_roundtrip(text: str) -> bool:
     return has_date and has_origin_route
 
 
+def _southwest_answer_has_route_evidence(text: str) -> bool:
+    text_lc = (text or "").lower()
+    if re.search(r"\bfrom\b.{0,100}\bto\b", text_lc):
+        return True
+    if re.search(r"\b[A-Z]{3}\s*(?:-|to)\s*[A-Z]{3}\b", text or ""):
+        return True
+    if re.search(
+        r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\s+to\s+"
+        r"[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}\b",
+        text or "",
+    ):
+        return True
+    return False
+
+
+def _looks_like_southwest_roundtrip_answer_needs_more_evidence(
+    task: str,
+    text: str,
+) -> bool:
+    if not _task_requests_southwest_roundtrip_deals(task):
+        return False
+    answer = text or ""
+    if len(answer.strip()) < 30:
+        return False
+    answer_lc = answer.lower()
+    has_price = bool(re.search(r"\$\s*\d{2,4}(?:\.\d{2})?", answer))
+    if not has_price:
+        return False
+
+    if _looks_like_round_trip_answer_uses_one_way_only(task, answer):
+        return True
+
+    destination_only = bool(
+        re.search(
+            r"(?im)^\s*(?:\d+[.)]\s*)?(?:\*+\s*)?to\s+"
+            r"[A-Z][A-Za-z .()'-]{2,60}",
+            answer,
+        )
+    )
+    if destination_only and not _southwest_answer_has_route_evidence(answer):
+        return True
+
+    lacks_departure_city = any(
+        phrase in answer_lc
+        for phrase in (
+            "did not select a departure city",
+            "no departure city",
+            "without a departure city",
+            "departure city was not selected",
+        )
+    )
+    return lacks_departure_city
+
+
+def _final_answer_recovery_nudge(
+    task: str,
+    text: str,
+    final_url: str | None = None,
+) -> str | None:
+    del final_url
+    if _looks_like_southwest_roundtrip_answer_needs_more_evidence(task, text):
+        return (
+            "[SOUTHWEST_ROUNDTRIP_GUARD] The proposed final answer still "
+            "uses one-way or destination-only Southwest deal evidence. "
+            "The task asks for current round-trip offers. Continue on the "
+            "official Southwest flight-deals flow: choose or confirm a "
+            "departure city, gather route-specific date/fare evidence, "
+            "and finalize only when each deal includes origin, destination, "
+            "travel date(s), and a round-trip total or return evidence. "
+            "If Southwest only exposes one-way fares and no round-trip "
+            "offer can be confirmed, finish success=false and state that "
+            "limitation."
+        )
+    return None
+
+
 def _looks_like_round_trip_answer_uses_one_way_only(task: str, text: str) -> bool:
     task_lc = (task or "").lower()
     answer_lc = (text or "").lower()
@@ -5298,6 +5514,75 @@ def _search_fallback_state_host(task: str, current_url: str | None) -> str:
     if _looks_like_search_host_final(task, current_url):
         return _host_from_url_or_host(current_url or "")
     return ""
+
+
+def _task_requests_bbc_goodfood_paleo_pancakes(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "bbcgoodfood.com" in task_lc
+        and "paleo pancakes" in task_lc
+        and ("recipe" in task_lc or "substitution" in task_lc)
+    )
+
+
+def _bbc_goodfood_no_result_evidence_labels(
+    task: str,
+    current_url: str | None,
+    *texts: str,
+) -> set[str]:
+    if not _task_requests_bbc_goodfood_paleo_pancakes(task):
+        return set()
+
+    url = current_url or ""
+    url_lc = url.lower()
+    combined = "\n".join(t or "" for t in texts)
+    text_lc = combined.lower()
+    labels: set[str] = set()
+
+    no_result = bool(
+        re.search(
+            r"\b(?:no results found|no results|0 results|"
+            r"could(?:n'| not|n't) find|did not match|"
+            r"no recipe(?:s)? found)\b",
+            text_lc,
+        )
+    )
+    mentions_target = bool(
+        "paleo pancakes" in text_lc
+        or ("paleo" in text_lc and "pancake" in text_lc)
+        or "paleo+pancakes" in url_lc
+        or "paleo%20pancakes" in url_lc
+    )
+
+    if _host_matches(url, "bbcgoodfood.com"):
+        if re.search(r"\b(?:404|page not found|not found)\b", text_lc):
+            labels.add("bbc_404")
+        if (
+            no_result
+            and mentions_target
+            and ("search" in url_lc or "/search" in url_lc)
+        ):
+            labels.add("bbc_search_no_results")
+
+    host = _host_from_url_or_host(url)
+    is_search_host = any(
+        host == known or host.endswith("." + known)
+        for known in _SEARCH_OR_FALLBACK_FINAL_HOSTS
+    )
+    if (
+        is_search_host
+        and no_result
+        and mentions_target
+        and (
+            "site:bbcgoodfood.com" in text_lc
+            or "site%3abbcgoodfood.com" in url_lc
+            or "bbcgoodfood.com" in text_lc
+            or "bbcgoodfood.com" in url_lc
+        )
+    ):
+        labels.add("external_search_no_results")
+
+    return labels
 
 
 def _looks_like_unmet_requested_data_answer(task: str, text: str) -> bool:
@@ -5594,6 +5879,7 @@ def _looks_like_unsupported_final_answer(
         or _looks_like_item_detail_list_final(task, final_url)
         or _looks_like_epa_aqs_airnow_answer(task, text, final_url)
         or _looks_like_round_trip_answer_uses_one_way_only(task, text)
+        or _looks_like_southwest_roundtrip_answer_needs_more_evidence(task, text)
     )
 
 

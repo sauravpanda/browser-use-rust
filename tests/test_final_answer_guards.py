@@ -9,7 +9,9 @@ sys.path.insert(0, str(ROOT / "python"))
 
 from browser_use_rs.agent import (  # noqa: E402
     Agent,
+    _bbc_goodfood_no_result_evidence_labels,
     _direct_section_url_for_consent_recovery,
+    _final_answer_recovery_nudge,
     _looks_like_fabricated_blocked_answer,
     _looks_like_failed_consent_overlay_attempt,
     _looks_like_epa_aqs_airnow_answer,
@@ -20,6 +22,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _looks_like_round_trip_answer_uses_one_way_only,
     _looks_like_search_result_query_mismatch_answer,
     _looks_like_search_host_final,
+    _looks_like_southwest_roundtrip_answer_needs_more_evidence,
     _southwest_one_way_deals_are_enough_for_roundtrip,
     _search_fallback_state_host,
     _task_requests_southwest_roundtrip_deals,
@@ -390,6 +393,66 @@ class FinalAnswerGuardTests(unittest.TestCase):
         )
 
         self.assertFalse(_southwest_one_way_deals_are_enough_for_roundtrip(extracted))
+
+    def test_southwest_destination_only_roundtrip_answer_needs_more_evidence(self):
+        task = (
+            "Browse the flight deals section for current round-trip offers "
+            "and identify two deals along with their travel dates. "
+            "website: https://www.southwest.com/"
+        )
+        answer = (
+            "Based on the current flight offers available on Southwest Airlines:\n"
+            "1. **To Phoenix, AZ** Travel Date: August 19, 2026; "
+            "Price: $213 one-way or approximately $426 round-trip.\n"
+            "2. **To Chicago (Midway), IL** Travel Date: June 9, 2026; "
+            "Price: $153 one-way or approximately $306 round-trip."
+        )
+
+        self.assertTrue(
+            _looks_like_southwest_roundtrip_answer_needs_more_evidence(task, answer)
+        )
+        self.assertTrue(_looks_like_unsupported_final_answer(task, answer))
+        self.assertIn("SOUTHWEST_ROUNDTRIP_GUARD", _final_answer_recovery_nudge(task, answer))
+
+    def test_southwest_route_roundtrip_answer_does_not_need_recovery(self):
+        task = (
+            "Browse the flight deals section for current round-trip offers "
+            "and identify two deals along with their travel dates. "
+            "website: https://www.southwest.com/"
+        )
+        answer = (
+            "Albany to Orlando: outbound June 16 at $139 and return June 23 "
+            "at $149, round-trip total $288."
+        )
+
+        self.assertFalse(
+            _looks_like_southwest_roundtrip_answer_needs_more_evidence(task, answer)
+        )
+        self.assertIsNone(_final_answer_recovery_nudge(task, answer))
+
+    def test_bbc_goodfood_no_result_evidence_labels(self):
+        task = (
+            'Open the "Paleo Pancakes" recipe page and compile a list of '
+            "the suggested ingredient substitutions provided. "
+            "website: https://www.bbcgoodfood.com/"
+        )
+
+        self.assertEqual(
+            _bbc_goodfood_no_result_evidence_labels(
+                task,
+                "https://www.bbcgoodfood.com/recipes/paleo-pancakes",
+                "404 Page not found",
+            ),
+            {"bbc_404"},
+        )
+        self.assertEqual(
+            _bbc_goodfood_no_result_evidence_labels(
+                task,
+                "https://duckduckgo.com/?q=site%3Abbcgoodfood.com+paleo+pancakes",
+                "No results found for site:bbcgoodfood.com paleo pancakes",
+            ),
+            {"external_search_no_results"},
+        )
 
     def test_failed_consent_overlay_attempt_is_detected(self):
         calls = [
