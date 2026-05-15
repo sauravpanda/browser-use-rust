@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python"))
 
 from browser_use_rs.agent import (  # noqa: E402
+    Agent,
     _direct_section_url_for_consent_recovery,
     _looks_like_fabricated_blocked_answer,
     _looks_like_failed_consent_overlay_attempt,
@@ -27,10 +28,22 @@ from browser_use_rs.agent import (  # noqa: E402
     _looks_like_wrong_host_final,
 )
 from browser_use_rs.llm.base import ToolCall  # noqa: E402
-from browser_use_rs.views import ActionResult  # noqa: E402
+from browser_use_rs.views import ActionResult, BrowserStateSummary  # noqa: E402
 
 
 class FinalAnswerGuardTests(unittest.TestCase):
+    def test_site_technical_error_state_is_treated_as_blocked(self):
+        state = BrowserStateSummary(
+            url="https://www.southwest.com/air/booking/",
+            title="Southwest Airlines",
+            elements_text=(
+                'dialog "Sorry, we found some errors..."\n'
+                "We are unable to process your request. Please try again."
+            ),
+        )
+
+        self.assertEqual(Agent._blocked_state_reason(state), "site technical error")
+
     def test_site_required_external_snippet_answer_is_flagged(self):
         task = (
             'Search for "vegan" recipes on Simply Recipes and record the '

@@ -810,3 +810,186 @@ Local verification:
 
 This is still not a release signal. These guards reduce two observed
 wrong-answer patterns, but they need targeted eval before another slice.
+
+## 2026-05-15T02:39:48Z Update: Guard Retests On `ab49888`
+
+Commit `ab49888259fd48694c5849c64690017c319b4a8f` was pushed with:
+
+- an EPA AQS source-mismatch nudge away from `airnow.gov`
+- a final-answer guard against AQS answers sourced from AirNow
+- a final-answer guard against one-way-only answers for round-trip
+  flight tasks
+- tests covering the new guard patterns
+
+Reference-aligned config was confirmed from the GitHub worker command:
+
+- headed/xvfb local browser
+- `model=gemini-3-flash-preview`
+- `eval_model=gpt-o4-mini`
+- `max_steps=100`
+- `max_actions_per_step=4`
+- `judge_repeat_count=1`
+- `test_case=WebBench_READ_v5`
+- `judge_type=ComprehensiveV1`
+- `thinking=false`
+- `thinking_level=minimal`
+- `flash_mode=true`
+- `images_per_step=1`
+- `use_vision=true`
+- `agent_type=Agent`
+
+Launch mistake:
+
+- Two first retest workflows failed before execution because the
+  dispatched `browser_use_rs_ref` had a mistyped SHA:
+  `ab498884681da4db46037d06fcf75893e688974e`.
+- The correct SHA is
+  `ab49888259fd48694c5849c64690017c319b4a8f`.
+- Treat those failed launch workflows as configuration noise only; they
+  did not execute browser tasks.
+
+EPA AQS retest:
+
+- Run: `kh74smn8nnmvtbpmgh013fyvnh86rq7n`
+- GitHub workflow: `25897090670`
+- Task: `432`
+- Installed Rust ref:
+  `ab49888259fd48694c5849c64690017c319b4a8f`
+- Result: success
+- Steps: 27
+- Duration: 125.398s
+- Cost: $0.113143
+- Action errors: 1
+- Access denials: 0
+
+Trace proof:
+
+- The agent initially drifted from EPA search to
+  `https://www.airnow.gov/state/?name=california`.
+- The new AQS source-mismatch nudge fired at step 13.
+- The agent navigated back to the EPA Daily Air Quality Tracker,
+  selected combined Ozone/PM2.5, year 2026, and
+  Los Angeles-Long Beach-Anaheim, CA.
+- It downloaded the tracker CSV, `read_file` succeeded on the completed
+  download alias, and the final answer used the AQS tracker data instead
+  of AirNow.
+- The judge passed the answer: AQI `64` for May 13, 2026, with May 14
+  and May 15 values still pending in the downloaded tracker data.
+
+Dashboard anomaly repeated:
+
+- The pre-created one-task EPA run again showed an extra stale/null CDC
+  row in `getRunResults`, making the run-level counters report
+  `completedTasks=2` and `progress=200` even though the GitHub workflow
+  executed only task `432`.
+- For these targeted pre-created runs, trust GitHub task logs and result
+  rows with non-null step counts over aggregate dashboard counters.
+
+Southwest round-trip retest:
+
+- Run: `kh79pcrec07c66kyg569fkcav586sqtr`
+- GitHub workflow: `25897092830`
+- Task: `2656`
+- Installed Rust ref:
+  `ab49888259fd48694c5849c64690017c319b4a8f`
+- Result: failed / Give Up
+- Steps: 71
+- Duration: 329.293s
+- Cost: $0.401476
+- Action errors: 0
+- Access denials: 0
+
+Trace learning:
+
+- The agent found the Southwest "Flight Deals" page and extracted visible
+  offers, but the visible offers were one-way starting fares.
+- It correctly recognized that the task asks for round-trip offers and
+  tried to use the booking widget and Low Fare Calendar to confirm return
+  dates and pricing.
+- Southwest repeatedly displayed a generic technical-error modal:
+  "Sorry, we found some errors... We are unable to process your request."
+- After repeated calendar failures, the agent returned to the one-way
+  deal list and attempted a final answer with two one-way offers.
+- The new final-answer guard prevented this from being treated as a
+  supported successful answer: `selfReportSuccess=false`.
+- The judge rejected the final answer because it did not provide
+  round-trip deals with return dates or date ranges.
+
+Southwest conclusion:
+
+- The guard fixed the previous false-success behavior, but it did not
+  solve the task.
+- The remaining issue is expensive retry behavior on a repeatedly
+  failing Southwest booking/calendar flow.
+- A future patch should either find a different Southwest source/path for
+  round-trip deal date ranges or give up earlier after repeated
+  Southwest technical-error modals. The latter would reduce cost and
+  time but would not recover the success.
+
+Current conclusion:
+
+- The EPA source-mismatch guard is validated by a targeted passing trace
+  and materially improved that task from the canceled first-10 slice.
+- The Southwest round-trip guard is validated only as a correctness
+  guard: it blocked the unsupported one-way answer from becoming a
+  self-reported success, but the task still failed and was expensive.
+- This is still not enough evidence for another full 198-task release.
+  Another small slice would be premature until Southwest's repeated
+  calendar-error loop is shortened or a successful route is found.
+
+## 2026-05-15T02:44:01Z Update: Southwest Reference Comparison
+
+The stronger Python reference run `kh7b4qp4610am5s99j7e3bzy0d86rfwn`
+also failed Southwest task `2656`:
+
+- Result: failed / Incorrect Result
+- Steps: 52
+- Duration: 242.801s
+- Final answer claimed two round-trip deals:
+  - LAX to LAS, July 1-3, 2026, total $58.40
+  - LAX to SFO, July 1-24, 2026, total $171.80
+- Judge rejection: the first claimed round-trip deal was likely
+  fabricated or unsupported, the agent had not finished selecting the
+  return flight, and the path drifted into manual searches rather than
+  a supported Special Offers result.
+
+Comparison against the Rust `ab49888` Southwest retest:
+
+- Rust did worse on cost and time: 71 steps / 329.293s / $0.401476.
+- Both runs failed the task.
+- The Rust guard improved correctness posture by setting
+  `selfReportSuccess=false` for one-way-only evidence, whereas the
+  Python reference self-reported success for an unsupported round-trip
+  answer that the judge rejected.
+- Since the reference also fails this task, this is not currently a
+  reference-passed success recovery target. It is a cost/time target.
+
+Patch after this comparison:
+
+- Treat repeated site-level technical-error states as blocked/error
+  states in the existing blocked-state detector.
+- Added phrases for Southwest-style errors:
+  "Sorry, we found some errors" and
+  "We are unable to process your request".
+- Updated the existing blocked-state nudge text from
+  bot/CAPTCHA/challenge to bot/CAPTCHA/error/challenge.
+- Added a unit test for a Southwest booking-page technical-error modal.
+
+Expected behavior:
+
+- The first repeated error states should trigger the existing
+  `[BOT_BLOCKED]` nudge.
+- If the page keeps returning the same technical-error modal, the
+  existing force-final path should stop the run earlier with
+  `success=false`.
+- This should reduce expensive tails on tasks that are blocked by site
+  technical errors. It does not by itself recover a successful Southwest
+  answer.
+
+Local verification:
+
+- `python3 -m unittest tests.test_final_answer_guards -q`
+- `python3 -m unittest discover -s tests -q`
+- `python3 -m compileall -q python/browser_use_rs tests bench`
+- `git diff --check`
+- `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`

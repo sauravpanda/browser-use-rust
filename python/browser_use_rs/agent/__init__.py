@@ -1497,7 +1497,7 @@ class Agent:
                     nudge = (
                         f"[BOT_BLOCKED] {blocked_count}/"
                         f"{len(self._recent_blocked_state_reasons)} recent "
-                        f"states show bot/CAPTCHA/challenge pages "
+                        f"states show bot/CAPTCHA/error/challenge pages "
                         f"({examples}). Stop retrying blocked pages; try "
                         f"one same-site fallback or finish success=false."
                     )
@@ -1522,7 +1522,7 @@ class Agent:
                         state_summary,
                         step_n,
                         reason=(
-                            "bot/CAPTCHA/challenge pages appeared in "
+                            "bot/CAPTCHA/error/challenge pages appeared in "
                             f"{blocked_count} of the last "
                             f"{len(self._recent_blocked_state_reasons)} "
                             "browser states"
@@ -2886,6 +2886,16 @@ class Agent:
             for marker in ("cloudflare", "captcha", "blocked", "challenge")
         ):
             return "bot challenge"
+        if any(
+            phrase in haystack
+            for phrase in (
+                "sorry, we found some errors",
+                "we are unable to process your request",
+                "we're unable to process your request",
+                "unable to process your request at this time",
+            )
+        ):
+            return "site technical error"
         return ""
 
     async def _capture_state(self) -> BrowserStateSummary:
