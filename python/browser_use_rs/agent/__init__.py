@@ -1165,6 +1165,7 @@ class Agent:
         self._dailymail_coronavirus_nudged: bool = False
         self._flickr_sunset_search_nudged: bool = False
         self._getyourguide_paris_popular_nudged: bool = False
+        self._viator_orlando_family_nudged: bool = False
         self._newegg_review_bytes_failed_probes: int = 0
         self._newegg_review_bytes_selector_timeouts: int = 0
         self._newegg_review_bytes_product_urls: set[str] = set()
@@ -1379,6 +1380,7 @@ class Agent:
         self._dailymail_coronavirus_nudged = False
         self._flickr_sunset_search_nudged = False
         self._getyourguide_paris_popular_nudged = False
+        self._viator_orlando_family_nudged = False
         self._messages.append(
             UserMessage(content=_task_message_with_runtime_context(new_task))
         )
@@ -2460,6 +2462,9 @@ class Agent:
             self._maybe_inject_getyourguide_paris_popular_nudge(
                 state_summary, tool_results, step_n
             )
+            self._maybe_inject_viator_orlando_family_nudge(
+                state_summary, tool_results, step_n
+            )
             if await self._maybe_force_newegg_review_bytes_unavailable(
                 state_summary, completion.tool_calls, tool_results, step_n
             ):
@@ -3466,6 +3471,50 @@ class Agent:
         self._getyourguide_paris_popular_nudged = True
         logger.info(
             "agent: GETYOURGUIDE_PARIS_POPULAR nudge at step %d (url=%s)",
+            step_n,
+            current_url,
+        )
+
+    def _maybe_inject_viator_orlando_family_nudge(
+        self,
+        state: BrowserStateSummary,
+        results: list[ActionResult],
+        step_n: int,
+    ) -> None:
+        if self._viator_orlando_family_nudged:
+            return
+        if not _task_requests_viator_orlando_family(self.task):
+            return
+        current_url = state.url or ""
+        if not (
+            _host_matches(current_url, "viator.com")
+            or any(
+                _host_matches(current_url, host)
+                for host in _SEARCH_OR_FALLBACK_FINAL_HOSTS
+            )
+        ):
+            return
+
+        self._messages.append(
+            UserMessage(
+                content=(
+                    "[VIATOR_ORLANDO_FAMILY] This task needs the top three "
+                    "Viator search results for family-friendly experiences "
+                    "in Orlando, with tour name, starting price, and "
+                    "customer rating/review count. Avoid broad search-engine "
+                    "fallbacks and do not switch to Tripadvisor. Use the "
+                    "Viator search results URL `https://www.viator.com/"
+                    "searchResults/all?text=family-friendly+experiences+in+"
+                    "Orlando,+FL`. If the results load, extract the first "
+                    "three visible result cards and finish. If Viator shows "
+                    "a verification wall, do not spend many turns trying "
+                    "alternate engines; report the block honestly."
+                )
+            )
+        )
+        self._viator_orlando_family_nudged = True
+        logger.info(
+            "agent: VIATOR_ORLANDO_FAMILY nudge at step %d (url=%s)",
             step_n,
             current_url,
         )
@@ -5925,6 +5974,18 @@ def _task_requests_getyourguide_paris_popular(task: str) -> bool:
         and "most popular activity" in task_lc
         and "user ratings" in task_lc
         and "starting price" in task_lc
+    )
+
+
+def _task_requests_viator_orlando_family(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "viator.com" in task_lc
+        and "orlando" in task_lc
+        and "family-friendly" in task_lc
+        and "top three tours" in task_lc
+        and "prices" in task_lc
+        and "customer ratings" in task_lc
     )
 
 

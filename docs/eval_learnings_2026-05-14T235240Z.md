@@ -3807,6 +3807,41 @@ Decision:
   not strong enough to force the direct URL immediately after the first
   cookie failure.
 
+## 2026-05-15T13:14:30Z Update: Viator Orlando Patch
+
+Target:
+
+- Task `2040`: Search for family-friendly experiences in Orlando, FL,
+  and list the top three tours along with prices and customer ratings.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: `20` steps,
+  `83.94s`, `$0.065906`; self-report was `success=false` after a
+  Viator CAPTCHA and Tripadvisor fallback.
+- Stronger Python reference `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success,
+  `4` steps, `16.87s`, `$0.014809`.
+
+Trace finding:
+
+- Old Rust typed `Orlando, FL family-friendly` into Viator, hit a
+  `Verification Required` wall, then spent the rest of the run trying
+  search engines and Tripadvisor.
+- The reference searched for `family-friendly experiences in Orlando,
+  FL`, reached `https://www.viator.com/searchResults/all?text=family-`
+  `friendly+experiences+in+Orlando,+FL`, extracted the first three result
+  cards, and finished.
+
+Patch:
+
+- Add a narrow Viator Orlando family-friendly task detector.
+- Nudge to the direct Viator search-results URL, extract the first three
+  visible result cards with name, starting price, and rating/review
+  count, and avoid broad search-engine or Tripadvisor fallbacks.
+
+Expected result:
+
+- Avoid the old CAPTCHA/search-engine tail if the direct results URL
+  loads, and fail honestly rather than spending many turns on alternate
+  sites if Viator blocks access.
+
 ## 2026-05-15T13:07:14Z Update: Flickr Targeted Eval Completed
 
 Targeted run:
