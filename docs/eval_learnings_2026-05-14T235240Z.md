@@ -2923,6 +2923,27 @@ Configuration:
   `proxyless=true`, `parallel_runs=1`.
 - No literal `developerId` was sent in `/api/startRun`.
 
+## 2026-05-15T16:26:22Z Update: Daily Mail Eval Relaunched
+
+Launch note:
+
+- First workflow `25928801862` for run
+  `kh73kzpxzc5khp4g7ppkqrteah86r2md` failed before executing task `2459`.
+  The worker reached `/api/startRun`, then Convex returned `500`
+  (`Request ID: be3ba9ff84801cbd`). The run has `completedTasks=0`, so
+  this is an infrastructure/server initialization failure rather than a
+  task result.
+- Relaunched the same commit/config as run
+  `kh76ffcf4j5cd4z9ekpme39s8x86rzg3`, workflow `25928949228`.
+- Dataset range remains `start_index=187`, `end_index=188`, task `2459`.
+- The worker command from the failed workflow confirmed the intended
+  flags: `--model gemini-3-flash-preview`, `--eval-model gpt-o4-mini`,
+  `--max-steps 100`, `--max-actions-per-step 4`,
+  `--judge-repeat-count 1`, `--test-case WebBench_READ_v5`,
+  `--proxyless`, `--judge-type ComprehensiveV1`, `--no-thinking`,
+  `--thinking-level minimal`, `--flash-mode`, `--browser local`,
+  `--images-per-step 1`, `--use-vision true`, `--agent-type Agent`.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
