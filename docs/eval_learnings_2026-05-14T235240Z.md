@@ -3203,6 +3203,28 @@ Expected result:
 - Preserve judged success while cutting the old Rust cookie/search/wait
   path toward a direct search-results extraction.
 
+## 2026-05-15T16:46:45Z Update: Coursera Targeted Eval Launched
+
+Targeted run:
+
+- Run `kh729xeshns9k8k4q842kdkkx586rcxa`, workflow `25929898981`,
+  commit `7077f289bece0d17d4957eab0c867e2e642b9b45`.
+- Dataset range: `start_index=15`, `end_index=16`, task `275`.
+- User message:
+  `bu-rust coursera-data-science targeted no-thinking gpt-o4-mini`.
+
+Configuration:
+
+- Same corrected object-shaped dispatch and minimal-thinking Gemini
+  config: `runtime=rs`, `gemini-3-flash-preview`,
+  `eval_model=gpt-o4-mini`, `max_steps=100`, `--no-thinking`,
+  `thinking_level=minimal`, headed local browser,
+  `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
