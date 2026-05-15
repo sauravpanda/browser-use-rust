@@ -3747,3 +3747,60 @@ Expected result:
 
 - Preserve success from the actual section page.
 - Cut the section-discovery tail toward the reference's short path.
+
+## 2026-05-15T12:57:08Z Update: Daily Mail Targeted Eval Launched
+
+Targeted run:
+
+- Run `kh75ptqwbph5y08jqv18srz6nh86rpc3`, workflow `25918934252`,
+  commit `a108303d31b0711c7a5a14a4130fb77f016d0f7c`.
+- Dataset range: `start_index=58`, `end_index=59`, task `2457`.
+- User message: `bu-rust dailymail-coronavirus targeted no-thinking gpt-o4-mini`.
+
+Configuration:
+
+- `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking_level=minimal`, headed
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
+## 2026-05-15T12:59:13Z Update: Daily Mail Targeted Eval Completed
+
+Targeted run:
+
+- Run `kh75ptqwbph5y08jqv18srz6nh86rpc3`, workflow `25918934252`,
+  commit `a108303d31b0711c7a5a14a4130fb77f016d0f7c`.
+- Command confirmed in GitHub logs:
+  `xvfb-run`, `--model gemini-3-flash-preview`,
+  `--eval-model gpt-o4-mini`, `--max-steps 100`,
+  `--start 58`, `--end 59`, `--max-actions-per-step 4`,
+  `--judge-repeat-count 1`, `--test-case WebBench_READ_v5`,
+  `--proxyless`, `--judge-type ComprehensiveV1`, `--no-thinking`,
+  `--thinking-level minimal`, `--flash-mode`, `--browser local`,
+  `--images-per-step 1`, `--use-vision true`, `--agent-type Agent`.
+- Platform caveat repeated: `/api/getRunResults` returned the real Daily
+  Mail row plus an empty CDC row; use the task `2457` row.
+
+Result for task `2457`:
+
+- Judge/self-report: success / `success=false`.
+- Steps: `5` vs old Rust `15` and reference `5`.
+- Duration: `30.94s` vs old Rust `51.69s` and reference `20.70s`.
+- Cost: `$0.020824` vs old Rust `$0.082966` and reference `$0.009510`.
+- Action errors/access denied/tool failures: `0/0/0`.
+
+Trace proof:
+
+- The run navigated directly to
+  `https://www.dailymail.co.uk/news/coronavirus/index.html` by step `3`.
+- It extracted the top three headlines and summaries at step `4` and
+  finished at step `5`.
+
+Decision:
+
+- Keep the patch. It preserves judged success and cuts old Rust steps,
+  duration, and cost substantially, while matching the reference's step
+  count. It does not beat the reference on duration or cost.
