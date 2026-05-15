@@ -1069,3 +1069,87 @@ Local verification:
 - `python3 -m compileall -q python/browser_use_rs tests bench`
 - `git diff --check`
 - `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`
+
+## 2026-05-15T03:21:43Z Update: `cb597a0` First-10 Slice
+
+Commit `cb597a0bdd0001d675894e523b5a02a89efa81b2` was tested on a
+fresh first-10 slice after the EPA and Southwest fixes.
+
+Launch mistake:
+
+- Run `kh71x30htwkeeskjxzgkeagaxn86rhbw` was dispatched with a mistyped
+  ref: `cb597a00c250a909b326ea31c71f22a7f9ac143b`.
+- The worker failed during install because that ref does not exist.
+- The dashboard aggregate showed `completedTasks=10` and
+  `successRate=0`, but no browser tasks actually ran. Treat this as
+  launch/configuration noise only.
+
+Correct slice:
+
+- Run: `kh75f9z6f46n7rr3pw1xwr3yrh86s0vf`
+- GitHub workflow: `25897724258`
+- Installed Rust ref:
+  `cb597a0bdd0001d675894e523b5a02a89efa81b2`
+- Worker config: headed/xvfb, `gemini-3-flash-preview`,
+  `eval_model=gpt-o4-mini`, `max_steps=100`,
+  `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `test_case=WebBench_READ_v5`, `judge_type=ComprehensiveV1`,
+  `--no-thinking`, `thinking_level=minimal`, `flash_mode=true`,
+  `browser=local`, `images_per_step=1`, `use_vision=true`,
+  `agent_type=Agent`.
+- User message included the Rust ref and first-10 retry marker:
+  `bu-rust cb597a0 first10-slice-retry no-thinking gpt-o4-mini`.
+
+Run result:
+
+- Status: completed
+- Tasks: 10 / 10 completed
+- Successes: 8 / 10
+- Success rate: 80%
+- Steps: 204
+- Duration: 791.302s
+- Total cost from result rows: $0.724888
+- Tokens: 2,633,931
+- Action errors: 0
+- Access denials: 2
+- Tool call failures: 0
+
+Task results:
+
+| Task | Result | Steps | Duration | Learning |
+| --- | --- | ---: | ---: | --- |
+| `232` CDC flu prevention | success | 9 | 30.766s | Normal source-and-answer path. |
+| `2656` Southwest deals | success | 83 | 323.602s | Judge accepted two Albany round-trip totals derived from one-way starts; still very expensive. |
+| `1371` PlayStation Horizon | success | 13 | 40.861s | Normal product-info path. |
+| `432` EPA AQS AQI | success | 26 | 75.336s | AQS source recovery held; final AQI was `64` for May 13, 2026. |
+| `2370` BBC Good Food pancakes | failed / Give Up | 31 | 79.211s | Consent overlay blocked the recipe/substitution verification path. |
+| `1426` Redbubble reviews | failed / Give Up | 7 | 59.932s | Cloudflare/CAPTCHA block did not resolve. |
+| `582` Fox Sports NBA highlights | success | 7 | 24.859s | Normal short browsing path. |
+| `1480` Rochester program | success | 8 | 29.665s | Normal source-and-answer path. |
+| `2397` Bloomberg Opinion | success | 8 | 52.384s | Bloomberg path remained fixed from the earlier patch. |
+| `1487` Sam's Club reviews | success | 12 | 74.686s | Normal source-and-answer path. |
+
+Comparison to the canceled `3cedc6d` first-10 slice:
+
+- The canceled slice executed only five tasks before cancellation:
+  2 successes, 104 steps, 383.382s, and $0.343630.
+- The corrected `cb597a0` slice executed all 10 tasks and recovered EPA
+  task `432` and Southwest task `2656`.
+- BBC Good Food remains a consent-overlay failure.
+- Redbubble remains blocked by Cloudflare/CAPTCHA.
+- Cost and latency are still high: the Southwest task alone consumed
+  83 steps and 323.602s.
+
+Current conclusion:
+
+- The fixes improved accuracy on the observed EPA and Southwest
+  failures, and the first-10 slice is a stronger signal than the
+  canceled partial run.
+- This is not yet a full-release signal. The slice is 80% successful,
+  but the step count, duration, and cost are too high for a 198-task
+  release without more work on the expensive Southwest tail and the BBC
+  consent-overlay path.
+- Next useful work is targeted: add or improve a BBC consent/direct
+  recipe path, treat Redbubble as a likely hard block unless a bypass is
+  available, and reduce the Southwest cost tail without weakening the
+  round-trip evidence guard prematurely.
