@@ -3475,3 +3475,64 @@ Expected result:
 - Preserve success.
 - Cut the old Rust detour through unrelated subscription stores toward
   the reference's `12` steps.
+
+## 2026-05-15T12:32:16Z Update: Car and Driver Targeted Eval Launched
+
+- Commit: `c04ab857130807f153f411fbaaffa475a59afb8f`.
+- Dashboard run: `kh7561h0sx5qtyj24qvytcd2z986rj6t`.
+- GitHub workflow: `25917923599`.
+- Dataset lookup confirmed task `211` is index `56`, so the targeted
+  range is `start=56`, `end=57`, `total_tasks=1`.
+- Config preserves the requested reference shape:
+  `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking_level=minimal`, headed
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
+Expected result:
+
+- Preserve the accepted official All Access subscription answer.
+- Avoid UK Hearst, magazines.com, and account-management detours.
+
+## 2026-05-15T12:36:13Z Update: Car and Driver Targeted Eval Completed
+
+Targeted run:
+
+- Run `kh7561h0sx5qtyj24qvytcd2z986rj6t`, workflow `25917923599`,
+  commit `c04ab857130807f153f411fbaaffa475a59afb8f`.
+- Command confirmed in GitHub logs:
+  `xvfb-run`, `--model gemini-3-flash-preview`,
+  `--eval-model gpt-o4-mini`, `--max-steps 100`,
+  `--start 56`, `--end 57`, `--max-actions-per-step 4`,
+  `--judge-repeat-count 1`, `--test-case WebBench_READ_v5`,
+  `--proxyless`, `--judge-type ComprehensiveV1`, `--no-thinking`,
+  `--thinking-level minimal`, `--flash-mode`, `--browser local`,
+  `--images-per-step 1`, `--use-vision true`, `--agent-type Agent`.
+- Platform caveat repeated: `/api/getRunResults` returned the real Car
+  and Driver row plus an empty CDC row; use the task `211` row.
+
+Result for task `211`:
+
+- Judge/self-report: success / `success=true`.
+- Steps: `12` vs old Rust `40` and reference `12`.
+- Duration: `36.08s` vs old Rust `424.94s` and reference `58.55s`.
+- Cost: `$0.040403` vs old Rust `$0.128172` and reference `$0.024260`.
+- Action errors/access denied/tool failures: `0/0/0`.
+
+Trace proof:
+
+- The nudge moved the agent to the official
+  `caranddriver.com/gift-subscriptions/` page by step `2`.
+- The accepted final reports the official All Access subscription at
+  `$14.99` for one year, bundling print and digital access.
+- Remaining waste: one click still opened UK Hearst, followed by a
+  DuckDuckGo fallback back to the official page.
+
+Decision:
+
+- Keep the patch. It preserves success, matches the reference step
+  count, beats the reference on duration, and cuts old Rust duration by
+  more than `90%`.
