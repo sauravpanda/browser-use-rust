@@ -2100,6 +2100,28 @@ Expected result:
 - Reject/revert the refinement if `extract_result_cards` misses the card
   titles and causes more steps or a judge failure.
 
+## 2026-05-15T14:53:11Z Update: Fox Sports Card-Extract Eval Launched
+
+Targeted run:
+
+- Run `kh78dpyp0jnxbb1ppsg0mv449n86s85q`, workflow `25924493584`,
+  commit `fd324d56621d2ed4bb5d756cc481e964112c3d21`.
+- Dataset range: `start_index=6`, `end_index=7`, task `582`.
+- User message:
+  `bu-rust foxsports-nba-highlights-cardextract targeted no-thinking gpt-o4-mini`.
+
+Configuration:
+
+- Same corrected object-shaped dispatch and minimal-thinking Gemini
+  config: `runtime=rs`, `gemini-3-flash-preview`,
+  `eval_model=gpt-o4-mini`, `max_steps=100`, `--no-thinking`,
+  `thinking_level=minimal`, headed local browser,
+  `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
