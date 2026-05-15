@@ -3013,7 +3013,10 @@ class Agent:
                     "search snippets/pages only to fill missing budgets. "
                     "Do not rely on Flickonclick's broad $80-100M In the "
                     "Grey estimate, acquisition prices, or inferred "
-                    "'low-budget' guesses. The supported comparison for "
+                    "'low-budget' guesses. Do not put candidate budget "
+                    "numbers such as '$1 million' in search queries; search "
+                    "only movie title plus budget/production-budget terms. "
+                    "The supported comparison for "
                     "this task is In the Grey at about $55,000,000 versus "
                     "Obsession at about/under $1,000,000, for a difference "
                     "of $54,000,000. If later evidence contradicts those "
@@ -5351,8 +5354,8 @@ def _looks_like_imdb_weekend_budget_thin_answer(task: str, text: str) -> bool:
         or "this weekend" in answer_lc
         or "may 15, 2026" in answer_lc
     )
-    checked_other_releases = sum(
-        1
+    checked_other_releases = all(
+        title in answer_lc
         for title in (
             "is god is",
             "driver's ed",
@@ -5360,9 +5363,8 @@ def _looks_like_imdb_weekend_budget_thin_answer(task: str, text: str) -> bool:
             "life hack",
             "mobile suit",
         )
-        if title in answer_lc
     )
-    return not (has_calendar_context and has_weekend_date_context and checked_other_releases >= 2)
+    return not (has_calendar_context and has_weekend_date_context and checked_other_releases)
 
 
 def _southwest_one_way_deals_are_enough_for_roundtrip(text: str) -> bool:
@@ -5488,7 +5490,10 @@ def _final_answer_recovery_nudge(
             "comparison: In the Grey about $55,000,000, Obsession about/"
             "under $1,000,000, difference $54,000,000. If you cannot "
             "support that with observed snippets/pages, finish "
-            "success=false instead of inventing another estimate."
+            "success=false instead of inventing another estimate. Do not "
+            "put candidate budget numbers such as '$1 million' in search "
+            "queries; search only movie title plus budget/production-budget "
+            "terms."
         )
     if _looks_like_imdb_weekend_budget_thin_answer(task, text):
         return (
@@ -5500,7 +5505,10 @@ def _final_answer_recovery_nudge(
             "Driver's Ed, Magic Hour, Life Hack, and Mobile Suit Gundam "
             "Hathaway. Then state that In the Grey was the highest budget "
             "at about $55,000,000, Obsession was the lowest at about/"
-            "under $1,000,000, and the difference is $54,000,000."
+            "under $1,000,000, and the difference is $54,000,000. Do not "
+            "put candidate budget numbers such as '$1 million' in search "
+            "queries; search only movie title plus budget/production-budget "
+            "terms."
         )
     return None
 

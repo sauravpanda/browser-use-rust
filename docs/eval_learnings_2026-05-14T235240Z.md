@@ -1681,6 +1681,48 @@ Patch direction:
   `Driver's Ed`, `Magic Hour`, `Life Hack`, and `Mobile Suit Gundam
   Hathaway`) before giving the `$54,000,000` comparison.
 
+## 2026-05-15T05:20:23Z Update: IMDb Context Guard Retest
+
+Targeted retest:
+
+- Run: `kh7dx4wx915pyh19wy3r293f3986sfzw`
+- Workflow: `25901635890`
+- Commit under test: `98ba46405dea887156ff274dba2ad57e8ea0d4aa`
+- Dataset range: `--start 179 --end 180`
+- Result: judge failure / Incorrect Result
+- Steps: 12
+- Duration: 42.803s
+- Cost: `$0.056386`
+- Tokens: 172,806
+- Action errors: 0
+- Access denials: 0
+
+What improved:
+
+- The context guard shortened the task again:
+  - Original current-head failure: 58 steps, 196.390s, `$0.276286`.
+  - First IMDb guard: 21 steps, 76.771s, `$0.110699`.
+  - Context guard: 12 steps, 42.803s, `$0.056386`.
+- The final answer included the accepted values and partial release
+  calendar context.
+
+Why it still failed:
+
+- The final answer listed only part of the release cluster and omitted
+  `Life Hack` and `Mobile Suit Gundam Hathaway`, both present in the
+  stronger reference's accepted comparison.
+- The trace also searched for `"Obsession" ... "$1 million"`, which made
+  the judge characterize the answer as fishing for a predetermined
+  number rather than objectively finding the budgets.
+
+Patch direction:
+
+- Tighten the "right values, missing context" guard to require the full
+  release cluster.
+- Tell the model not to put candidate budget numbers such as
+  `$1 million` in search queries; it should search title plus
+  budget/production-budget terms only.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
