@@ -121,13 +121,65 @@ Abandoned or non-final runs:
   Access denials rose too quickly compared with the reference. Treat it
   as a browser-mode mismatch and do not use it for final comparison.
 
-Active final candidate at this timestamp:
+Final candidate:
 
 - `kh774z293rn9qpnzgbvd7bfctn86p4a1`: headed/xvfb, `max_steps=100`,
   `thinking_level=minimal`, upstream commit `933e28c...`, Rust commit
   `5821d63...`.
 - Snapshot at 2026-05-14T23:52:40Z: 174/198 completed, 124 successes,
   30 access denials, 10 action errors, 0 tool call failures.
+- Final result at 2026-05-15T00:09Z: completed, 198/198 tasks, 143
+  successes, 55 failed tasks, 34 access denials, 13 action errors, 0
+  tool call failures.
+
+## Final Eval Result
+
+Final comparison command:
+
+```bash
+EVALUATION_TOOL_URL=... \
+EVALUATION_TOOL_SECRET_KEY=... \
+BROWSER_USE_RS_DISABLE_DOTENV=1 \
+python3 bench/compare_eval_run.py \
+  kh774z293rn9qpnzgbvd7bfctn86p4a1 \
+  --baseline kh74n8rcqs8bestere2sjjqag186nb7q
+```
+
+Final fully cost-covered comparison:
+
+| Metric | Reference `kh74...` | Candidate `kh774...` | Delta |
+| --- | ---: | ---: | ---: |
+| Successful tasks | 137 / 198 | 143 / 198 | +6 |
+| Success rate | 69.1919% | 72.2222% | +3.03 pp |
+| Failed tasks | 61 | 55 | -6 |
+| Average cost | $0.105864 | $0.064083 | -$0.041781 |
+| Total cost | $20.96114 | $12.688511 | -$8.272629 |
+| Average cost ratio | 1.0000 | 0.6053 | -39.47% |
+| Average steps | 20.520202 | 17.227273 | -3.292929 |
+| P90 steps | 44 | 39 | -5 |
+| Average duration | 88.539551s | 73.062986s | -15.476565s |
+| Action errors | 95 | 13 | -82 |
+| Access denied count | 31 | 34 | +3 |
+| Cost coverage | 1.0 | 1.0 | 0 |
+
+Failure category shift:
+
+| Category | Reference | Candidate |
+| --- | ---: | ---: |
+| Incorrect Result | 39 | 9 |
+| Give Up | 21 | 46 |
+| Step Limit | 1 | 0 |
+
+Interpretation:
+
+- Accuracy improved by 6 tasks on the same 198-task benchmark.
+- Cost dropped by about 39.5% per task and about $8.27 total.
+- Steps and duration both improved.
+- Action errors dropped sharply, from 95 to 13.
+- Access denials rose slightly, from 31 to 34. Most remaining failures
+  are hard access/CAPTCHA/search-fallback cases rather than tool crashes.
+- Failure mix shifted from "Incorrect Result" to explicit "Give Up",
+  which is usually better behavior for blocked or weakly evidenced tasks.
 
 ## Eval Platform Learnings
 
@@ -264,7 +316,8 @@ Mechanical issues to keep watching:
 
 ## Final Comparison Procedure
 
-When `kh774z293rn9qpnzgbvd7bfctn86p4a1` completes:
+The final candidate has completed, but this procedure is still the right
+way to reproduce or re-check the comparison:
 
 ```bash
 EVALUATION_TOOL_URL=... \
@@ -275,7 +328,7 @@ python3 bench/compare_eval_run.py \
   --baseline kh74n8rcqs8bestere2sjjqag186nb7q
 ```
 
-Trust the comparison only when:
+Trust future comparisons only when:
 
 - Candidate `status` is completed.
 - Candidate `tasksWithCost` is 198.
@@ -304,10 +357,15 @@ Compare against the reference on:
 
 ## Open Items
 
-- Wait for `kh774z293rn9qpnzgbvd7bfctn86p4a1` to complete.
-- Run the final compare and failure summary.
-- Decide whether to patch repeated mechanical issues from the final
-  traces.
+- Inspect whether the remaining high-cost Give Up traces deserve another
+  targeted patch. The biggest examples are Newegg Review Bytes, People
+  Crime, Rent.com utility estimates, IMDb/movie budget, and a few
+  search-result first-item tasks.
+- Consider adding guards for final answers that remain on search engines
+  or off-host pages but do not currently trigger the unsupported-evidence
+  classifier.
+- Consider a default argument for `sleep(session, seconds=1.0)` only if
+  the missing-argument trace repeats.
 - Local failed-task reruns remain blocked by missing local `.env`.
 - PostHog dataset experimentation has tooling but still needs the
   relevant local credentials/env configured.
