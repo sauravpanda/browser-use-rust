@@ -2799,3 +2799,82 @@ Next decision gate:
 
 - Commit/push, then launch a targeted task-`1145` eval with the exact
   reference-aligned minimal-thinking Gemini config.
+
+## 2026-05-15T11:22:11Z Update: Metacritic Targeted Eval Launched
+
+- Commit: `12f51bff2934a6bcb6a0e73a62b520467727ce2d`.
+- Dashboard run: `kh72sh0vt1v2k1m5s19zeq8v2d86sj3h`.
+- GitHub workflow: `25915160053`.
+- Dataset lookup used `/api/getTestCase` with `name=WebBench_READ_v5`;
+  task `1145` is dataset index `191`, so the targeted range is
+  `start=191`, `end=192`, `total_tasks=1`.
+- Dispatch config preserves the requested reference shape:
+  `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking_level=minimal`, headed
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`.
+- No literal `developerId` was sent in the manual `/api/startRun`
+  payload; the run should use Saurav's authenticated key identity.
+
+Expected result:
+
+- Preserve task success while moving closer to the reference path:
+  substantially fewer than the old Rust `99` steps, ideally near the
+  reference `22` steps.
+- Reject/revert if the nudge loses success or remains materially worse
+  than the reference on the targeted task.
+
+## 2026-05-15T11:29:33Z Update: Metacritic First Targeted Eval Completed
+
+Targeted run:
+
+- Run `kh72sh0vt1v2k1m5s19zeq8v2d86sj3h`, workflow `25915160053`,
+  commit `12f51bff2934a6bcb6a0e73a62b520467727ce2d`.
+- Command confirmed in GitHub logs:
+  `xvfb-run`, `--model gemini-3-flash-preview`,
+  `--eval-model gpt-o4-mini`, `--max-steps 100`,
+  `--start 191`, `--end 192`, `--max-actions-per-step 4`,
+  `--judge-repeat-count 1`, `--test-case WebBench_READ_v5`,
+  `--proxyless`, `--judge-type ComprehensiveV1`, `--no-thinking`,
+  `--thinking-level minimal`, `--flash-mode`, `--browser local`,
+  `--images-per-step 1`, `--use-vision true`, `--agent-type Agent`.
+- Platform caveat repeated: `/api/getRunResults` returned the real
+  Metacritic row plus an empty CDC row; use the task `1145` row.
+
+Result for task `1145`:
+
+- Judge/self-report: success / `success=true`; same as old Rust and
+  reference.
+- Steps: `12` vs old Rust `99` and Python reference `22`.
+- Duration: `168.76s` vs old Rust `838.10s` and reference `96.85s`.
+- Cost: `$0.053351` vs old Rust `$0.435472` and reference `$0.097744`.
+- Action errors/access denied/tool failures: `3/0/0`.
+
+Trace proof:
+
+- The nudge worked for the main path: the agent navigated directly to
+  `https://www.metacritic.com/browse/tv/?page=142` on step `3`.
+- It extracted official tail-page result cards on step `4` and produced
+  an accepted answer with low-Metascore shows and critic-review counts.
+- Remaining time waste came from three direct detail-page
+  `navigate(url="https://www.metacritic.com/tv/.../")` calls that each
+  timed out after `30s`; the page still moved to the candidate URL.
+
+Decision:
+
+- Keep the patch direction: it preserves success, beats the Python
+  reference on steps and cost, and cuts the old Rust task cost by about
+  `88%`.
+- Tighten the nudge once more before a second targeted retest: prefer
+  clicking visible browse-card links for detail confirmation and tell
+  the agent not to direct-`navigate` individual candidate `/tv/.../`
+  pages. If a load timeout already changed the URL to a candidate page,
+  read/extract the visible page state instead of starting another
+  navigation.
+- `2026-05-15T11:31Z`: full local verification passed after this
+  refinement: `python3 -m unittest discover -s tests -q`,
+  `python3 -m compileall -q python/browser_use_rs tests bench`,
+  `cargo check -p bu-py`, `cargo test -p bu-browser`,
+  `git diff --check`, and
+  `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`.

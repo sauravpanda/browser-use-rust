@@ -3087,8 +3087,15 @@ class Agent:
                     "TV browse list sorted by Metascore, jump near the tail "
                     'with `navigate(url="https://www.metacritic.com/browse/'
                     'tv/?page=142")`, then inspect result cards and click '
-                    "candidate show pages only to confirm the critic review "
-                    "count. Once you have enough official Metacritic "
+                    "candidate show-page links from that browse page only "
+                    "when you need to confirm critic review counts. Do not "
+                    "directly call `navigate(url=...)` for individual "
+                    "candidate `/tv/.../` pages; those loads often time out "
+                    "for 30 seconds even when the page has changed. If a "
+                    "detail-page load times out but the browser URL changed "
+                    "to the candidate show, read/extract that visible page "
+                    "state instead of starting another navigation. Once you "
+                    "have enough official Metacritic "
                     "candidates under 60 with at least 10 critic reviews, "
                     "finish; do not keep paging or searching for a perfect "
                     "global ranking."
