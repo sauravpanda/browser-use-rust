@@ -4189,6 +4189,37 @@ Expected result:
 - Remove section-discovery overhead, preserve judged success, and reduce
   steps/duration/cost versus the kept Rust patch and the reference.
 
+## 2026-05-15T18:29:14Z Update: Daily Mail Coronavirus Direct Eval Completed
+
+Runs:
+
+- Initial run `kh73ypcpmbbyeq2j9deq12zbqx86rbv5`, workflow `25934287239`,
+  failed before task execution because `/api/getTestCase` returned HTTP
+  `500`; the eval API returned zero task rows.
+- Retry run `kh70k6vdrcycqr5g4qwe44w70d86sbfd`, workflow `25934419119`,
+  commit `c6d4644178877897653658d14de7063fd511a551`.
+- Dataset range: `start_index=58`, `end_index=59`, task `2457`.
+- User message: `bu-rust dailymail-coronavirus-direct retry no-thinking
+  gpt-o4-mini`.
+
+Result:
+
+- Judge/self-report: success / `success=false`.
+- Steps: `4` vs kept patch `5`, old Rust `15`, and reference `5`.
+- Duration: `18.31s` vs kept patch `30.94s`, old Rust `51.69s`, and
+  reference `20.70s`.
+- Cost: `$0.026303` vs kept patch `$0.020824`, old Rust `$0.082966`,
+  and reference `$0.009510`.
+
+Decision:
+
+- Reject the code patch. Direct initial navigation improved steps and
+  duration, but the Daily Mail section page produced a large prompt
+  payload and cost regressed versus the already kept patch.
+- Restore the previous nudge-only behavior and keep the learning: this
+  task is constrained by prompt/page-state cost more than navigation
+  steps once correctness is achieved.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
