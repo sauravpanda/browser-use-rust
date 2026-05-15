@@ -1525,6 +1525,56 @@ Patch direction:
 - Keep almond flour and coconut flour recipe pages as secondary sources.
 - Keep rejecting broad free-from answers.
 
+## 2026-05-15T04:44:09Z Update: BBC Keto Alias Retest
+
+Launch note:
+
+- A first dispatch for this patch used a mistyped full commit SHA
+  (`43dc132fd...`) and failed before evaluation during `browser-use-rs`
+  install.
+- Failed pre-eval dashboard row: `kh74y10k588qffn7674r9zn5c586s9ca`
+- Failed GitHub workflow: `25900571221`
+- Learning: always copy `git rev-parse HEAD` exactly into
+  `browser_use_rs_ref`; the correct pushed commit was
+  `43dc1328f6427ebb5c0d6adb2a1f7837022e268d`.
+
+Corrected targeted retest:
+
+- Run: `kh77hb5q2wdcm8cfgvnrvs7fqx86sf42`
+- GitHub workflow: `25900616361`
+- Commit under test: `43dc1328f6427ebb5c0d6adb2a1f7837022e268d`
+- Command confirmed:
+  `--start 4 --end 5 --max-steps 100 --no-thinking --thinking-level minimal`
+- Result: judge failure / Incorrect Result
+- Steps: 12
+- Duration: 33.111s
+- Cost: $0.051078
+- Tokens: 166,605
+- Action errors: 0
+- Access denials: 0
+
+What happened:
+
+- The alias nudge opened the Good Food Keto Pancakes page plus the almond
+  flour and coconut flour pancake recipe pages.
+- The answer was narrower and cheaper than the prior almond/coconut
+  retest, and avoided broad free-from substitutions.
+- The judge still rejected it because the task says to open a specific
+  page titled "Paleo Pancakes"; it treated Keto, Almond Flour, and
+  Coconut Flour Pancakes as wrong sources.
+
+Current conclusion:
+
+- Do not keep expanding aliases for this task without finding the literal
+  "Paleo Pancakes" page.
+- Direct URL checks, sitemap checks, and Good Food API pagination all
+  failed to find any current Good Food title or URL containing `paleo`
+  for this pancake task.
+- The best behavior for a wider release is probably the cheap,
+  source-safe no-result path, unless the exact archived/member recipe URL
+  is discovered.
+- No wider eval should be launched from the BBC alias experiments alone.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
