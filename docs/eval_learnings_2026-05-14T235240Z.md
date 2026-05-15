@@ -2341,3 +2341,43 @@ Decision:
 - Revert commit `ed9e499` and its focused test.
 - Return `main` to the last known better 20-task behavior before
   validation-skip, URL-cycle, and compact-alias experiments.
+
+## 2026-05-15T09:45:42Z Update: VA Facility Locator Failure Is API-Solvable
+
+Baseline run `kh7e6asf9bjg77sj0gxhqwxze986rs40` still has one likely
+actionable non-blocked failure: task `2027`, "Use the facility locator
+tool to list the names and addresses of the first three VA facilities
+near Arlington, VA."
+
+Trace finding:
+
+- The agent reached `https://www.va.gov/find-locations/`, but the search
+  form did not render in the browser snapshot and
+  `wait_for(input#street-city-post-code)` timed out.
+- It then fell back to search and a Washington DC health-care locations
+  page, which is not the locator result list. The final answer included
+  Charlotte Hall and Fort Belvoir rather than the locator's nearest
+  Arlington-area rows.
+
+Implementation learning:
+
+- The VA frontend calls the official POST endpoint
+  `https://api.va.gov/facilities_api/v2/va` with
+  `Source-App-Name: facilities` and `X-Key-Inflection: camel`.
+- The API returns raw rows inside the map bounds; the frontend then
+  computes distance from the search center and sorts rows nearest-first.
+  The helper must mimic that client-side sort, not trust raw API order.
+- For the Arlington task, defaulting to VA health facilities is the
+  pragmatic interpretation of "VA facilities" in this eval context.
+  The nearest-first health rows are:
+  `Washington VA Medical Center`,
+  `Southeast Washington VA Clinic`,
+  `Franklin Street VA Clinic`.
+
+Candidate change:
+
+- Add a narrow `va_facility_locator` read-only tool that calls the
+  official VA.gov locator API, uses a local Arlington geocode fallback
+  for reliability, and sorts returned rows by distance like the frontend.
+- This should be tested on task `2027` first under the exact
+  minimal-thinking Gemini config before any 20-task slice run.

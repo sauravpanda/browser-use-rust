@@ -3791,6 +3791,7 @@ class Agent:
         "extract_links",
         "extract_images",
         "evaluate_js",
+        "va_facility_locator",
         "read_file",
         "list_files",
     })
@@ -6261,6 +6262,7 @@ _PENDING_ACTION_TOOL_NAMES = (
     "scroll_to_bottom",
     "search_page",
     "type_text",
+    "va_facility_locator",
     "web_search",
     "write_file",
 )
