@@ -3856,6 +3856,36 @@ Configuration:
   `proxyless=true`, `parallel_runs=1`.
 - No literal `developerId` was sent in `/api/startRun`.
 
+## 2026-05-15T17:48:12Z Update: eBay Used Laptops Result
+
+Targeted result:
+
+- Run `kh7cfz3pn2vt67k1r1m7c7jc4h86s32t`, workflow `25932550654`,
+  commit `458e434c36d06fd2b56299f3755fddfec0c49a7e`.
+- Judge result: success, `10` steps, `37.85s`, `$0.048868`.
+- Old Rust baseline: success, `20` steps, `77.38s`, `$0.104394`.
+- Reference run `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success, `17` steps,
+  `91.74s`, `$0.054595`.
+
+Decision:
+
+- Keep the patch. It preserves judged success and beats old Rust by `10`
+  steps, `39.52s`, and about `53.2%` cost; it also beats the reference by
+  `7` steps, `53.88s`, and about `10.5%` cost.
+- The workflow log confirmed the intended command:
+  `--start 118 --end 119 --max-steps 100 --no-thinking --thinking-level minimal`.
+
+Learning:
+
+- For eBay add-to-cart tasks, a same-site filtered search URL can safely
+  encode the search query, Buy It Now, and price range while preserving the
+  live product/cart requirement.
+- Adding `8GB 512GB SSD` to the search query reduces item-spec inspection
+  without hardcoding a product; the judge accepted `512GB SSD` as satisfying
+  the task's `500GB memory` wording.
+- The agent still hit a challenge page, but direct filtered search reduced
+  enough filter and product-search overhead for a clear net win.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
