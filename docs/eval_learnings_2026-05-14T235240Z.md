@@ -2109,6 +2109,53 @@ Local verification:
 - `git diff --check`
 - `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`
 
+## 2026-05-15T08:01:37Z Update: 20-Task Slice Rejects URL-Cycle Guard
+
+20-task slice on commit `4739f7b4d55dd123d8e8c033bc95db20c6e61cff`:
+
+- Run `kh70gv2xgevjscwk0g0jrpmmbh86s7ns`, workflow `25905807154`.
+- Exact config matched the prior slice: `start=10`, `end=30`,
+  `parallel_runs=1`, `max_steps=100`, `model=gemini-3-flash-preview`,
+  `eval_model=gpt-o4-mini`, `--no-thinking`,
+  `thinking_level=minimal`, `headless=false`,
+  `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `test_case=WebBench_READ_v5`, `judge_type=ComprehensiveV1`,
+  `flash_mode=true`, `browser=local`, `images_per_step=1`,
+  `use_vision=true`, `agent_type=Agent`.
+- Result: 14/20 judge successes, 279 steps, 1068.5s,
+  total cost `$0.978598`, avg cost `$0.048930`.
+- Prior comparable slice `kh7e6asf9bjg77sj0gxhqwxze986rs40`:
+  16/20 judge successes, 262 steps, 1024.0s, total cost `$0.934796`,
+  avg cost `$0.046740`.
+
+Per-task comparison:
+
+- Clear wins: `1383` improved 14 -> 6 steps and `$0.0738` ->
+  `$0.0261`; `1187`, `1494`, `2027`, `895`, `91`, `275`, and
+  `1814` also got cheaper/fewer steps.
+- Clear losses: `607` regressed 28 -> 43 steps and `$0.1188` ->
+  `$0.2047`; `954` regressed 10 -> 25 steps and `$0.0334` ->
+  `$0.0758`; `1840` regressed 8 -> 24 steps and `$0.0199` ->
+  `$0.0644`; `2657`, `266`, `914`, and `2226` also got more
+  expensive.
+- Success regressions: `1510` and `2423` changed from judge success
+  to judge failure. Trace inspection did not show a clean validation
+  skip bug: `1510` had `NOT FOUND` extract results and self-reported
+  `success=False`; `2423` extracted a different CNN result set than
+  the prior run.
+
+Decision:
+
+- The URL-cycle guard is rejected. It did not produce a measurable
+  20-task improvement and may have nudged longer tasks without a proven
+  benefit.
+- Remove the URL-cycle guard code and test. Keep the validation-skip
+  patch for now because it has a direct positive canary (`1383`) and a
+  focused unit test, but do not treat it as release-ready based on the
+  full slice.
+- The release objective is not achieved: success, cost, and time are
+  all worse than the prior comparable slice.
+
 ## 2026-05-15T07:13:16Z Update: Validation Skip Helps, Zara Exposes URL Cycle Tail
 
 Canary evals on commit `ed9e4991f808be8b10bf4abbc156e1d8b05d400c`:

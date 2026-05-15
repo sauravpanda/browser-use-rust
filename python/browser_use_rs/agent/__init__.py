@@ -1074,8 +1074,6 @@ class Agent:
         self._recent_action_sigs: list[str] = []
         self._loop_nudge_cooldown = 0
         self._recent_urls: list[str] = []
-        self._url_cycle_nudged = False
-        self._url_cycle_force_fired = False
         # Tool names emitted per turn (tuple per turn). Drives the
         # "no extract" nudge: many turns with zero read-tool calls
         # signals the agent is exploring without reading content.
@@ -2408,16 +2406,9 @@ class Agent:
             ):
                 return
 
-            loop_force_reason = self._maybe_inject_loop_nudge(
+            self._maybe_inject_loop_nudge(
                 state_summary, completion.tool_calls, step_n, max_steps
             )
-            if loop_force_reason:
-                await self._force_final_answer(
-                    state_summary,
-                    step_n,
-                    reason=loop_force_reason,
-                )
-                return
 
             # Single-action fallback: if a multi-action turn produced a
             # majority of errors AND no extract, the agent is batching
@@ -2621,8 +2612,8 @@ class Agent:
         tool_calls: list[ToolCall],
         step_n: int,
         max_steps: int,
-    ) -> str | None:
-        """Detect four classes of stall and inject a one-shot nudge.
+    ) -> None:
+        """Detect three classes of stall and inject a one-shot nudge.
 
         1. **Tight loop** — same canonical (name+args) signature emitted
            3+ times in the last 6 turns. The URL guard from earlier
@@ -2636,11 +2627,7 @@ class Agent:
            AND the agent has used >1/3 of its step budget. Catches
            agents that nav/click/scroll endlessly with only token
            extracts. Was "zero extracts" — too lenient.
-        3. **URL cycle** — repeated list/detail or back/forth URL
-           cycles after the agent has already read evidence. This
-           catches high-cost tails where the page keeps changing so
-           strict stagnation detection never fires.
-        4. **Budget warning** — at `step == max_steps - 5`, fire a
+        3. **Budget warning** — at `step == max_steps - 5`, fire a
            one-shot "wrap up now" reminder so the agent commits to a
            best-effort answer instead of silently maxing out.
 
@@ -2715,9 +2702,9 @@ class Agent:
             # Don't return — a budget warning and a loop nudge can coexist.
 
         if self._loop_nudge_cooldown > 0:
-            return None
+            return
         if len(self._recent_action_sigs) < REPEAT_THRESHOLD:
-            return None
+            return
 
         # ---- 1. Tight-loop check (no URL guard since v0.4.13) ----
         repeat_count = self._recent_action_sigs.count(sig)
@@ -2733,77 +2720,9 @@ class Agent:
                 step_n, repeat_count, WINDOW,
             )
             self._loop_nudge_cooldown = COOLDOWN_STEPS
-            return None
+            return
 
-        # ---- 2. URL-cycle check (list/detail or back/forth churn) ----
-        # Strict action signatures intentionally keep indices, which
-        # avoids false positives on legitimate list iteration but misses
-        # a costly pattern from the eval platform: repeatedly opening
-        # and backing out of the same list/detail pages after extract
-        # evidence has already been gathered. Nudge conservatively, and
-        # only request force-final after step 50 with read evidence in
-        # recent history.
-        url_keys = [
-            self._url_cycle_key(url)
-            for url in self._recent_urls[-WINDOW:]
-            if url
-        ]
-        nav_turns = sum(
-            1
-            for names in self._recent_tool_names[-WINDOW:]
-            if names
-            and all(
-                name in {
-                    "click",
-                    "go_back",
-                    "navigate",
-                    "scroll",
-                    "scroll_to_bottom",
-                    "scroll_to_top",
-                }
-                for name in names
-            )
-        )
-        unique_urls = {u for u in url_keys if u}
-        if (
-            len(url_keys) >= WINDOW
-            and 1 < len(unique_urls) <= 3
-            and nav_turns >= WINDOW - 1
-            and step_n >= 20
-        ):
-            if not getattr(self, "_url_cycle_nudged", False):
-                self._url_cycle_nudged = True
-                nudge = (
-                    f"[URL_CYCLE] Browser has cycled among "
-                    f"{len(unique_urls)} pages for {len(url_keys)} recent "
-                    "turns. Stop opening the same list/detail pages; "
-                    "extract the visible list once or finish from evidence."
-                )
-                self._messages.append(UserMessage(content=nudge))
-                logger.info(
-                    "agent: URL_CYCLE nudge at step %d "
-                    "(unique_urls=%d, nav_turns=%d/%d)",
-                    step_n, len(unique_urls), nav_turns, WINDOW,
-                )
-                self._loop_nudge_cooldown = COOLDOWN_STEPS
-                return None
-            if (
-                not getattr(self, "_url_cycle_force_fired", False)
-                and step_n >= 50
-                and self._has_recent_final_evidence(max_tool_results=30)
-            ):
-                self._url_cycle_force_fired = True
-                logger.info(
-                    "agent: URL_CYCLE force-final requested at step %d "
-                    "(unique_urls=%d, nav_turns=%d/%d)",
-                    step_n, len(unique_urls), nav_turns, WINDOW,
-                )
-                return (
-                    "browser cycled among the same few pages after read "
-                    "evidence was collected"
-                )
-
-        # ---- 3. No-extract check (≤25% of last 6 turns called a read) ----
+        # ---- 2. No-extract check (≤25% of last 6 turns called a read) ----
         # Wait until the agent has used >1/3 of the budget — no point
         # nudging on early exploration where reading isn't the goal yet.
         budget_used = step_n / max_steps if max_steps > 0 else 0
@@ -2835,7 +2754,6 @@ class Agent:
                     len(domains),
                 )
                 self._loop_nudge_cooldown = COOLDOWN_STEPS
-        return None
 
     def _has_recent_final_evidence(self, max_tool_results: int = 6) -> bool:
         """Return true when recent tool results already include evidence."""
@@ -3258,20 +3176,6 @@ class Agent:
             return host
         except Exception:
             return url
-
-    @staticmethod
-    def _url_cycle_key(url: str) -> str:
-        if not url:
-            return ""
-        try:
-            from urllib.parse import urlparse
-
-            parsed = urlparse(url)
-            host = (parsed.hostname or "").lower()
-            path = parsed.path.rstrip("/") or "/"
-            return f"{host}{path}"
-        except Exception:
-            return url.split("?", 1)[0].rstrip("/")
 
     @staticmethod
     def _blocked_state_reason(state: BrowserStateSummary) -> str:
