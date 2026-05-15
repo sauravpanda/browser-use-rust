@@ -3032,6 +3032,49 @@ Configuration:
   `proxyless=true`, `parallel_runs=1`.
 - No literal `developerId` was sent in `/api/startRun`.
 
+## 2026-05-15T16:36:58Z Update: WebMD Targeted Eval Result
+
+Targeted run:
+
+- Run `kh7fr0bx8aq9nabz0twjybnpw586s1e2`, workflow `25929329055`,
+  commit `412c6d0d819a4ef8b0bf92f7a52d13fe1b5bd9fb`.
+- Dataset range: `start_index=167`, `end_index=168`, task `2083`.
+- Command confirmed in GitHub logs:
+  `--model gemini-3-flash-preview`, `--eval-model gpt-o4-mini`,
+  `--max-steps 100`, `--start 167`, `--end 168`,
+  `--max-actions-per-step 4`, `--judge-repeat-count 1`,
+  `--test-case WebBench_READ_v5`, `--proxyless`,
+  `--judge-type ComprehensiveV1`, `--no-thinking`,
+  `--thinking-level minimal`, `--flash-mode`, `--browser local`,
+  `--images-per-step 1`, `--use-vision true`, `--agent-type Agent`.
+
+Result for task `2083`:
+
+- Judge/self-report: success / `success=true`.
+- Score: `1`.
+- Steps: `1` vs old Rust `6` and reference `4`.
+- Duration: `4.04s` vs old Rust `20.63s` and reference `18.63s`.
+- Cost: `$0.003160` vs old Rust `$0.015189` and reference `$0.003329`.
+- Tokens: platform `tokensUsed=10345`, usage `total_tokens=11121`.
+
+Trace proof:
+
+- The run started on WebMD's Health News page and answered the visible
+  primary headline and description:
+  `The Hormone That Could Turbocharge Your Weight Loss Drug`.
+- The judge accepted that the agent navigated to the correct WebMD News
+  URL and identified the requested primary headline/description.
+
+Decision:
+
+- Keep the patch. It preserves judged success, cuts old Rust by `5`
+  steps, `16.59s`, and `$0.012029`, and beats the reference by `3`
+  steps, `14.59s`, and `$0.000169`.
+- Learning: when both traces manually converge on a stable same-site
+  section URL and the task only says to go to that section homepage,
+  starting there directly can collapse menu/cookie discovery into a
+  one-step accepted answer without hard-coding page content.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
