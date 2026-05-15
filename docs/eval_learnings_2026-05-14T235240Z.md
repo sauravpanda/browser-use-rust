@@ -2636,6 +2636,46 @@ Configuration:
   `proxyless=true`, `parallel_runs=1`.
 - No literal `developerId` was sent in `/api/startRun`.
 
+## 2026-05-15T16:03:14Z Update: Trustpilot Amazon UK Eval Result
+
+Targeted run:
+
+- Run `kh768k7ad835tkn9dtxdbpqrk986rvec`, workflow `25927135383`,
+  commit `a09ef4393ca99eac7e23bcb824aab9abade9d673`.
+- Command confirmed in GitHub logs:
+  `xvfb-run`, `--model gemini-3-flash-preview`,
+  `--eval-model gpt-o4-mini`, `--max-steps 100`,
+  `--start 175`, `--end 176`, `--max-actions-per-step 4`,
+  `--judge-repeat-count 1`, `--test-case WebBench_READ_v5`,
+  `--proxyless`, `--judge-type ComprehensiveV1`, `--no-thinking`,
+  `--thinking-level minimal`, `--flash-mode`, `--browser local`,
+  `--images-per-step 1`, `--use-vision true`, `--agent-type Agent`.
+
+Result for task `1898`:
+
+- Judge/self-report: success / success.
+- Steps: `8` vs old Rust `11` and reference `7`.
+- Duration: `34.49s` vs old Rust `43.91s` and reference `29.27s`.
+- Cost: `$0.033928` vs old Rust `$0.039201` and reference `$0.021328`.
+- Tokens: `102,813`; total usage tokens `107,758`.
+
+Trace proof:
+
+- The run used
+  `https://www.trustpilot.com/review/www.amazon.co.uk?sort=recency`.
+- Judge rationale: the agent identified the Amazon UK Trustpilot page,
+  applied the recency sort, and extracted the full text for the top three
+  reviews.
+
+Decision:
+
+- Reject the code patch. It fixed the old Rust hallucination failure but
+  was still slower, one step longer, and substantially more expensive than
+  the successful reference run.
+- Preserve the learning: direct recency navigation plus waiting through
+  Trustpilot verification is enough for correctness, but the extra guidance
+  and validation-skip path did not beat the reference economics.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
