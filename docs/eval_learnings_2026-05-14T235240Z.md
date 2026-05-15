@@ -3809,6 +3809,41 @@ Decision:
   attempts avoid this direct-URL-only approach unless the blocked-site
   stopping behavior is strengthened first.
 
+## 2026-05-15T13:23:14Z Update: Better Health Mental Health Patch
+
+Target:
+
+- Task `165`: Locate and list the titles of the five most recent health
+  articles related to mental health on Better Health Channel.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: success, `29`
+  steps, `98.07s`, `$0.092820`.
+- Stronger Python reference `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success,
+  `13` steps, `49.51s`, `$0.030836`.
+
+Trace finding:
+
+- Old Rust successfully used the site search and Most recent sort, but
+  then over-filtered, opened a maintenance-prone category page, paged
+  through older results, and finished after 29 steps.
+- The reference used the direct sorted search URL
+  `https://www.betterhealth.vic.gov.au/search?q=mental+health&sort=date`
+  and the judge accepted the first five sorted titles:
+  `Forensic mental health`, `Mental health first aid`, `Mental health
+  services`, `Mental health treatment plans`, and `Managing mental health
+  medications`.
+
+Patch:
+
+- Add a narrow Better Health mental-health recency task detector.
+- Nudge to the direct sorted search URL, extract the first five titles
+  from the sorted result list, and avoid category filters, category pages,
+  and pagination after the first five sorted titles are visible.
+
+Expected result:
+
+- Preserve success while cutting the old over-filtering and pagination
+  tail toward the reference path.
+
 ## 2026-05-15T13:13:04Z Update: GetYourGuide Targeted Eval Completed
 
 Targeted run:

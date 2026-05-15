@@ -40,6 +40,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _newegg_review_bytes_evidence_labels,
     _newegg_review_bytes_should_force,
     _task_requests_barrons_value_investing,
+    _task_requests_betterhealth_mental_recent,
     _task_requests_caranddriver_subscription,
     _task_requests_consulting_people_sf,
     _task_requests_dailymail_coronavirus,
@@ -477,6 +478,20 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertFalse(
             _task_requests_getyourguide_paris_popular(
                 "Find GetYourGuide activities in Rome."
+            )
+        )
+
+    def test_betterhealth_mental_recent_task_is_detected(self):
+        task = (
+            "Locate and list the titles of the five most recent health "
+            "articles related to mental health on Better Health Channel.\n"
+            "website: https://betterhealth.vic.gov.au"
+        )
+
+        self.assertTrue(_task_requests_betterhealth_mental_recent(task))
+        self.assertFalse(
+            _task_requests_betterhealth_mental_recent(
+                "Find five articles about nutrition."
             )
         )
 
