@@ -5082,12 +5082,12 @@ def _southwest_one_way_deals_are_enough_for_roundtrip(text: str) -> bool:
             text_lc,
         )
     )
-    has_route_or_destination = bool(
-        re.search(r"\bto\b.{0,80}\$\s*\d", text_lc)
-        or "destination:" in text_lc
-        or "from " in text_lc
+    has_origin_route = bool(
+        re.search(r"\bfrom\b.{0,80}\bto\b", text_lc)
+        or re.search(r"\b[A-Z]{3}\s*(?:-|to)\s*[A-Z]{3}\b", text or "")
+        or "most popular flights from" in text_lc
     )
-    return has_date and has_route_or_destination
+    return has_date and has_origin_route
 
 
 def _looks_like_round_trip_answer_uses_one_way_only(task: str, text: str) -> bool:

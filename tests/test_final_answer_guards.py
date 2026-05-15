@@ -375,18 +375,18 @@ class FinalAnswerGuardTests(unittest.TestCase):
         )
         extracted = (
             "The webpage lists only one-way starting at prices. "
-            "Destination: Orlando, FL; Price: $139 one-way; Departing: 6/16. "
-            "Destination: Baltimore/Washington, MD; Price: $134 one-way; "
-            "Departing: 6/09."
+            "Most popular flights from Albany, NY: "
+            "ALB to MCO; Price: $139 one-way; Departing: 6/16. "
+            "ALB to BWI; Price: $134 one-way; Departing: 6/09."
         )
 
         self.assertTrue(_task_requests_southwest_roundtrip_deals(task))
         self.assertTrue(_southwest_one_way_deals_are_enough_for_roundtrip(extracted))
 
-    def test_southwest_roundtrip_nudge_requires_prices_and_dates(self):
+    def test_southwest_roundtrip_nudge_requires_origin_route(self):
         extracted = (
-            "The page mentions one-way starting fares for several routes, "
-            "but no visible dates or prices were present."
+            "Destination: Orlando, FL; Price: $139 one-way; Departing: 6/16. "
+            "Destination: Tampa, FL; Price: $189 one-way; Departing: 9/01."
         )
 
         self.assertFalse(_southwest_one_way_deals_are_enough_for_roundtrip(extracted))
