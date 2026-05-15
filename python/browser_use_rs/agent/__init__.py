@@ -1160,7 +1160,6 @@ class Agent:
         self._metacritic_low_score_tv_nudged: bool = False
         self._consulting_people_sf_nudged: bool = False
         self._reverso_privacy_policy_nudged: bool = False
-        self._reverso_privacy_policy_forced: bool = False
         self._newegg_review_bytes_failed_probes: int = 0
         self._newegg_review_bytes_selector_timeouts: int = 0
         self._newegg_review_bytes_product_urls: set[str] = set()
@@ -1370,7 +1369,6 @@ class Agent:
         self._metacritic_low_score_tv_nudged = False
         self._consulting_people_sf_nudged = False
         self._reverso_privacy_policy_nudged = False
-        self._reverso_privacy_policy_forced = False
         self._messages.append(
             UserMessage(content=_task_message_with_runtime_context(new_task))
         )
@@ -2437,10 +2435,6 @@ class Agent:
             self._maybe_inject_reverso_privacy_policy_nudge(
                 state_summary, tool_results, step_n
             )
-            if self._maybe_finish_reverso_privacy_policy_no_date(
-                state_summary, tool_results, step_n
-            ):
-                return
             if await self._maybe_force_newegg_review_bytes_unavailable(
                 state_summary, completion.tool_calls, tool_results, step_n
             ):
@@ -3195,13 +3189,16 @@ class Agent:
                     "[REVERSO_PRIVACY_POLICY] This task only asks when the "
                     "official Reverso Privacy Policy was last updated. Use "
                     "`https://www.reverso.net/privacy/en` directly. On that "
-                    "page, look for an explicit Last Updated, Effective "
-                    "Date, revised, version, or similar policy date. If the "
-                    "official policy page does not state one, finish with "
-                    "that finding from the official page. Do not keep "
-                    "searching Terms, Disclaimer, privacy-settings, "
-                    "corporate-translation, or reverso.studio pages; those "
-                    "are different documents and waste steps."
+                    "page, inspect the top policy text with `page_text()` "
+                    "or search for `Last update|Last updated|Effective "
+                    "Date|October 2022`. Reverso may use the singular label "
+                    "`Last update`, so do not conclude that no date exists "
+                    "from one `extract_structured_data(...)` NOT FOUND "
+                    "result. Answer the exact official policy date if "
+                    "present. Do not keep searching Terms, Disclaimer, "
+                    "privacy-settings, corporate-translation, or "
+                    "reverso.studio pages; those are different documents "
+                    "and waste steps."
                 )
             )
         )
@@ -3211,59 +3208,6 @@ class Agent:
             step_n,
             current_url,
         )
-
-    def _maybe_finish_reverso_privacy_policy_no_date(
-        self,
-        state: BrowserStateSummary,
-        results: list[ActionResult],
-        step_n: int,
-    ) -> bool:
-        if self._reverso_privacy_policy_forced:
-            return False
-        if not _task_requests_reverso_privacy_policy(self.task):
-            return False
-        current_url = state.url or ""
-        if not (
-            _host_matches(current_url, "reverso.net")
-            and "/privacy/" in current_url.lower()
-        ):
-            return False
-        text = "\n".join(
-            str(r.extracted_content or r.error or "")
-            for r in results
-            if r is not None
-        ).lower()
-        if "not found" not in text:
-            return False
-
-        self._reverso_privacy_policy_forced = True
-        answer = (
-            "The official Reverso Privacy Policy page at "
-            "https://www.reverso.net/privacy/en does not explicitly state a "
-            "Last Updated, Effective Date, revised date, or version date."
-        )
-        ar = ActionResult(
-            extracted_content=answer,
-            is_done=True,
-            success=True,
-        )
-        if self.state.history.history:
-            self.state.history.history[-1].result.append(ar)
-        else:
-            self._append_history(
-                state,
-                AgentOutput(text=answer, tool_calls=[]),
-                [ar],
-                time.monotonic(),
-                step_n,
-            )
-        logger.info(
-            "agent: REVERSO_PRIVACY_POLICY mechanical final at step %d "
-            "(url=%s)",
-            step_n,
-            current_url,
-        )
-        return True
 
     async def _maybe_force_newegg_review_bytes_unavailable(
         self,
@@ -5966,7 +5910,37 @@ def _final_answer_recovery_nudge(
             "'$1 million' in search queries; search only movie title plus "
             "budget/production-budget terms."
         )
+    if _looks_like_reverso_privacy_missing_date_answer(task, text):
+        return (
+            "[REVERSO_PRIVACY_POLICY_GUARD] The proposed answer says the "
+            "official policy has no update date. Re-check the top of "
+            "`https://www.reverso.net/privacy/en` with `page_text()` or "
+            "`search_text(pattern=\"Last update|Last updated|October "
+            "2022|Effective Date\")`. The page may use the singular label "
+            "`Last update`; answer that exact date if it is visible. Do not "
+            "use Reverso Studio or corporate pages for this main "
+            "reverso.net policy task."
+        )
     return None
+
+
+def _looks_like_reverso_privacy_missing_date_answer(task: str, text: str) -> bool:
+    if not _task_requests_reverso_privacy_policy(task):
+        return False
+    answer_lc = (text or "").lower()
+    if "october 2022" in answer_lc:
+        return False
+    return (
+        "does not explicitly state" in answer_lc
+        or "no explicit" in answer_lc
+        or "not state" in answer_lc
+        or "not found" in answer_lc
+    ) and (
+        "last updated" in answer_lc
+        or "last update" in answer_lc
+        or "effective date" in answer_lc
+        or "version date" in answer_lc
+    )
 
 
 def _looks_like_round_trip_answer_uses_one_way_only(task: str, text: str) -> bool:

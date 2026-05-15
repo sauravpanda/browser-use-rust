@@ -3172,3 +3172,66 @@ Expected result:
 - Cut the old Rust tail from roughly `40` steps toward the reference's
   `6` steps by stopping once the official policy page has answered the
   absence-of-date question.
+
+## 2026-05-15T11:59:15Z Update: Reverso Privacy Targeted Eval Launched
+
+- Commit: `6b6085a6956cd4322574f41060fd6d3eae122831`.
+- Dashboard run: `kh70e2tjh15t6eehmmvy5x9h9x86sf9j`.
+- GitHub workflow: `25916597012`.
+- Dataset lookup confirmed task `1477` is index `87`, so the targeted
+  range is `start=87`, `end=88`, `total_tasks=1`.
+- Config preserves the requested reference shape:
+  `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking_level=minimal`, headed
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
+Expected result:
+
+- Preserve the accepted no-explicit-date answer.
+- Stop near the official privacy page rather than searching related
+  Reverso terms, disclaimer, privacy-settings, corporate, or studio
+  pages.
+
+## 2026-05-15T12:03:40Z Update: Reverso Privacy First Retest Failed
+
+Targeted run:
+
+- Run `kh70e2tjh15t6eehmmvy5x9h9x86sf9j`, workflow `25916597012`,
+  commit `6b6085a6956cd4322574f41060fd6d3eae122831`.
+- Command confirmed in GitHub logs:
+  `xvfb-run`, `--model gemini-3-flash-preview`,
+  `--eval-model gpt-o4-mini`, `--max-steps 100`,
+  `--start 87`, `--end 88`, `--max-actions-per-step 4`,
+  `--judge-repeat-count 1`, `--test-case WebBench_READ_v5`,
+  `--proxyless`, `--judge-type ComprehensiveV1`, `--no-thinking`,
+  `--thinking-level minimal`, `--flash-mode`, `--browser local`,
+  `--images-per-step 1`, `--use-vision true`, `--agent-type Agent`.
+
+Result for task `1477`:
+
+- Judge/self-report: failure / `success=true`.
+- Steps: `3` vs old Rust `40` and reference `6`.
+- Duration: `9.40s` vs old Rust `126.76s` and reference `18.68s`.
+- Cost: `$0.017597` vs old Rust `$0.170606` and reference `$0.010238`.
+- Action errors/access denied/tool failures: `0/0/0`.
+
+Failure reason:
+
+- The judge now says the current official Reverso Privacy Policy page
+  explicitly contains `Last update: October 2022` near the top.
+- The mechanical finalization path answered the older accepted
+  no-explicit-date shape after one `extract_structured_data(...)`
+  returned `NOT FOUND`, which was too aggressive.
+
+Correction:
+
+- Remove the Reverso mechanical no-date finalizer.
+- Keep the direct official-page nudge, but require top-page inspection
+  for the singular `Last update` label and the current `October 2022`
+  month-year string.
+- Add a final-answer recovery guard if the model tries the no-date
+  answer again.
