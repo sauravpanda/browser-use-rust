@@ -2504,6 +2504,28 @@ Expected result:
   reference's cached/archived evidence strategy, ideally with fewer steps
   and less cost than the reference.
 
+## 2026-05-15T15:38:31Z Update: Sportskeeda F1 Targeted Eval Launched
+
+Targeted run:
+
+- Run `kh7ad3mkpxdjz9wnhjxb7zgsvx86spf4`, workflow `25926687987`,
+  commit `0c323de5667abe0b9da3e1c69cb7e25cfd92b8ec`.
+- Dataset range: `start_index=31`, `end_index=32`, task `1582`.
+- User message:
+  `bu-rust sportskeeda-f1-about targeted no-thinking gpt-o4-mini`.
+
+Configuration:
+
+- Same corrected object-shaped dispatch and minimal-thinking Gemini
+  config: `runtime=rs`, `gemini-3-flash-preview`,
+  `eval_model=gpt-o4-mini`, `max_steps=100`, `--no-thinking`,
+  `thinking_level=minimal`, headed local browser,
+  `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
