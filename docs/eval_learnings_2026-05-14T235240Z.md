@@ -1814,6 +1814,57 @@ Expected result:
 - Preserve the accepted description text while cutting the old search and
   Cloudflare/CAPTCHA retry loop.
 
+## 2026-05-15T14:21:56Z Update: People Targeted Eval Launched
+
+Targeted run:
+
+- Run `kh754kk710srwnz32x7bwr4n3186sr4q`, workflow `25922952161`,
+  commit `19b92ccaae7aad79560477c8df1534a898b885d6`.
+- Dataset range: `start_index=102`, `end_index=103`, task `1333`.
+- User message:
+  `bu-rust people-entertainment-video targeted no-thinking gpt-o4-mini`.
+
+Configuration:
+
+- `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking_level=minimal`, headed
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
+## 2026-05-15T14:27:56Z Update: People Targeted Eval Result
+
+Result for task `1333`:
+
+- Judge/self-report: success / `success=false`.
+- Steps: `7` vs old Rust `39` and reference `17`.
+- Duration: `24.89s` vs old Rust `422.55s` and reference `163.62s`.
+- Cost: `$0.035656` vs old Rust `$0.126134` and reference `$0.032975`.
+- Action errors/access denied/tool failures: `0/0/0`.
+
+Trace proof:
+
+- The agent started from the known People Entertainment article context,
+  used the nudge at step `1`, navigated to the official PeopleTV YouTube
+  video `Nm62KEiFHOI`, opened the description, and extracted the accepted
+  PeopleTV description text.
+- No search-engine or CAPTCHA retry loop occurred.
+- The final-answer support guard downgraded self-report success to false,
+  but the external judge accepted the answer as correct.
+- Workflow command verified the same minimal-thinking Gemini config:
+  `gemini-3-flash-preview`, `gpt-o4-mini`, `max_steps=100`,
+  `--no-thinking`, `--thinking-level minimal`, `WebBench_READ_v5`,
+  `ComprehensiveV1`, headed local browser, `images_per_step=1`,
+  `use_vision=true`, and `agent_type=Agent`.
+
+Decision:
+
+- Keep the patch. It preserves judged success, improves old Rust by `32`
+  steps and `397.66s`, and beats the reference on steps and duration.
+  Cost is slightly above the reference but far below old Rust.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
