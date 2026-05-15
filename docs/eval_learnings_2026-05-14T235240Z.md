@@ -2893,6 +2893,38 @@ Decision:
   `images_per_step=1`, `use_vision=true`, `agent_type=Agent`.
 - No literal `developerId` was sent in `/api/startRun`.
 
+## 2026-05-15T13:38:33Z Update: CBS Featured Investigative Patch
+
+Target:
+
+- Task `225`: Locate the featured investigative report on the CBS News
+  homepage and summarize its main argument.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: success, `13`
+  steps, `42.99s`, `$0.055460`.
+- Stronger Python reference `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success,
+  `3` steps, `10.26s`, `$0.004803`.
+
+Trace finding:
+
+- Old Rust saw the homepage lead story, then scrolled/searches for a
+  separate `CBS News Investigates` section and eventually navigated to
+  `/investigations/`, summarizing a different featured investigation.
+- The reference treated the top homepage `Exclusive` lead story as the
+  featured investigative report, opened it, and finished in three steps.
+
+Patch:
+
+- Add a narrow CBS featured-investigative task detector.
+- Nudge the agent to use the visible homepage `Exclusive` or main lead
+  story first, summarize its headline and main argument, and avoid
+  scrolling for `/investigations/` unless no clear homepage investigative
+  feature is visible.
+
+Expected result:
+
+- Preserve success while cutting the old homepage-scrolling and separate
+  Investigations-page detour toward the reference path.
+
 Expected result:
 
 - Preserve success.

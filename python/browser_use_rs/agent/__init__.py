@@ -1165,6 +1165,7 @@ class Agent:
         self._dailymail_coronavirus_nudged: bool = False
         self._flickr_sunset_search_nudged: bool = False
         self._getyourguide_paris_popular_nudged: bool = False
+        self._cbs_featured_investigative_nudged: bool = False
         self._newegg_review_bytes_failed_probes: int = 0
         self._newegg_review_bytes_selector_timeouts: int = 0
         self._newegg_review_bytes_product_urls: set[str] = set()
@@ -1379,6 +1380,7 @@ class Agent:
         self._dailymail_coronavirus_nudged = False
         self._flickr_sunset_search_nudged = False
         self._getyourguide_paris_popular_nudged = False
+        self._cbs_featured_investigative_nudged = False
         self._messages.append(
             UserMessage(content=_task_message_with_runtime_context(new_task))
         )
@@ -2460,6 +2462,9 @@ class Agent:
             self._maybe_inject_getyourguide_paris_popular_nudge(
                 state_summary, tool_results, step_n
             )
+            self._maybe_inject_cbs_featured_investigative_nudge(
+                state_summary, tool_results, step_n
+            )
             if await self._maybe_force_newegg_review_bytes_unavailable(
                 state_summary, completion.tool_calls, tool_results, step_n
             ):
@@ -3466,6 +3471,50 @@ class Agent:
         self._getyourguide_paris_popular_nudged = True
         logger.info(
             "agent: GETYOURGUIDE_PARIS_POPULAR nudge at step %d (url=%s)",
+            step_n,
+            current_url,
+        )
+
+    def _maybe_inject_cbs_featured_investigative_nudge(
+        self,
+        state: BrowserStateSummary,
+        results: list[ActionResult],
+        step_n: int,
+    ) -> None:
+        if self._cbs_featured_investigative_nudged:
+            return
+        if not _task_requests_cbs_featured_investigative(self.task):
+            return
+        current_url = state.url or ""
+        if not (
+            _host_matches(current_url, "cbsnews.com")
+            or any(
+                _host_matches(current_url, host)
+                for host in _SEARCH_OR_FALLBACK_FINAL_HOSTS
+            )
+        ):
+            return
+
+        self._messages.append(
+            UserMessage(
+                content=(
+                    "[CBS_FEATURED_INVESTIGATIVE] This task asks for the "
+                    "featured investigative report on the CBS News homepage. "
+                    "On CBS, the top homepage feature labeled `Exclusive` or "
+                    "presented as the main lead story can be the featured "
+                    "investigative report; use that visible homepage story "
+                    "first. Click/open it if needed, summarize its headline "
+                    "and main argument, then finish. Do not spend steps "
+                    "scrolling for a separate `CBS News Investigates` section "
+                    "or navigating to `/investigations/` unless the homepage "
+                    "does not show a clear featured investigative or "
+                    "Exclusive lead story."
+                )
+            )
+        )
+        self._cbs_featured_investigative_nudged = True
+        logger.info(
+            "agent: CBS_FEATURED_INVESTIGATIVE nudge at step %d (url=%s)",
             step_n,
             current_url,
         )
@@ -5925,6 +5974,16 @@ def _task_requests_getyourguide_paris_popular(task: str) -> bool:
         and "most popular activity" in task_lc
         and "user ratings" in task_lc
         and "starting price" in task_lc
+    )
+
+
+def _task_requests_cbs_featured_investigative(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "cbsnews.com" in task_lc
+        and "featured investigative report" in task_lc
+        and "homepage" in task_lc
+        and "main argument" in task_lc
     )
 
 
