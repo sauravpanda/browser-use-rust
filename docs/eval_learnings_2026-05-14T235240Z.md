@@ -496,8 +496,6 @@ the newer Python reference:
 
 Patch added after this finding:
 
-- Flash/no-thinking mode now uses a shorter tool-first prompt and no
-  required XML state-emission block.
 - Plain-text finalization now detects pending tool-call prose and nudges
   the model to call the actual tool instead of committing the text as
   final.
@@ -509,3 +507,47 @@ Local verification:
 - `python3 -m compileall -q python/browser_use_rs tests bench`
 - `python3 -m unittest discover -s tests -q`
 - `git diff --check`
+
+## 2026-05-15T01:24:10Z Update: Ten-Task Slice Regression
+
+Run `kh73sq1fsp5959p7xb980v1g9h86rsyr` tested commit `dbd7268` on a
+10-task slice with the newer reference-style worker flags:
+
+- `model=gemini-3-flash-preview`
+- `eval_model=gpt-o4-mini`
+- `max_steps=100`
+- `thinking=false`
+- `thinking_level=minimal`
+- `flash_mode=true`
+- headed/xvfb browser
+
+Result:
+
+- 10 tasks completed.
+- 6 successful.
+- 179 total steps.
+- 598.589s total task duration.
+- 2 access denials.
+- 0 action errors.
+
+The task IDs were:
+
+- `1487`, `2397`, `1480`, `582`, `1426`, `2370`, `432`, `1371`,
+  `2656`, `232`.
+
+Important regression finding:
+
+- The earlier Rust candidate `kh774z293rn9qpnzgbvd7bfctn86p4a1`
+  succeeded all 10 of these task IDs.
+- The shortened flash/no-thinking prompt in `dbd7268` caused early Give
+  Up failures on `2397`, `1426`, `2370`, and `432`.
+- Therefore the prompt-shortening part of `dbd7268` was not safe enough
+  for release evaluation, even though it reduced verbosity.
+
+Corrective action:
+
+- Restore the previous grounded flash prompt.
+- Keep the safer pending-tool-call finalization guard, because it
+  targets a concrete one-step failure mode without removing the
+  grounding/state instructions that helped the older Rust run.
+- Do not launch a full 198-task run from `dbd7268`.
