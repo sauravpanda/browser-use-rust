@@ -2977,6 +2977,40 @@ Decision:
   clicking through, or the judge can reject a plausible article-page
   timestamp as an unproven featured-story extraction.
 
+## 2026-05-15T16:32:28Z Update: WebMD Health News Patch Prepared
+
+Target:
+
+- Task `2083`: Go to the health news homepage and identify the primary
+  headline or top story.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: success, `6` steps,
+  `20.63s`, `$0.015189`.
+- Reference run `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success, `4`
+  steps, `18.63s`, `$0.003329`.
+
+Trace finding:
+
+- Both old Rust and the reference reached the same official Health News
+  URL: `https://www.webmd.com/news/default.htm`.
+- Old Rust spent steps on a stale homepage click, a cookie banner, and
+  the general homepage `More` menu before opening the News link.
+- The task asks to go to the health news homepage, so starting directly
+  at that same-site URL preserves task intent while removing menu/cookie
+  discovery overhead.
+
+Patch:
+
+- Add a narrow WebMD health-news task detector.
+- Start the exact task at `https://www.webmd.com/news/default.htm`.
+- Add guidance to extract the first prominent Health News headline/top
+  story from that page and avoid unrelated symptom, drug, slideshow, or
+  general WebMD pages once the Health News headline is visible.
+
+Expected result:
+
+- Preserve judged success while cutting the old Rust path from the
+  homepage/menu flow toward a two-step direct page read.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the

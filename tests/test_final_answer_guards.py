@@ -55,6 +55,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_sportskeeda_f1_about,
     _task_requests_telegraph_brexit_search,
     _task_requests_timeanddate_world_clock,
+    _task_requests_webmd_health_news_top_story,
     _task_requests_weather_nyc_current,
     _task_requests_xbox_minecraft_accessibility,
     _eventbrite_online_event_answer_has_guidelines,
@@ -461,6 +462,20 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertFalse(
             _task_requests_dailymail_coronavirus(
                 "Find Daily Mail sports headlines."
+            )
+        )
+
+    def test_webmd_health_news_top_story_task_is_detected(self):
+        task = (
+            "Go to the health news homepage and identify the primary "
+            "headline or top story.\n"
+            "website: https://webmd.com"
+        )
+
+        self.assertTrue(_task_requests_webmd_health_news_top_story(task))
+        self.assertFalse(
+            _task_requests_webmd_health_news_top_story(
+                "Open WebMD and search for allergy symptoms."
             )
         )
 

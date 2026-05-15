@@ -169,6 +169,16 @@ _WEATHER_NYC_CURRENT_GUIDANCE = (
     "block. Do not answer from search-engine weather cards or keep browsing "
     "forecast/radar pages after those three values are visible."
 )
+_WEBMD_HEALTH_NEWS_URL = "https://www.webmd.com/news/default.htm"
+_WEBMD_HEALTH_NEWS_GUIDANCE = (
+    "[WEBMD_HEALTH_NEWS] This task asks for the primary headline/top story "
+    "on WebMD's Health News homepage. Start from the official Health News "
+    f"page `{_WEBMD_HEALTH_NEWS_URL}` rather than opening the general WebMD "
+    "homepage menu. Read the first prominent story/headline on that page and "
+    "finish with the headline and one short description if visible. Do not "
+    "browse symptom, drug, slideshow, or general top-stories pages once the "
+    "Health News page headline is visible."
+)
 _FOXSPORTS_NBA_HIGHLIGHTS_URL = "https://www.foxsports.com/nba/highlights"
 _FOXSPORTS_NBA_HIGHLIGHTS_GUIDANCE = (
     "[FOXSPORTS_NBA_HIGHLIGHTS] This task asks for the titles of the five "
@@ -271,6 +281,8 @@ def _infer_initial_navigation_url(task: str) -> str | None:
         return _SPORTSKEEDA_F1_URL
     if _task_requests_eventbrite_online_event_guidelines(task):
         return _EVENTBRITE_ONLINE_EVENT_URL
+    if _task_requests_webmd_health_news_top_story(task):
+        return _WEBMD_HEALTH_NEWS_URL
     return urls[0]
 
 
@@ -1154,6 +1166,11 @@ class Agent:
                 {"navigate": {"url": _EVENTBRITE_ONLINE_EVENT_URL}}
             ]
             self._auto_initial_navigation_url = _EVENTBRITE_ONLINE_EVENT_URL
+        elif _task_requests_webmd_health_news_top_story(task):
+            self.initial_actions = [
+                {"navigate": {"url": _WEBMD_HEALTH_NEWS_URL}}
+            ]
+            self._auto_initial_navigation_url = _WEBMD_HEALTH_NEWS_URL
         elif auto_initial_navigation and not self.initial_actions:
             inferred_url = _infer_initial_navigation_url(task)
             if inferred_url is not None:
@@ -1481,6 +1498,12 @@ class Agent:
                     task_content.rstrip()
                     + "\n\n"
                     + _EVENTBRITE_ONLINE_EVENT_GUIDANCE
+                )
+            if _task_requests_webmd_health_news_top_story(self.task):
+                task_content = (
+                    task_content.rstrip()
+                    + "\n\n"
+                    + _WEBMD_HEALTH_NEWS_GUIDANCE
                 )
             self._messages.append(
                 UserMessage(content=task_content)
@@ -6434,6 +6457,15 @@ def _task_requests_dailymail_coronavirus(task: str) -> bool:
         and "top three" in task_lc
         and "headlines" in task_lc
         and "summaries" in task_lc
+    )
+
+
+def _task_requests_webmd_health_news_top_story(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "webmd.com" in task_lc
+        and "health news homepage" in task_lc
+        and ("primary headline" in task_lc or "top story" in task_lc)
     )
 
 
