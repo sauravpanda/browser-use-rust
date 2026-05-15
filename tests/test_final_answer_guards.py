@@ -12,6 +12,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _looks_like_item_detail_list_final,
     _looks_like_late_pagination_final,
     _looks_like_past_dated_forward_answer,
+    _looks_like_pending_tool_action,
     _looks_like_search_result_query_mismatch_answer,
     _looks_like_search_host_final,
     _search_fallback_state_host,
@@ -257,6 +258,23 @@ class FinalAnswerGuardTests(unittest.TestCase):
 
         self.assertTrue(_looks_like_fabricated_blocked_answer(answer))
         self.assertTrue(_looks_like_unsupported_final_answer(task, answer))
+
+    def test_pending_tool_action_in_plain_text_is_flagged(self):
+        answer = (
+            "Direct access to sportskeeda.com is blocked by a 403 error.\n\n"
+            "Action: web_search(query='site:sportskeeda.com "
+            "\"About Formula 1\" section \"F1\"')"
+        )
+
+        self.assertTrue(_looks_like_pending_tool_action(answer))
+
+    def test_normal_answer_with_action_word_is_not_pending_tool_action(self):
+        answer = (
+            "The top article says the action plan was announced today, "
+            "and the page lists three follow-up items."
+        )
+
+        self.assertFalse(_looks_like_pending_tool_action(answer))
 
     def test_cookie_overlay_failure_final_is_flagged(self):
         task = (

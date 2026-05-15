@@ -367,25 +367,22 @@ def _compute_dom_metrics(snap: Any, dom_text: str) -> dict[str, Any]:
 FLASH_SYSTEM_PROMPT = """\
 You are an AI agent designed to operate in an iterative loop to automate browser tasks. Your ultimate goal is accomplishing the task provided in <user_request>.
 
-<browser_state>Elements: [N]<tag attrs>text. Only [indexed] elements are interactive. Lines starting with <tag> "..." are static text content (not clickable). Indented lines are children of the element above.</browser_state>
+<browser_state>Elements: [N]<tag attrs>text. Only [indexed] elements are interactive. Static text lines are page content. Indented lines are children of the element above.</browser_state>
 
 <action_rules>
-Check the browser state each step to verify your previous action achieved its goal. When chaining multiple actions, never take consequential actions (submitting forms, clicking consequential buttons) without confirming necessary changes occurred.
+Keep assistant text short. If you need a tool, call the tool; do not write a prose line like "Action: web_search(...)".
 
-Dynamic pages: if `[N]` returns "index not available" or "no longer present", do NOT retry [N] — the page state has shifted and that index is dead. Read the FRESH snapshot's [N] numbers and pick from those.
+You may call multiple tools in one step, but only chain actions whose arguments will remain valid. Do not batch type_text followed by a click; typing often changes the DOM. Use fresh [N] indices after page changes.
 
+If `[N]` returns "index not available" or "no longer present", do not retry that index. Use the fresh snapshot.
 
 For extraction tasks (find/list/answer): PREFER `extract_structured_data(query=...)` over scrolling and reading raw page_text. The extractor uses an LLM over the cleaned page — far more reliable than reasoning manually.
 
-On result/list pages, call `extract_result_cards(query=...)` first when
-you need titles, links, dates, snippets, or quick filter verification.
-It is deterministic and cheaper than an LLM extraction. Use
-`extract_structured_data` after that only when card text is missing or
-the answer requires synthesis.
+On result/list pages, call `extract_result_cards(query=...)` first when you need titles, links, dates, snippets, or quick filter verification. Use `extract_structured_data` after that only when card text is missing or synthesis is required.
 
-LOCATE-THEN-EXTRACT: when the task names a specific NAMED section/category/page that is likely to exist as a navigable region ("Politics", "Reviews", "About", "Technology category"), first narrow scope by clicking that section/category/page or by including that named region in the extraction query.
+When the task names a specific section/category/page ("Politics", "Reviews", "About", "Technology category"), first narrow scope by clicking that section/category/page or include it in the extraction query.
 
-For time windows ("past week", "current week", "today", "latest", "most recent"), counts ("top 3", "first 5", "next three"), prices/attributes ("under $100", "with private pool"), do NOT search for the filter text as a section. Instead inspect the current results/list, use visible sort/filter controls if present, and extract matching items from the list.
+For time windows ("past week", "today", "latest", "most recent"), counts ("top 3", "first 5"), prices/attributes ("under $100"), do not treat the filter text as a section. Inspect the results/list, use visible filters if present, and extract matching items.
 
 For multi-page tasks: use the file system. write_file("notes.md", content) saves partial extractions; replace_file_str("todo.md", "[ ]", "[x]") tracks progress; the file survives history collapse.
 
@@ -393,19 +390,11 @@ Finalize via `done(text="<your answer>", success=true|false)`. Set success=true 
 </action_rules>
 
 <blocked_sites>
-If the target site returns 403 / Cloudflare bot-detection / Turnstile / login wall / paywall, do NOT retry the same URL and do NOT invent content. Required fallbacks in order: (1) `web_search(query=...)` — search engine snippets often contain the answer; (2) try alternative endpoints (mobile.* / m.* / /amp/ / sitemap / RSS); (3) if still blocked after 2-3 attempts, set `success=False` and state what blocked you. When the task explicitly requires the target site's own search/filter/list/page, external search is only a way to discover same-site URLs or corroborate details; it does NOT satisfy the task by itself. Do not set `success=True` from search-engine snippets alone for those site-required tasks. Confidently-wrong fabricated answers fail the judge harder than honest "I was blocked" answers. CAPTCHAs auto-resolve — wait one turn before treating one as a hard block.
+If the target site returns 403 / access denied / Cloudflare / Turnstile / login wall / paywall, do not retry the same URL and do not invent content. Fallbacks: (1) call `web_search(query=...)`; (2) try same-site alternatives such as mobile.*, m.*, /amp/, sitemap, or RSS; (3) if still blocked after 2-3 attempts, call done(success=false) and state what blocked you. If the task requires the target site's own search/filter/list/page, search snippets are only discovery/corroboration and do not satisfy the task by themselves. CAPTCHAs auto-resolve; wait one turn before treating one as a hard block.
 </blocked_sites>
 
-<state_emission>
-On every turn that calls a tool, prefix your message with three short XML blocks so progress survives history compaction:
-  <evaluation_previous_goal>Did your last action achieve what you intended? Yes/Partial/No + 1 sentence.</evaluation_previous_goal>
-  <memory>Key facts you've learned so far that are NOT in the current page snapshot — running list of items collected, filters applied, search queries tried, things ruled out. Keep under 5 lines.</memory>
-  <next_goal>What you're trying to do next, in one short sentence.</next_goal>
-These blocks are automatically extracted and re-injected on subsequent turns so you don't lose context when older messages get collapsed. Skip them only on the final-answer turn.
-</state_emission>
-
 <read_state_lifecycle>
-Large results from page_text, get_text, get_links, and read_file appear in <read_state> for the next 2 steps only. Use them for reasoning, then save anything you'll need later into <memory> before they disappear. The full result is retrievable via read_file("results/<filename>.txt") using the path from the result's reference stub (offset/max_chars supported for paging), but each retrieval costs a step. Do not assume <read_state> persists beyond the 2-step window.
+Large results from page_text, get_text, get_links, and read_file appear in <read_state> for the next 2 steps only. Save important multi-step findings with write_file if needed.
 </read_state_lifecycle>
 
 <output>
@@ -872,15 +861,16 @@ class Agent:
             "max_actions_per_step", None,
         )
         self.images_per_step: int = int(_compat_kwargs.pop("images_per_step", 1))
-        # flash_mode swaps the system prompt to a terser, eval-style
-        # variant matching upstream's system_prompt_flash.md. v0.7.1.
-        # use_thinking is still no-op (no thinking-disabled variant yet).
+        # flash_mode/use_thinking=False swap the system prompt to a
+        # terser, eval-style variant matching upstream's fast/no-thinking
+        # behavior closely enough for the eval worker flags.
         self.flash_mode: bool = bool(_compat_kwargs.pop("flash_mode", False))
         _use_thinking = _compat_kwargs.pop("use_thinking", None)
-        if _use_thinking is not None and not _use_thinking:
+        self.use_thinking: bool = True if _use_thinking is None else bool(_use_thinking)
+        if _use_thinking is not None and not self.use_thinking:
             logger.info(
-                "agent: use_thinking=False received; we don't have a "
-                "no-thinking template yet. Using the standard prompt.",
+                "agent: use_thinking=False received; using terse "
+                "tool-first prompt.",
             )
         # Tool source: explicit tools= wins, then controller=, then defaults.
         controller = _compat_kwargs.pop("controller", None)
@@ -951,12 +941,15 @@ class Agent:
         if override_system_message is not None:
             self.system_prompt = override_system_message
         else:
-            # flash_mode (eval default in many setups) selects the
-            # terser, upstream-matching prompt. Otherwise our richer
-            # default. v0.7.1.
+            # flash_mode and use_thinking=False select the terser,
+            # upstream-style prompt. Otherwise use the richer default.
             base_prompt = (
                 system_prompt
-                or (FLASH_SYSTEM_PROMPT if self.flash_mode else DEFAULT_SYSTEM_PROMPT)
+                or (
+                    FLASH_SYSTEM_PROMPT
+                    if self.flash_mode or not self.use_thinking
+                    else DEFAULT_SYSTEM_PROMPT
+                )
             )
             self.system_prompt = base_prompt
             # Inject available_file_paths so the agent knows what files
@@ -1097,6 +1090,11 @@ class Agent:
         # Reset state when add_new_task() rotates the agent into a new
         # task so the guard works on the next task too.
         self._done_count_check_fired: bool = False
+        # Guard against Gemini occasionally writing a planned tool call
+        # as prose ("Action: web_search(...)") and then ending the turn
+        # with no actual tool call. We nudge at most twice to avoid
+        # creating an infinite finalization loop.
+        self._pending_action_final_nudges: int = 0
         # Track selectors seen in the previous snapshot. Used to mark
         # NEW elements (those whose selector wasn't in the prior step's
         # snapshot) with a `*` prefix in the next page-state injection.
@@ -1317,6 +1315,7 @@ class Agent:
 
     async def add_new_task(self, new_task: str) -> None:
         """Append a follow-up user instruction. Next run() picks it up."""
+        self._pending_action_final_nudges = 0
         self._messages.append(
             UserMessage(content=_task_message_with_runtime_context(new_task))
         )
@@ -1810,6 +1809,45 @@ class Agent:
                     candidate_done_text,
                     state_summary.url,
                 )
+                if (
+                    done_text
+                    and step_n < max_steps
+                    and self._pending_action_final_nudges < 2
+                    and _looks_like_pending_tool_action(candidate_done_text)
+                ):
+                    self._pending_action_final_nudges += 1
+                    logger.info(
+                        "agent: PENDING_ACTION_FINAL nudge at step %d "
+                        "(nudge=%d)",
+                        step_n,
+                        self._pending_action_final_nudges,
+                    )
+                    self._messages.append(
+                        AssistantMessage(text=done_text, tool_calls=[])
+                    )
+                    self._messages.append(
+                        UserMessage(
+                            content=(
+                                "[PENDING_ACTION] Your last message "
+                                "described a tool call but did not execute "
+                                "it. If you need that action, call the tool "
+                                "now with real arguments. If you already "
+                                "have enough evidence, finalize with "
+                                "`done(...)`. Do not write `Action:` in "
+                                "plain text."
+                            )
+                        )
+                    )
+                    self._append_history(
+                        state_summary,
+                        AgentOutput(text=done_text, tool_calls=[]),
+                        [ActionResult(extracted_content=done_text, is_done=False)],
+                        t0,
+                        step_n,
+                    )
+                    if on_step_end is not None:
+                        await _maybe_await(on_step_end())
+                    continue
 
                 # Self-validation intercept: on the FIRST proposed
                 # answer, append the validation prompt and let the LLM
@@ -5174,6 +5212,59 @@ def _looks_like_unsupported_final_answer(
         or _looks_like_search_host_final(task, final_url)
         or _looks_like_late_pagination_final(task, final_url)
         or _looks_like_item_detail_list_final(task, final_url)
+    )
+
+
+_PENDING_ACTION_TOOL_NAMES = (
+    "click",
+    "done",
+    "extract_result_cards",
+    "extract_structured_data",
+    "find_elements",
+    "get_links",
+    "get_text",
+    "grep_scratchpad",
+    "navigate",
+    "page_text",
+    "read_file",
+    "read_scratchpad",
+    "scroll",
+    "scroll_to_bottom",
+    "search_page",
+    "type_text",
+    "web_search",
+    "write_file",
+)
+_PENDING_ACTION_TOOL_PATTERN = "|".join(
+    re.escape(name) for name in _PENDING_ACTION_TOOL_NAMES
+)
+_PENDING_ACTION_LINE_RE = re.compile(
+    rf"(?im)^\s*(?:next\s+)?(?:action|tool|tool call|call)\s*:\s*`?\s*"
+    rf"(?:{_PENDING_ACTION_TOOL_PATTERN})\s*\("
+)
+_PENDING_ACTION_INTENT_RE = re.compile(
+    rf"(?i)\b(?:i\s+(?:will|should|need to)|next(?:,|\s)|now)\s+"
+    rf"(?:call|use|run|try)\s+`?(?:{_PENDING_ACTION_TOOL_PATTERN})\b"
+)
+_PENDING_ACTION_BARE_CALL_RE = re.compile(
+    rf"(?im)^\s*[-*]?\s*`?(?:{_PENDING_ACTION_TOOL_PATTERN})\s*\("
+)
+
+
+def _looks_like_pending_tool_action(text: str) -> bool:
+    """True when a would-be final answer is actually a tool-call plan.
+
+    Gemini sometimes emits no tool calls and writes prose such as
+    ``Action: web_search(query='...')``. Treating that as final produces
+    a one-step false answer; it should be nudged into a real tool call.
+    """
+    compact = str(text or "").strip()
+    if not compact:
+        return False
+    return bool(
+        _PENDING_ACTION_LINE_RE.search(compact)
+        or _PENDING_ACTION_BARE_CALL_RE.search(compact)
+        or _PENDING_ACTION_INTENT_RE.search(compact)
     )
 
 

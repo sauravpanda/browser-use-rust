@@ -369,3 +369,143 @@ Compare against the reference on:
 - Local failed-task reruns remain blocked by missing local `.env`.
 - PostHog dataset experimentation has tooling but still needs the
   relevant local credentials/env configured.
+
+## 2026-05-15T00:53:04Z Update: Stronger Reference Run
+
+A newer reference run changed the target:
+
+- New reference run: `kh7b4qp4610am5s99j7e3bzy0d86rfwn`
+- Previous candidate run: `kh774z293rn9qpnzgbvd7bfctn86p4a1`
+- Upstream commit: `933e28c599ddd74c15a48568f159da95547e40dd`
+- Test case: `WebBench_READ_v5`
+- Model: `gemini-3-flash-preview`
+- New reference user message: `main + python`
+
+New reference summary:
+
+| Metric | New reference `kh7b4...` |
+| --- | ---: |
+| Total tasks | 198 |
+| Successful tasks | 144 |
+| Success rate | 72.7273% |
+| Failed tasks | 54 |
+| Average cost | $0.035510 |
+| Total cost | $6.107656 |
+| Cost coverage | 172 / 198 |
+| Average steps | 12.261628 |
+| P90 steps | 22 |
+| Average duration | 64.894574s |
+| Action errors | 10 |
+| Access denied count | 29 |
+
+Comparison of the previous Rust candidate against this newer reference:
+
+| Metric | New reference `kh7b4...` | Rust candidate `kh774...` | Candidate delta |
+| --- | ---: | ---: | ---: |
+| Successful tasks | 144 / 198 | 143 / 198 | -1 |
+| Success rate | 72.7273% | 72.2222% | -0.51 pp |
+| Failed tasks | 54 | 55 | +1 |
+| Average cost | $0.035510 | $0.064083 | +$0.028573 |
+| Average cost ratio | 1.0000 | 1.8046 | +80.46% |
+| Average steps | 12.261628 | 17.227273 | +4.965645 |
+| P90 steps | 22 | 39 | +17 |
+| Average duration | 64.894574s | 73.062986s | +8.168412s |
+| Action errors | 10 | 13 | +3 |
+| Access denied count | 29 | 34 | +5 |
+
+Interpretation:
+
+- The prior candidate beats the older `kh74...` reference but does not
+  beat the newer `kh7b4...` reference.
+- A 20% improvement over the newer reference would mean roughly 173
+  successful tasks if interpreted as relative success count, average cost
+  at or below about `$0.028408`, average steps at or below about `9.81`,
+  and average duration at or below about `51.92s`.
+- The newer reference is already much cheaper and shorter than the older
+  reference, so matching hidden config is now the first thing to verify
+  before drawing conclusions from code behavior.
+
+Worker log learning:
+
+- `/api/getRun` still does not expose all important config.
+- GitHub worker logs showed the new reference used `xvfb-run`, not
+  headless browser mode.
+- The new reference worker command used `--max-steps 100`.
+- The new reference worker command used both `--no-thinking` and
+  `--thinking-level minimal`.
+- The new reference worker command used
+  `--eval-model gpt-o4-mini`, not `gemini-3-flash-preview`.
+- The new reference worker command used
+  `--judge-type ComprehensiveV1`, `--max-actions-per-step 4`,
+  `--judge-repeat-count 1`, `--browser local`, `--images-per-step 1`,
+  and `--use-vision`.
+- The new reference did not install `browser-use-rs`; it was an upstream
+  Python run.
+
+Config corrections to preserve:
+
+- The developer attribution should be Saurav, not Alex.
+- Do not pass literal `developer_id="saurav"` or
+  `developerId="saurav"` to `/api/startRun`; the platform expects an
+  internal Convex id.
+- Use the developer key identity instead of hard-coding a readable
+  developer name in API payloads.
+- Keep the run configuration exactly aligned with the reference before
+  comparing results.
+- Use `max_steps=100`, not `35`.
+- Use `thinking_level=minimal`.
+- For a fair run against the newer reference, also set the workflow
+  thinking flag to false so the worker emits `--no-thinking`.
+- Use `eval_model=gpt-o4-mini` when matching the newer reference.
+
+Failure-set learning:
+
+- The old Rust candidate failed 24 tasks that the newer Python reference
+  passed.
+- The old Rust candidate passed 23 tasks that the newer Python reference
+  failed.
+- Both runs failed 31 tasks.
+- This means the previous patch traded wins and regressions rather than
+  strictly dominating the newer reference.
+
+Fast next debugging targets:
+
+- Focus first on candidate regressions where the Rust run failed quickly
+  but the newer reference succeeded, because those are likely config,
+  guard, or extraction issues rather than hard site blocks.
+- High-cost candidate failures such as Rent.com and IMDb point to
+  expensive Give Up loops; tightening blocked/search-loop exits could
+  reduce cost and time, but must be checked against success regressions.
+- Run a small eval with `eval_model=gpt-o4-mini`, `thinking=false`,
+  `thinking_level=minimal`, headed/xvfb, and `max_steps=100` before
+  paying for another full 198-task release.
+
+## 2026-05-15T00:58:45Z Update: Rust Patch For New Reference
+
+Two concrete code lessons came from comparing failed Rust tasks against
+the newer Python reference:
+
+- The Rust candidate sometimes treated prose like
+  `Action: web_search(query=...)` as a final answer instead of executing
+  the tool. Task `1582` failed after one step this way, while the
+  reference recovered through external search/archive evidence.
+- The eval worker's `--no-thinking --flash-mode` path is materially
+  cheaper in upstream Python because it uses a terse fast prompt. The
+  Rust agent previously accepted `use_thinking=False` but still used a
+  verbose flash prompt with XML state emission.
+
+Patch added after this finding:
+
+- Flash/no-thinking mode now uses a shorter tool-first prompt and no
+  required XML state-emission block.
+- Plain-text finalization now detects pending tool-call prose and nudges
+  the model to call the actual tool instead of committing the text as
+  final.
+- Added final-answer guard tests for pending tool-call prose.
+
+Local verification:
+
+- `python3 -m unittest tests.test_final_answer_guards -q`
+- `python3 -m compileall -q python/browser_use_rs tests bench`
+- `python3 -m unittest discover -s tests -q`
+- `git diff --check`
