@@ -3767,6 +3767,48 @@ Configuration:
   `proxyless=true`, `parallel_runs=1`.
 - No literal `developerId` was sent in `/api/startRun`.
 
+## 2026-05-15T13:21:18Z Update: Viator Targeted Eval Rejected
+
+Targeted run:
+
+- Run `kh720b6j4bx2ppn8mabyx5mdyx86rkp5`, workflow `25919815330`,
+  commit `0b75717916b4c6022d9172471ca6395242f6d30d`.
+- Command confirmed in GitHub logs:
+  `xvfb-run`, `--model gemini-3-flash-preview`,
+  `--eval-model gpt-o4-mini`, `--max-steps 100`,
+  `--start 150`, `--end 151`, `--max-actions-per-step 4`,
+  `--judge-repeat-count 1`, `--test-case WebBench_READ_v5`,
+  `--proxyless`, `--judge-type ComprehensiveV1`, `--no-thinking`,
+  `--thinking-level minimal`, `--flash-mode`, `--browser local`,
+  `--images-per-step 1`, `--use-vision true`, `--agent-type Agent`.
+- Platform caveat repeated: `/api/getRunResults` returned the real
+  Viator row plus an empty CDC row; use the task `2040` row.
+
+Result for task `2040`:
+
+- Judge/self-report: failed / `success=false`.
+- Steps: `23` vs old Rust `20` and reference `4`.
+- Duration: `114.40s` vs old Rust `83.94s` and reference `16.87s`.
+- Cost: `$0.107283` vs old Rust `$0.065906` and reference `$0.014809`.
+- Access denied/action errors/tool failures: `1/0/0`.
+
+Trace proof:
+
+- The Viator nudge fired at step `1`, and the run navigated to the direct
+  search URL at step `2`.
+- Viator still showed the verification wall. Despite the nudge telling it
+  not to spend many turns on alternate engines/sites, Gemini spent the
+  rest of the run on DuckDuckGo, All-American Atlas, and mobile Viator.
+- The final answer lacked exact Viator prices and was judged failed.
+
+Decision:
+
+- Reject the patch. It was worse than both old Rust and the reference on
+  success, steps, duration, and cost.
+- Revert the Viator code/test hook; keep this learning entry so future
+  attempts avoid this direct-URL-only approach unless the blocked-site
+  stopping behavior is strengthened first.
+
 ## 2026-05-15T13:13:04Z Update: GetYourGuide Targeted Eval Completed
 
 Targeted run:
@@ -3841,6 +3883,25 @@ Expected result:
 - Avoid the old CAPTCHA/search-engine tail if the direct results URL
   loads, and fail honestly rather than spending many turns on alternate
   sites if Viator blocks access.
+
+## 2026-05-15T13:15:40Z Update: Viator Targeted Eval Launched
+
+Targeted run:
+
+- Run `kh720b6j4bx2ppn8mabyx5mdyx86rkp5`, workflow `25919815330`,
+  commit `0b75717916b4c6022d9172471ca6395242f6d30d`.
+- Dataset range: `start_index=150`, `end_index=151`, task `2040`.
+- User message: `bu-rust viator-orlando targeted no-thinking gpt-o4-mini`.
+
+Configuration:
+
+- `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking_level=minimal`, headed
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
 
 ## 2026-05-15T13:07:14Z Update: Flickr Targeted Eval Completed
 

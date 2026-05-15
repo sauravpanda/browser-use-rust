@@ -47,7 +47,6 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_getyourguide_paris_popular,
     _task_requests_metacritic_low_score_tv,
     _task_requests_newegg_review_bytes,
-    _task_requests_viator_orlando_family,
     _task_requests_xbox_minecraft_accessibility,
 )
 from browser_use_rs.llm.base import ToolCall  # noqa: E402
@@ -478,20 +477,6 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertFalse(
             _task_requests_getyourguide_paris_popular(
                 "Find GetYourGuide activities in Rome."
-            )
-        )
-
-    def test_viator_orlando_family_task_is_detected(self):
-        task = (
-            "Search for family-friendly experiences in Orlando, FL, and "
-            "list the top three tours along with their prices and customer "
-            "ratings.\nwebsite: https://viator.com"
-        )
-
-        self.assertTrue(_task_requests_viator_orlando_family(task))
-        self.assertFalse(
-            _task_requests_viator_orlando_family(
-                "Search Viator for adult nightlife tours in Miami."
             )
         )
 
