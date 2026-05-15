@@ -2878,3 +2878,70 @@ Decision:
   `cargo check -p bu-py`, `cargo test -p bu-browser`,
   `git diff --check`, and
   `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`.
+
+## 2026-05-15T11:31:02Z Update: Metacritic Detail-Timeout Retest Launched
+
+- Commit: `572dd7367efc0633df34ddec54600073c878244a`.
+- Dashboard run: `kh79rwyswrz4rs1ae66bhnq8h586s26y`.
+- GitHub workflow: `25915506618`.
+- Dataset range remains `start=191`, `end=192`, task `1145`.
+- Config is unchanged from the first Metacritic targeted run:
+  `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking_level=minimal`, headed
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`.
+- No literal `developerId` was sent in `/api/startRun`.
+
+Expected result:
+
+- Preserve success.
+- Reduce or eliminate the three `30s` direct-navigation timeouts from
+  run `kh72sh0vt1v2k1m5s19zeq8v2d86sj3h`.
+- Keep only if it remains successful and improves the first targeted
+  run on duration without giving back the step/cost gains.
+
+## 2026-05-15T11:37:51Z Update: Metacritic Detail-Timeout Retest Rejected
+
+Targeted run:
+
+- Run `kh79rwyswrz4rs1ae66bhnq8h586s26y`, workflow `25915506618`,
+  commit `572dd7367efc0633df34ddec54600073c878244a`.
+- Command confirmed in GitHub logs with the same reference-aligned
+  shape: `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `--max-steps 100`, `--start 191`, `--end 192`, `--no-thinking`,
+  `--thinking-level minimal`, headed local browser,
+  `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`.
+
+Result for task `1145`:
+
+- Judge/self-report: success / `success=true`.
+- Steps: `16` vs first targeted `12`, old Rust `99`, and reference `22`.
+- Duration: `188.36s` vs first targeted `168.76s`, old Rust `838.10s`,
+  and reference `96.85s`.
+- Cost: `$0.068236` vs first targeted `$0.053351`, old Rust
+  `$0.435472`, and reference `$0.097744`.
+- Action errors/access denied/tool failures: `4/0/0`.
+
+Trace learning:
+
+- The stronger wording did not prevent direct detail navigations.
+- It also introduced worse browse behavior: the first `page=142`
+  navigation timed out, the agent moved to `page=130`, and it still
+  used direct candidate-page `navigate(...)` calls with timeouts.
+
+Decision:
+
+- Reject the detail-timeout tightening and revert only that nudge
+  wording.
+- Keep the original Metacritic tail nudge from commit `12f51bf`, because
+  it preserved success and is better than both old Rust and this retest
+  on steps, duration, and cost.
+- `2026-05-15T11:39Z`: full local verification passed after reverting
+  the wording: `python3 -m unittest discover -s tests -q`,
+  `python3 -m compileall -q python/browser_use_rs tests bench`,
+  `cargo check -p bu-py`, `cargo test -p bu-browser`,
+  `git diff --check`, and
+  `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`.
