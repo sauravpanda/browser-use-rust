@@ -2736,6 +2736,44 @@ Configuration:
   `proxyless=true`, `parallel_runs=1`.
 - No literal `developerId` was sent in `/api/startRun`.
 
+## 2026-05-15T16:05:32Z Update: Eventbrite Targeted Eval Result
+
+Result for task `460`:
+
+- Run `kh751km428cf4xc47gx4fbczzs86rs0s`, workflow `25927795290`,
+  commit `c0412b7de510d250c56ff0f6605b70e295893bba`.
+- Judge/self-report: success / success; score `1.0`.
+- Steps: `2` vs old Rust `12` and reference `9`.
+- Duration: `11.53s` vs old Rust `39.30s` and reference `36.57s`.
+- Cost: `$0.010434` vs old Rust `$0.037415` and reference `$0.020416`.
+- Tokens: `24,459` reported by the platform; usage total tokens
+  `26,939`; model `gemini-3-flash-preview`.
+
+Trace proof:
+
+- Workflow command confirmed the intended config: `BU_RUNTIME=rs`,
+  browser-use-rs, headed `xvfb-run`,
+  `--model gemini-3-flash-preview`, `--eval-model gpt-o4-mini`,
+  `--max-steps 100`, `--start 158`, `--end 159`,
+  `--max-actions-per-step 4`, `--judge-repeat-count 1`,
+  `--test-case WebBench_READ_v5`, `--proxyless`,
+  `--judge-type ComprehensiveV1`, `--no-thinking`,
+  `--thinking-level minimal`, `--flash-mode`, `--browser local`,
+  `--images-per-step 1`, `--use-vision true`, and
+  `--agent-type Agent`.
+- The judge accepted that the agent navigated to the correct Eventbrite
+  Help Center article and extracted the online-event setup steps and
+  recommendations.
+
+Decision:
+
+- Keep the patch. It preserves judged success and beats the reference by
+  `77.8%` fewer steps, `68.5%` lower duration, and `48.9%` lower cost.
+- Learning: for stable Help Center tasks, direct navigation to the
+  canonical article plus a validation-skip phrase guard can convert a
+  multi-step search path into a two-step answer without losing source
+  quality.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
