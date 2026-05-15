@@ -2809,6 +2809,28 @@ Expected result:
 - Preserve judged success while cutting the reference search path toward
   fewer than `6` steps and less than `$0.006842` cost.
 
+## 2026-05-15T16:07:59Z Update: Texas.gov Targeted Eval Launched
+
+Targeted run:
+
+- Run `kh7fxyzf3evf4c0ba5wzcpcnfx86secj`, workflow `25928108474`,
+  commit `eac490ec24e1e6290d36d7b44fa81998b9be4811`.
+- Dataset range: `start_index=126`, `end_index=127`, task `1772`.
+- User message:
+  `bu-rust texas-payments-faq targeted no-thinking gpt-o4-mini`.
+
+Configuration:
+
+- Same corrected object-shaped dispatch and minimal-thinking Gemini
+  config: `runtime=rs`, `gemini-3-flash-preview`,
+  `eval_model=gpt-o4-mini`, `max_steps=100`, `--no-thinking`,
+  `thinking_level=minimal`, headed local browser,
+  `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
