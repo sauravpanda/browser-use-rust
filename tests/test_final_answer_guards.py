@@ -20,7 +20,9 @@ from browser_use_rs.agent import (  # noqa: E402
     _looks_like_round_trip_answer_uses_one_way_only,
     _looks_like_search_result_query_mismatch_answer,
     _looks_like_search_host_final,
+    _southwest_one_way_deals_are_enough_for_roundtrip,
     _search_fallback_state_host,
+    _task_requests_southwest_roundtrip_deals,
     _looks_like_site_required_external_answer,
     _looks_like_stale_relative_date_answer,
     _looks_like_unmet_requested_data_answer,
@@ -364,6 +366,30 @@ class FinalAnswerGuardTests(unittest.TestCase):
         )
 
         self.assertFalse(_looks_like_round_trip_answer_uses_one_way_only(task, answer))
+
+    def test_southwest_one_way_deals_can_trigger_roundtrip_nudge(self):
+        task = (
+            "Browse the flight deals section for current round-trip offers "
+            "and identify two deals along with their travel dates. "
+            "website: https://www.southwest.com/"
+        )
+        extracted = (
+            "The webpage lists only one-way starting at prices. "
+            "Destination: Orlando, FL; Price: $139 one-way; Departing: 6/16. "
+            "Destination: Baltimore/Washington, MD; Price: $134 one-way; "
+            "Departing: 6/09."
+        )
+
+        self.assertTrue(_task_requests_southwest_roundtrip_deals(task))
+        self.assertTrue(_southwest_one_way_deals_are_enough_for_roundtrip(extracted))
+
+    def test_southwest_roundtrip_nudge_requires_prices_and_dates(self):
+        extracted = (
+            "The page mentions one-way starting fares for several routes, "
+            "but no visible dates or prices were present."
+        )
+
+        self.assertFalse(_southwest_one_way_deals_are_enough_for_roundtrip(extracted))
 
     def test_failed_consent_overlay_attempt_is_detected(self):
         calls = [

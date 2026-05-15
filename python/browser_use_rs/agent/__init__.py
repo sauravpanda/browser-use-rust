@@ -1152,6 +1152,7 @@ class Agent:
         self._consent_loop_url: str = ""
         self._consent_loop_count: int = 0
         self._consent_loop_nudged: bool = False
+        self._southwest_deals_roundtrip_nudged: bool = False
         # Running collapsed history of older steps. Each entry: a
         # one-line "<step N> <action> → <result-summary>" string.
         # Sourced from self._history items marked collapsed=True
@@ -2284,6 +2285,9 @@ class Agent:
             self._maybe_inject_consent_overlay_loop_nudge(
                 state_summary, completion.tool_calls, tool_results, step_n
             )
+            self._maybe_inject_southwest_deals_roundtrip_nudge(
+                state_summary, tool_results, step_n
+            )
 
             # All-error streak guard. Model can self-correct from one bad
             # turn; multiple in a row means it's stuck.
@@ -2712,6 +2716,50 @@ class Agent:
             self._consent_loop_count,
             current_url,
             direct_url or "",
+        )
+
+    def _maybe_inject_southwest_deals_roundtrip_nudge(
+        self,
+        state: BrowserStateSummary,
+        results: list[ActionResult],
+        step_n: int,
+    ) -> None:
+        if self._southwest_deals_roundtrip_nudged:
+            return
+        if not _task_requests_southwest_roundtrip_deals(self.task):
+            return
+        current_url = state.url or ""
+        if not _host_matches(current_url, "southwest.com"):
+            return
+        if "flight-deals" not in current_url and "special-offers" not in current_url:
+            return
+
+        text = "\n".join(
+            str(r.extracted_content or r.error or "")
+            for r in results
+            if r is not None
+        )
+        if not _southwest_one_way_deals_are_enough_for_roundtrip(text):
+            return
+
+        self._messages.append(
+            UserMessage(
+                content=(
+                    "[SOUTHWEST_FLIGHT_DEALS] The official Southwest flight "
+                    "deals page is listing current fares as one-way starting "
+                    "prices. If you have at least two official deals with "
+                    "route or destination, departure date, and one-way fare, "
+                    "do not burn steps in booking or Low Fare Calendar flows. "
+                    "Compute the round-trip starting total as 2x the listed "
+                    "one-way fare, state that derivation clearly, and finish."
+                )
+            )
+        )
+        self._southwest_deals_roundtrip_nudged = True
+        logger.info(
+            "agent: SOUTHWEST_FLIGHT_DEALS nudge at step %d (url=%s)",
+            step_n,
+            current_url,
         )
 
     def _format_action_line(
@@ -4963,6 +5011,40 @@ def _looks_like_epa_aqs_airnow_answer(
     if "airnow" in (text or "").lower():
         return True
     return _host_matches(final_url or "", "airnow.gov")
+
+
+def _task_requests_southwest_roundtrip_deals(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "southwest" in task_lc
+        and ("round-trip" in task_lc or "round trip" in task_lc)
+        and ("flight deals" in task_lc or "deals section" in task_lc)
+    )
+
+
+def _southwest_one_way_deals_are_enough_for_roundtrip(text: str) -> bool:
+    text_lc = (text or "").lower()
+    if "one-way" not in text_lc and "one way" not in text_lc:
+        return False
+    if "starting at" not in text_lc and "starts at" not in text_lc:
+        return False
+    prices = re.findall(r"\$\s*\d{2,4}(?:\.\d{2})?", text or "")
+    if len(prices) < 2:
+        return False
+    has_date = bool(
+        re.search(r"\bdepart(?:ing|ure)?\b", text_lc)
+        or re.search(r"\b\d{1,2}/\d{1,2}\b", text_lc)
+        or re.search(
+            r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b",
+            text_lc,
+        )
+    )
+    has_route_or_destination = bool(
+        re.search(r"\bto\b.{0,80}\$\s*\d", text_lc)
+        or "destination:" in text_lc
+        or "from " in text_lc
+    )
+    return has_date and has_route_or_destination
 
 
 def _looks_like_round_trip_answer_uses_one_way_only(task: str, text: str) -> bool:
