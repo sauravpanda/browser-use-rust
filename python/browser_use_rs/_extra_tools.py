@@ -1053,6 +1053,57 @@ def make_extra_tools(agent: Any) -> list:
             return None
         return full
 
+    async def _resolve_download(session: Any, path: str) -> str | None:
+        """Resolve files Chrome downloaded in this browser session.
+
+        `list_downloads` returns absolute browser download paths and
+        suggested filenames. Those files live outside the agent notes
+        sandbox, but they are user-visible artifacts produced by the
+        current session, so read_file should be able to inspect them.
+        Keep this deliberately narrow: only paths returned by
+        session.list_downloads(), or absolute paths under the session's
+        download directory, are allowed.
+        """
+        raw = str(path or "").strip()
+        if not raw:
+            return None
+        basename = os.path.basename(raw)
+        try:
+            rows = await session.list_downloads()
+        except Exception:
+            rows = []
+        for _guid, name, _url, state, _recv, _total, dpath in rows or []:
+            if state != "completed" or not dpath:
+                continue
+            candidates = {
+                str(dpath),
+                os.path.basename(str(dpath)),
+            }
+            if name:
+                candidates.add(str(name))
+            if raw in candidates or basename in candidates:
+                try:
+                    if os.path.isfile(dpath):
+                        return str(dpath)
+                except Exception:
+                    return None
+        if not os.path.isabs(raw):
+            return None
+        try:
+            download_dir = await session.download_dir()
+        except Exception:
+            download_dir = ""
+        if not download_dir:
+            return None
+        real_raw = os.path.realpath(raw)
+        real_download_dir = os.path.realpath(download_dir)
+        if (
+            real_raw == real_download_dir
+            or real_raw.startswith(real_download_dir + os.sep)
+        ) and os.path.isfile(real_raw):
+            return real_raw
+        return None
+
     @tool
     async def read_file(
         session, path: str, offset: int = 0, max_chars: int = 50_000,
@@ -1076,11 +1127,13 @@ def make_extra_tools(agent: Any) -> list:
         """
         full = _resolve(path)
         if not full or not os.path.isfile(full):
+            full = await _resolve_download(session, path)
+        if not full or not os.path.isfile(full):
             return f"(no such file: {path})"
         try:
             offset = max(0, int(offset or 0))
             cap = max(1, min(int(max_chars or 50_000), 200_000))
-            with open(full, "r", encoding="utf-8") as f:
+            with open(full, "r", encoding="utf-8", errors="replace") as f:
                 data = f.read()
             total = len(data)
             slice_ = data[offset : offset + cap]

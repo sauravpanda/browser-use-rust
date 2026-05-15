@@ -551,3 +551,31 @@ Corrective action:
   targets a concrete one-step failure mode without removing the
   grounding/state instructions that helped the older Rust run.
 - Do not launch a full 198-task run from `dbd7268`.
+
+## 2026-05-15T01:46:05Z Update: Downloaded Files
+
+Trace comparison for task `432` (EPA Los Angeles air quality) exposed a
+real tool mismatch:
+
+- The agent clicked the EPA data download link successfully.
+- `list_downloads` returned a completed `ad_aqi_tracker_data.csv` with
+  an absolute browser download path.
+- `read_file` then returned `(no such file: ...)` because it only
+  resolved files inside the agent notes sandbox.
+
+Patch:
+
+- `read_file` can now read completed files returned by
+  `session.list_downloads()`.
+- It also accepts the suggested download filename, such as
+  `ad_aqi_tracker_data.csv`.
+- General absolute filesystem reads remain blocked; absolute paths are
+  allowed only if they are a completed download from the current browser
+  session or live under the session's download directory.
+
+Local verification:
+
+- `python3 -m unittest tests.test_download_file_tools -q`
+- `python3 -m unittest discover -s tests -q`
+- `python3 -m compileall -q python/browser_use_rs tests bench`
+- `git diff --check`
