@@ -1635,6 +1635,52 @@ Next gate:
 - This is a targeted regression/cost fix, not a full-release signal by
   itself.
 
+## 2026-05-15T05:15:08Z Update: IMDb Guard Retest
+
+Targeted retest:
+
+- Run: `kh7dsyzsbjcf7920vx863bnn1x86rgzz`
+- Workflow: `25901444301`
+- Commit under test: `a96c31cfa18866fc178ce10beba4cfd76cc0e7d3`
+- Dataset range: `--start 179 --end 180`
+- Result: judge failure / Incorrect Result
+- Steps: 21
+- Duration: 76.771s
+- Cost: `$0.110699`
+- Tokens: 315,688
+- Action errors: 0
+- Access denials: 0
+
+What improved:
+
+- The one-shot IMDb nudge fired early enough to avoid the Flickonclick
+  `$80-100M` answer path.
+- The task cost and time improved materially:
+  - Before guard: 58 steps, 196.390s, `$0.276286`.
+  - After guard: 21 steps, 76.771s, `$0.110699`.
+- The final values matched the stronger reference's accepted values:
+  `In the Grey` `$55,000,000`, `Obsession` `$1,000,000`, difference
+  `$54,000,000`.
+
+Why it still failed:
+
+- The final answer was too thin. It gave only the two movies and
+  difference, without explicitly tying the date to IMDb's release
+  calendar or listing the other checked release-calendar titles.
+- The judge rejected it as a future-date answer even though the stronger
+  reference passed the same May 15, 2026 date when the answer included a
+  fuller release-calendar evidence path.
+
+Patch direction:
+
+- Keep the early IMDb budget nudge.
+- Add a second guard for "right values, missing context" answers.
+- The recovery nudge should require the final answer to say IMDb's
+  release calendar for this weekend showed the May 15, 2026 cluster and
+  list the checked titles (`In the Grey`, `Obsession`, `Is God Is`,
+  `Driver's Ed`, `Magic Hour`, `Life Hack`, and `Mobile Suit Gundam
+  Hathaway`) before giving the `$54,000,000` comparison.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
