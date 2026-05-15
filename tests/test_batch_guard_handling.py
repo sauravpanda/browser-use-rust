@@ -138,6 +138,56 @@ class BatchGuardHandlingTests(unittest.TestCase):
         self.assertIn("[LOOP_DETECTED]", loop_msg)
         self.assertLessEqual(len(loop_msg), 160)
 
+    def test_url_cycle_nudge_can_request_late_force_final_with_evidence(self):
+        agent = object.__new__(Agent)
+        agent._loop_nudge_cooldown = 0
+        agent._recent_action_sigs = []
+        agent._recent_urls = []
+        agent._recent_tool_names = []
+        agent._budget_warning_fired = True
+        agent._url_cycle_nudged = False
+        agent._url_cycle_force_fired = False
+        agent._messages = [
+            ToolResultMessage(
+                tool_call_id="extract-1",
+                name="extract_structured_data",
+                content="1. Alpha\n2. Beta\n3. Gamma",
+            )
+        ]
+
+        states = [
+            BrowserStateSummary(url="https://shop.example.com/new"),
+            BrowserStateSummary(url="https://shop.example.com/product/a"),
+        ]
+        for offset in range(6):
+            call = ToolCall(
+                id=f"click-{offset}",
+                name="click",
+                args={"index": offset},
+            )
+            reason = agent._maybe_inject_loop_nudge(
+                states[offset % 2], [call], step_n=20 + offset, max_steps=100
+            )
+
+        self.assertIsNone(reason)
+        self.assertIn("[URL_CYCLE]", agent._messages[-1].content)
+
+        reason = None
+        for offset in range(6, 12):
+            call = ToolCall(
+                id=f"click-{offset}",
+                name="click",
+                args={"index": offset},
+            )
+            reason = agent._maybe_inject_loop_nudge(
+                states[offset % 2], [call], step_n=50 + offset, max_steps=100
+            )
+            if reason:
+                break
+
+        self.assertIsNotNone(reason)
+        self.assertIn("cycled", reason)
+
     def test_batch_failed_nudge_is_bounded(self):
         agent = object.__new__(Agent)
         agent._messages = []

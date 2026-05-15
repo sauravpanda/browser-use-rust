@@ -2108,3 +2108,59 @@ Local verification:
 - `cargo test -p bu-browser`
 - `git diff --check`
 - `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`
+
+## 2026-05-15T07:13:16Z Update: Validation Skip Helps, Zara Exposes URL Cycle Tail
+
+Canary evals on commit `ed9e4991f808be8b10bf4abbc156e1d8b05d400c`:
+
+- Zara task `2226`, run `kh7e90y5p0pdb8syk6g4578myn86s1cc`,
+  workflow `25904798228`, dataset `10..11`:
+  - Result: success, but bad tail.
+  - Steps: 97
+  - Duration: 420.094s
+  - Cost: `$0.410597`
+  - Trace: the agent looped through repeated product/list clicks and
+    scrolls. The new validation-skip guard was not the cause: final
+    `done` happened long after the last evidence call, and the trace
+    had no early `done -> validation -> done` pattern to remove.
+- PRNewswire task `1383`, run `kh73py9xv1c09t3fb267xzk8n186s4n0`,
+  workflow `25905245035`, dataset `21..22`:
+  - Result: success.
+  - Steps: 10 vs previous current-slice 14.
+  - Duration: 33.870s vs previous current-slice 53.008s.
+  - Cost: `$0.038438` vs previous current-slice about `$0.0738`.
+  - Reference for this task remains better at 6 steps / about
+    `$0.0157`, so this is a meaningful current-candidate improvement
+    but not enough to beat the reference.
+
+Learning:
+
+- Skipping validation after fresh evidence works on traces where the
+  agent extracts evidence and immediately calls `done`.
+- A single noisy canary can be misleading. Zara regressed badly, but
+  trace inspection showed a URL/action-cycle tail, not validation-skip
+  behavior.
+- The next tail-control lever should catch repeated list/detail URL
+  cycles that evade strict action-signature loop detection because the
+  clicked indices or URLs alternate.
+
+Patch:
+
+- Added a conservative `[URL_CYCLE]` guard in the loop detector.
+- It nudges after the browser cycles among the same few URLs with
+  navigation-only actions.
+- It only requests a force-final after step 50 and only when recent
+  read/extract evidence exists, so normal short successful traces are
+  unaffected.
+- Added a regression test proving the guard nudges first, then returns
+  a force-final reason only for a late cycle with extraction evidence.
+
+Local verification:
+
+- `python3 -m unittest tests.test_batch_guard_handling tests.test_done_count_helpers tests.test_prompt_metrics -q`
+- `python3 -m compileall -q python/browser_use_rs tests bench`
+- `python3 -m unittest discover -s tests -q`
+- `cargo check -p bu-py`
+- `cargo test -p bu-browser`
+- `git diff --check`
+- `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`
