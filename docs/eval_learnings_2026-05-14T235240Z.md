@@ -4251,6 +4251,36 @@ Expected result:
 - Avoid one model-driven navigation step and reduce prompt/cost while
   preserving the accepted five-result Flickr answer.
 
+## 2026-05-15T18:35:32Z Update: Flickr Direct Search Eval Completed
+
+Targeted run:
+
+- Run `kh751kezqrspb128rqxyrhdqjd86szzk`, workflow `25934679924`,
+  commit `c57a128927f9f36eb6cc1c6f9b16110978908d1f`.
+- Dataset range: `start_index=130`, `end_index=131`, task `537`.
+- User message: `bu-rust flickr-direct-search targeted no-thinking
+  gpt-o4-mini`.
+- First result fetch hit a transient HTTP `500`; retry returned the task
+  row successfully.
+
+Result:
+
+- Judge/self-report: success / `success=true`.
+- Steps: `6` vs kept patch `5`, old Rust `16`, and reference `5`.
+- Duration: `24.58s` vs kept patch `17.51s`, old Rust `54.77s`, and
+  reference `24.40s`.
+- Cost: `$0.028473` vs kept patch `$0.024927`, old Rust `$0.073572`,
+  and reference `$0.016284`.
+
+Decision:
+
+- Reject the code patch. Starting directly at Flickr search preserved
+  correctness but increased steps, duration, and cost versus the kept
+  nudge-only patch.
+- Restore the previous Flickr nudge-only behavior. For this task, pushing
+  direct search into initial actions appears to increase page-state prompt
+  cost and does not remove the remaining result-loading/scroll overhead.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the

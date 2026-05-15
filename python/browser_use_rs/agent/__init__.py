@@ -263,17 +263,6 @@ _EBAY_USED_LAPTOPS_GUIDANCE = (
     "that it was added. Do not spend steps reopening the filter panel or "
     "manually editing the search box when the filtered result list is visible."
 )
-_FLICKR_SUNSET_SEARCH_URL = "https://www.flickr.com/search/?text=sunset"
-_FLICKR_SUNSET_SEARCH_GUIDANCE = (
-    "[FLICKR_SUNSET_SEARCH] This task only needs the first five Flickr photo "
-    "results for sunset with title and username. Start from the direct search "
-    f"URL `{_FLICKR_SUNSET_SEARCH_URL}`; the `?tags=sunset` page can trigger "
-    "a consent-overlay tail and inconsistent tagged ordering. If a cookie "
-    "banner blocks the page, dismiss it once, then extract the first five "
-    "visible photo cards from the search results and finish. Do not keep "
-    "scrolling or re-extracting after the first five titles and usernames "
-    "are visible."
-)
 _GETYOURGUIDE_HOME_URL = "https://www.getyourguide.com/"
 _GETYOURGUIDE_PARIS_URL = "https://www.getyourguide.com/paris-l16/"
 _GETYOURGUIDE_PARIS_GUIDANCE = (
@@ -411,8 +400,6 @@ def _infer_initial_navigation_url(task: str) -> str | None:
         return _ULTA_HAIR_ALL_URL
     if _task_requests_ebay_used_laptops_buy_now(task):
         return _EBAY_USED_LAPTOPS_FILTERED_URL
-    if _task_requests_flickr_sunset_search(task):
-        return _FLICKR_SUNSET_SEARCH_URL
     if _task_requests_getyourguide_paris_popular(task):
         return _GETYOURGUIDE_PARIS_URL
     return urls[0]
@@ -1333,11 +1320,6 @@ class Agent:
                 {"navigate": {"url": _EBAY_USED_LAPTOPS_FILTERED_URL}}
             ]
             self._auto_initial_navigation_url = _EBAY_USED_LAPTOPS_FILTERED_URL
-        elif _task_requests_flickr_sunset_search(task):
-            self.initial_actions = [
-                {"navigate": {"url": _FLICKR_SUNSET_SEARCH_URL}}
-            ]
-            self._auto_initial_navigation_url = _FLICKR_SUNSET_SEARCH_URL
         elif _task_requests_getyourguide_paris_popular(task):
             self.initial_actions = [
                 {"navigate": {"url": _GETYOURGUIDE_HOME_URL}},
@@ -1713,12 +1695,6 @@ class Agent:
                     task_content.rstrip()
                     + "\n\n"
                     + _EBAY_USED_LAPTOPS_GUIDANCE
-                )
-            if _task_requests_flickr_sunset_search(self.task):
-                task_content = (
-                    task_content.rstrip()
-                    + "\n\n"
-                    + _FLICKR_SUNSET_SEARCH_GUIDANCE
                 )
             if _task_requests_getyourguide_paris_popular(self.task):
                 task_content = (
@@ -3908,7 +3884,18 @@ class Agent:
 
         self._messages.append(
             UserMessage(
-                content=_FLICKR_SUNSET_SEARCH_GUIDANCE
+                content=(
+                    "[FLICKR_SUNSET_SEARCH] This task only needs the first "
+                    "five Flickr photo results for sunset with title and "
+                    "username. Use the direct search URL "
+                    "`https://www.flickr.com/search/?text=sunset`; the "
+                    "`?tags=sunset` page can trigger a consent-overlay tail "
+                    "and inconsistent tagged ordering. If a cookie banner "
+                    "blocks the page, dismiss it once, then extract the "
+                    "first five visible photo cards from the search results "
+                    "and finish. Do not keep scrolling or re-extracting "
+                    "after the first five titles and usernames are visible."
+                )
             )
         )
         self._flickr_sunset_search_nudged = True
