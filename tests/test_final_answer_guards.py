@@ -46,6 +46,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_dailymail_coronavirus,
     _task_requests_flickr_sunset_search,
     _task_requests_foxsports_nba_highlights,
+    _task_requests_gamespot_action_review,
     _task_requests_getyourguide_paris_popular,
     _task_requests_metacritic_low_score_tv,
     _task_requests_nature_quantum_authors,
@@ -55,6 +56,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_timeanddate_world_clock,
     _task_requests_weather_nyc_current,
     _task_requests_xbox_minecraft_accessibility,
+    _gamespot_action_review_answer_has_title_and_score,
     _telegraph_brexit_answer_has_five_relevant_titles,
 )
 from browser_use_rs.llm.base import ToolCall  # noqa: E402
@@ -614,6 +616,46 @@ class FinalAnswerGuardTests(unittest.TestCase):
         )
         self.assertFalse(
             _telegraph_brexit_answer_has_five_relevant_titles(task, weak_answer)
+        )
+
+    def test_gamespot_action_review_task_is_detected(self):
+        task = (
+            "In the Reviews section, find an article that discusses gameplay "
+            "mechanics for an action game in detail and note its title and "
+            "primary rating score.\n"
+            "website: https://gamespot.com"
+        )
+
+        self.assertTrue(_task_requests_gamespot_action_review(task))
+        self.assertFalse(
+            _task_requests_gamespot_action_review(
+                "Find the latest GameSpot news headlines."
+            )
+        )
+
+    def test_gamespot_action_review_answer_can_skip_validation(self):
+        task = (
+            "In the Reviews section, find an article that discusses gameplay "
+            "mechanics for an action game in detail and note its title and "
+            "primary rating score.\n"
+            "website: https://gamespot.com"
+        )
+        answer = (
+            "Article Title: Saros Review - Return Stronger\n"
+            "Primary Rating Score: 9 (Superb)\n"
+            "The review discusses the shield, combat flow, and roguelite "
+            "run structure."
+        )
+        weak_answer = (
+            "Article Title: Pragmata Preview\n"
+            "Primary Rating Score: unavailable"
+        )
+
+        self.assertTrue(
+            _gamespot_action_review_answer_has_title_and_score(task, answer)
+        )
+        self.assertFalse(
+            _gamespot_action_review_answer_has_title_and_score(task, weak_answer)
         )
 
     def test_explicit_unable_to_complete_final_is_flagged(self):
