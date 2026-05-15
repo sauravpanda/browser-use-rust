@@ -2406,3 +2406,42 @@ Corrected dataset lookup:
 - The comparable 20-task slice `10..30` order begins:
   `2226, 91, 954, 1840, 1494, 275, 1510, 2027, ...`.
 - Use `--start 17 --end 18` for the VA locator retest.
+
+## 2026-05-15T09:58:42Z Update: VA Locator Targeted Retest Passed
+
+Corrected targeted run:
+
+- Run `kh71nspybz4mn3769k166c3jy586rv7p`, workflow `25911699383`,
+  commit `d6c4ddff863c04f4b08ae4aacec70a3e17af5462`.
+- Command confirmed:
+  `--start 17 --end 18`, `--max-steps 100`, `--no-thinking`,
+  `--thinking-level minimal`, `gemini-3-flash-preview`,
+  `eval_model=gpt-o4-mini`, headed/xvfb local browser,
+  `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, vision on,
+  `agent_type=Agent`.
+- Dashboard aggregate again showed the pre-created-run artifact
+  `completedTasks=2/1`; use the non-null task row.
+
+Result:
+
+- Task `2027` passed.
+- Steps: `2` vs prior exact slice failure at `25`.
+- Duration: `10.41s` vs `~88s`.
+- Cost: `$0.006822` vs prior exact slice `$0.088803`.
+- Access denied/action/tool failures: `0`.
+
+Trace proof:
+
+- Step 1 called `va_facility_locator(address="Arlington, VA", limit=3)`.
+- Tool output used official VA.gov locator rows sorted nearest-first:
+  `Washington VA Medical Center`,
+  `Southeast Washington VA Clinic`,
+  `Franklin Street VA Clinic`.
+- Step 2 finalized with exactly those three names and addresses.
+
+Decision:
+
+- The targeted result supports the VA locator tool, but it adds about
+  0.7KB to the tool payload. Run the exact `10..30` 20-task slice before
+  keeping it as a release candidate.
