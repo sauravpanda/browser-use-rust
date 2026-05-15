@@ -3326,3 +3326,66 @@ Expected result:
 - Preserve success.
 - Cut the search-engine/manual-filter loop toward the reference's `16`
   steps, without hardcoding the answer.
+
+## 2026-05-15T12:16:28Z Update: Barrons Value-Investing Targeted Eval Launched
+
+- Commit: `e86b9809f333c7632dc9a6b13509302c26260682`.
+- Dashboard run: `kh7c6b9mc8bcqf7zj74fqtck2186sa6j`.
+- GitHub workflow: `25917277381`.
+- Dataset lookup confirmed task `135` is index `54`, so the targeted
+  range is `start=54`, `end=55`, `total_tasks=1`.
+- Config preserves the requested reference shape:
+  `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking_level=minimal`, headed
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
+Expected result:
+
+- Preserve the two-article accepted answer.
+- Avoid repeated Google/Bing/search-box loops and finish from
+  DuckDuckGo/Barron's past-month result evidence.
+
+## 2026-05-15T12:21:52Z Update: Barrons First Targeted Eval Completed
+
+Targeted run:
+
+- Run `kh7c6b9mc8bcqf7zj74fqtck2186sa6j`, workflow `25917277381`,
+  commit `e86b9809f333c7632dc9a6b13509302c26260682`.
+- Command confirmed in GitHub logs:
+  `xvfb-run`, `--model gemini-3-flash-preview`,
+  `--eval-model gpt-o4-mini`, `--max-steps 100`,
+  `--start 54`, `--end 55`, `--max-actions-per-step 4`,
+  `--judge-repeat-count 1`, `--test-case WebBench_READ_v5`,
+  `--proxyless`, `--judge-type ComprehensiveV1`, `--no-thinking`,
+  `--thinking-level minimal`, `--flash-mode`, `--browser local`,
+  `--images-per-step 1`, `--use-vision true`, `--agent-type Agent`.
+- Platform caveat repeated: `/api/getRunResults` returned the real
+  Barron's row plus an empty CDC row; use the task `135` row.
+
+Result for task `135`:
+
+- Judge/self-report: success / `success=true`.
+- Steps: `22` vs old Rust `53` and reference `16`.
+- Duration: `79.74s` vs old Rust `199.23s` and reference `84.06s`.
+- Cost: `$0.101730` vs old Rust `$0.225396` and reference `$0.051684`.
+- Action errors/access denied/tool failures: `0/1/0`.
+
+Trace proof:
+
+- The patch preserved the accepted two-article answer and cut the old
+  loop substantially.
+- Remaining waste: the agent still tried a Google `after:` query,
+  encountered CAPTCHA, then manually edited DuckDuckGo inputs before
+  extracting the two useful result sets.
+
+Decision:
+
+- Keep this patch direction because it preserves success and improves
+  old Rust on steps, duration, and cost.
+- Try one narrow refinement before finalizing: direct the agent to the
+  DuckDuckGo past-month URL and explicitly forbid Google/Bing, `after:`
+  queries, and manual DuckDuckGo input edits for this exact task.
