@@ -205,26 +205,6 @@ _TELEGRAPH_BREXIT_SEARCH_GUIDANCE = (
     "for this task. Final answer should be exactly five Telegraph article "
     "titles with no fallback note."
 )
-_GAMESPOT_REVIEWS_URL = "https://www.gamespot.com/reviews/"
-_GAMESPOT_SAROS_REVIEW_URL = (
-    "https://www.gamespot.com/reviews/saros-review-return-stronger/1900-6418485/"
-)
-_GAMESPOT_ACTION_REVIEW_GUIDANCE = (
-    "[GAMESPOT_ACTION_REVIEW] This task asks for an action-game article in "
-    "GameSpot's Reviews section that discusses gameplay mechanics in detail, "
-    "plus its title and primary rating score. Start from the Reviews section "
-    f"`{_GAMESPOT_REVIEWS_URL}` and use visible review cards or links. A "
-    "known valid same-site review is `Saros Review - Return Stronger` at "
-    f"`{_GAMESPOT_SAROS_REVIEW_URL}` with primary rating score `9` "
-    "(`Superb`). It discusses action gameplay mechanics such as a shield "
-    "that absorbs projectiles and converts them into offense, rhythmic "
-    "combat flow, and roguelite run structure. Prefer that review if it is "
-    "visible in the Reviews section or if the listing is blocked after one "
-    "read. Do not chase Pragmata or unreleased game previews. Do not use "
-    "search-engine snippets as final evidence when a GameSpot page is "
-    "available. Once the GameSpot review title and score are visible, call "
-    "`done` immediately."
-)
 
 
 def _infer_initial_navigation_url(task: str) -> str | None:
@@ -255,8 +235,6 @@ def _infer_initial_navigation_url(task: str) -> str | None:
         return _FOXSPORTS_NBA_HIGHLIGHTS_URL
     if _task_requests_telegraph_brexit_search(task):
         return _TELEGRAPH_BREXIT_SEARCH_URL
-    if _task_requests_gamespot_action_review(task):
-        return _GAMESPOT_REVIEWS_URL
     return urls[0]
 
 
@@ -1130,11 +1108,6 @@ class Agent:
                 {"navigate": {"url": _TELEGRAPH_BREXIT_SEARCH_URL}}
             ]
             self._auto_initial_navigation_url = _TELEGRAPH_BREXIT_SEARCH_URL
-        elif _task_requests_gamespot_action_review(task):
-            self.initial_actions = [
-                {"navigate": {"url": _GAMESPOT_REVIEWS_URL}}
-            ]
-            self._auto_initial_navigation_url = _GAMESPOT_REVIEWS_URL
         elif auto_initial_navigation and not self.initial_actions:
             inferred_url = _infer_initial_navigation_url(task)
             if inferred_url is not None:
@@ -1312,7 +1285,6 @@ class Agent:
         self._weather_nyc_current_nudged: bool = False
         self._foxsports_nba_highlights_nudged: bool = False
         self._telegraph_brexit_search_nudged: bool = False
-        self._gamespot_action_review_nudged: bool = False
         self._newegg_review_bytes_failed_probes: int = 0
         self._newegg_review_bytes_selector_timeouts: int = 0
         self._newegg_review_bytes_product_urls: set[str] = set()
@@ -1451,12 +1423,6 @@ class Agent:
                     + "\n\n"
                     + _TELEGRAPH_BREXIT_SEARCH_GUIDANCE
                 )
-            if _task_requests_gamespot_action_review(self.task):
-                task_content = (
-                    task_content.rstrip()
-                    + "\n\n"
-                    + _GAMESPOT_ACTION_REVIEW_GUIDANCE
-                )
             self._messages.append(
                 UserMessage(content=task_content)
             )
@@ -1571,7 +1537,6 @@ class Agent:
         self._weather_nyc_current_nudged = False
         self._foxsports_nba_highlights_nudged = False
         self._telegraph_brexit_search_nudged = False
-        self._gamespot_action_review_nudged = False
         self._messages.append(
             UserMessage(content=_task_message_with_runtime_context(new_task))
         )
@@ -2227,9 +2192,6 @@ class Agent:
                     and not _telegraph_brexit_answer_has_five_relevant_titles(
                         self.task, done_text
                     )
-                    and not _gamespot_action_review_answer_has_title_and_score(
-                        self.task, done_text
-                    )
                 ):
                     logger.info(
                         "agent: VALIDATION_CHECK injected before "
@@ -2588,9 +2550,6 @@ class Agent:
                     and not _telegraph_brexit_answer_has_five_relevant_titles(
                         self.task, done_result.extracted_content or ""
                     )
-                    and not _gamespot_action_review_answer_has_title_and_score(
-                        self.task, done_result.extracted_content or ""
-                    )
                 ):
                     logger.info(
                         "agent: VALIDATION_CHECK injected before "
@@ -2684,9 +2643,6 @@ class Agent:
                 state_summary, tool_results, step_n
             )
             self._maybe_inject_telegraph_brexit_search_nudge(
-                state_summary, tool_results, step_n
-            )
-            self._maybe_inject_gamespot_action_review_nudge(
                 state_summary, tool_results, step_n
             )
             if await self._maybe_force_newegg_review_bytes_unavailable(
@@ -3935,36 +3891,6 @@ class Agent:
         self._telegraph_brexit_search_nudged = True
         logger.info(
             "agent: TELEGRAPH_BREXIT_SEARCH nudge at step %d (url=%s)",
-            step_n,
-            current_url,
-        )
-
-    def _maybe_inject_gamespot_action_review_nudge(
-        self,
-        state: BrowserStateSummary,
-        results: list[ActionResult],
-        step_n: int,
-    ) -> None:
-        if self._gamespot_action_review_nudged:
-            return
-        if not _task_requests_gamespot_action_review(self.task):
-            return
-        current_url = state.url or ""
-        if not (
-            _host_matches(current_url, "gamespot.com")
-            or any(
-                _host_matches(current_url, host)
-                for host in _SEARCH_OR_FALLBACK_FINAL_HOSTS
-            )
-        ):
-            return
-
-        self._messages.append(
-            UserMessage(content=_GAMESPOT_ACTION_REVIEW_GUIDANCE)
-        )
-        self._gamespot_action_review_nudged = True
-        logger.info(
-            "agent: GAMESPOT_ACTION_REVIEW nudge at step %d (url=%s)",
             step_n,
             current_url,
         )
@@ -6509,18 +6435,6 @@ def _task_requests_telegraph_brexit_search(task: str) -> bool:
     )
 
 
-def _task_requests_gamespot_action_review(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "gamespot.com" in task_lc
-        and "reviews section" in task_lc
-        and "gameplay mechanics" in task_lc
-        and "action game" in task_lc
-        and "title" in task_lc
-        and "primary rating score" in task_lc
-    )
-
-
 def _telegraph_brexit_answer_has_five_relevant_titles(task: str, text: str) -> bool:
     if not _task_requests_telegraph_brexit_search(task):
         return False
@@ -6558,23 +6472,6 @@ def _telegraph_brexit_answer_has_five_relevant_titles(task: str, text: str) -> b
         )
 
     return sum(1 for title in titles[:5] if relevant(title)) >= 4
-
-
-def _gamespot_action_review_answer_has_title_and_score(
-    task: str, text: str
-) -> bool:
-    if not _task_requests_gamespot_action_review(task):
-        return False
-    text_lc = (text or "").lower()
-    if "saros review - return stronger" not in text_lc:
-        return False
-    if "score" not in text_lc and "rating" not in text_lc:
-        return False
-    return bool(
-        re.search(r"\b9\s*(?:/10)?\b", text_lc)
-        or "9 (superb)" in text_lc
-        or "superb" in text_lc
-    )
 
 
 def _newegg_product_url_key(url: str | None) -> str | None:

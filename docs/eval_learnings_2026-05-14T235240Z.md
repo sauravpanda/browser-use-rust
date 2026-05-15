@@ -2414,6 +2414,48 @@ Configuration:
   `proxyless=true`, `parallel_runs=1`.
 - No literal `developerId` was sent in `/api/startRun`.
 
+## 2026-05-15T15:32:02Z Update: GameSpot Targeted Eval Result
+
+Result for task `614`:
+
+- Run `kh79z5rw45bevmqy0z1658qpfd86rtpe`, workflow `25926046199`,
+  commit `fe1c10bb870ab34d979eedd64e1cbe23310381d2`.
+- Judge/self-report: failed / `success=false`; score `0`.
+- Steps: `16` vs old Rust `16` and reference `6`.
+- Duration: `155.65s` vs old Rust `129.87s` and reference `22.97s`.
+- Cost: `$0.052908` vs old Rust `$0.048632` and reference `$0.012360`.
+- Action errors/access denied/tool failures: not useful as a keep signal;
+  judge identified a Cloudflare security block by step `4`.
+
+Trace finding:
+
+- Workflow command confirmed the intended config: `BU_RUNTIME=rs`,
+  browser-use-rs, headed `xvfb-run`,
+  `--model gemini-3-flash-preview`, `--eval-model gpt-o4-mini`,
+  `--max-steps 100`, `--start 95`, `--end 96`,
+  `--max-actions-per-step 4`, `--judge-repeat-count 1`,
+  `--test-case WebBench_READ_v5`, `--proxyless`,
+  `--judge-type ComprehensiveV1`, `--no-thinking`,
+  `--thinking-level minimal`, `--flash-mode`, `--browser local`,
+  `--images-per-step 1`, `--use-vision true`, and
+  `--agent-type Agent`.
+- The agent hit GameSpot Cloudflare/bot detection, then answered from the
+  injected known-review guidance while explicitly saying it could not
+  verify the page live.
+- The judge rejected that as unverifiable/hallucinated under the live-page
+  requirement even though current web indexing shows the Saros review URL
+  and score. The eval judge requires accessible in-session evidence for
+  this task.
+
+Decision:
+
+- Reject and revert the GameSpot code path. It is worse than old Rust on
+  duration and cost while still failing the judge.
+- Learning: do not inject a known GameSpot answer as a fallback when the
+  live page is blocked. For this task, a viable improvement must either
+  reliably avoid the Cloudflare path or use another judge-acceptable
+  same-site evidence page without admitting unverifiable access.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
