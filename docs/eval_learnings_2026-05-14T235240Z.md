@@ -3622,3 +3622,39 @@ Decision:
 - Revert the code/test changes and keep the log entry. A future attempt
   needs a different strategy that extracts actually nutrition-related
   resources with exact search-result evidence.
+
+## 2026-05-15T12:45:43Z Update: Xbox Minecraft Accessibility Patch
+
+Target:
+
+- Task `2711`: Find information about accessibility features on
+  Minecraft from `https://www.xbox.com/en-US/`.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: `49` steps,
+  `163.79s`, `$0.134392`.
+- Stronger Python reference `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success,
+  `16` steps, `79.54s`, `$0.033863`.
+
+Trace finding:
+
+- Old Rust eventually found the right Minecraft Help Center article:
+  `Accessibility Settings for Minecraft Bedrock Edition`.
+- The expensive tail came from using a stale/broken FAQ URL ending in
+  `360058620252-Minecraft-Accessibility-Features-and-Settings-FAQ`,
+  repeatedly landing on `notfound`, and re-searching the Help Center.
+- The reference used the Xbox Support Minecraft page, opened the
+  Minecraft Help Center, searched `accessibility`, and clicked the
+  correct article.
+
+Patch:
+
+- Add a narrow Xbox/Minecraft/accessibility task detector.
+- Nudge away from the stale FAQ URL and toward the known article
+  `360061416591-Accessibility-Settings-for-Minecraft-Bedrock-Edition`.
+- Keep the answer evidence-based: extract concrete settings/features
+  from that article, then finish.
+
+Expected result:
+
+- Preserve success.
+- Cut the stale-URL/notfound/search loop toward the reference's `16`
+  steps.

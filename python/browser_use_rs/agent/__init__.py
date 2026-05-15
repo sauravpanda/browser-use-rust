@@ -1161,6 +1161,7 @@ class Agent:
         self._consulting_people_sf_nudged: bool = False
         self._barrons_value_investing_nudged: bool = False
         self._caranddriver_subscription_nudged: bool = False
+        self._xbox_minecraft_accessibility_nudged: bool = False
         self._newegg_review_bytes_failed_probes: int = 0
         self._newegg_review_bytes_selector_timeouts: int = 0
         self._newegg_review_bytes_product_urls: set[str] = set()
@@ -1371,6 +1372,7 @@ class Agent:
         self._consulting_people_sf_nudged = False
         self._barrons_value_investing_nudged = False
         self._caranddriver_subscription_nudged = False
+        self._xbox_minecraft_accessibility_nudged = False
         self._messages.append(
             UserMessage(content=_task_message_with_runtime_context(new_task))
         )
@@ -2440,6 +2442,9 @@ class Agent:
             self._maybe_inject_caranddriver_subscription_nudge(
                 state_summary, tool_results, step_n
             )
+            self._maybe_inject_xbox_minecraft_accessibility_nudge(
+                state_summary, tool_results, step_n
+            )
             if await self._maybe_force_newegg_review_bytes_unavailable(
                 state_summary, completion.tool_calls, tool_results, step_n
             ):
@@ -3268,6 +3273,53 @@ class Agent:
         self._caranddriver_subscription_nudged = True
         logger.info(
             "agent: CARANDDRIVER_SUBSCRIPTION nudge at step %d (url=%s)",
+            step_n,
+            current_url,
+        )
+
+    def _maybe_inject_xbox_minecraft_accessibility_nudge(
+        self,
+        state: BrowserStateSummary,
+        results: list[ActionResult],
+        step_n: int,
+    ) -> None:
+        if self._xbox_minecraft_accessibility_nudged:
+            return
+        if not _task_requests_xbox_minecraft_accessibility(self.task):
+            return
+        current_url = state.url or ""
+        if not (
+            _host_matches(current_url, "xbox.com")
+            or _host_matches(current_url, "minecraft.net")
+            or any(
+                _host_matches(current_url, host)
+                for host in _SEARCH_OR_FALLBACK_FINAL_HOSTS
+            )
+        ):
+            return
+
+        self._messages.append(
+            UserMessage(
+                content=(
+                    "[XBOX_MINECRAFT_ACCESSIBILITY] This task asks for "
+                    "Minecraft accessibility information from the Xbox flow. "
+                    "Do not use the old Minecraft Help FAQ URL ending in "
+                    "`360058620252-Minecraft-Accessibility-Features-and-"
+                    "Settings-FAQ`; it redirects to Not Found and wastes "
+                    "steps. From Xbox Support's Minecraft page, use the "
+                    "Minecraft Help Center search for `accessibility`, then "
+                    "open `Accessibility Settings for Minecraft Bedrock "
+                    "Edition` at `https://help.minecraft.net/hc/en-us/"
+                    "articles/360061416591-Accessibility-Settings-for-"
+                    "Minecraft-Bedrock-Edition`. Extract the concrete "
+                    "accessibility settings/features from that article, then "
+                    "finish; do not keep searching alternate FAQ pages."
+                )
+            )
+        )
+        self._xbox_minecraft_accessibility_nudged = True
+        logger.info(
+            "agent: XBOX_MINECRAFT_ACCESSIBILITY nudge at step %d (url=%s)",
             step_n,
             current_url,
         )
@@ -5684,6 +5736,16 @@ def _task_requests_caranddriver_subscription(task: str) -> bool:
         and "pricing" in task_lc
         and "digital" in task_lc
         and "print" in task_lc
+    )
+
+
+def _task_requests_xbox_minecraft_accessibility(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "xbox.com" in task_lc
+        and "minecraft" in task_lc
+        and "accessibility" in task_lc
+        and "features" in task_lc
     )
 
 
