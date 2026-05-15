@@ -2986,6 +2986,60 @@ Expected result:
 - Preserve/reference-align judged success and avoid the old multi-article
   interpretation tail.
 
+## 2026-05-15T13:46:19Z Update: Nature Targeted Eval Launched
+
+Targeted run:
+
+- Run `kh78f3c44dsb3fx75zpqkdfrh986sdqw`, workflow `25921241119`,
+  commit `cd83fc549e5a02cb09f483cf285cc9a6b42c24dd`.
+- Dataset range: `start_index=121`, `end_index=122`, task `1190`.
+- User message: `bu-rust nature-quantum-authors targeted no-thinking gpt-o4-mini`.
+
+Configuration:
+
+- `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking_level=minimal`, headed
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
+## 2026-05-15T13:49:57Z Update: Nature Targeted Eval Result
+
+Result for task `1190`:
+
+- Judge/self-report: success / `success=false`.
+- Steps: `7` vs old Rust `14` and reference `6`.
+- Duration: `22.08s` vs old Rust `46.45s` and reference `27.94s`.
+- Cost: `$0.020064` vs old Rust `$0.057293` and reference `$0.010549`.
+- Action errors/access denied/tool failures: `0/0/0`.
+
+Config verification:
+
+- Workflow logs show the eval process ran with
+  `--model gemini-3-flash-preview`, `--eval-model gpt-o4-mini`,
+  `--max-steps 100`, `--max-actions-per-step 4`, `--test-case
+  WebBench_READ_v5`, `--judge-type ComprehensiveV1`, `--no-thinking`,
+  `--thinking-level minimal`, `--flash-mode`, `--browser local`,
+  `--images-per-step 1`, `--use-vision`, and `--agent-type Agent`.
+
+Trace/result proof:
+
+- Judge rationale: the agent navigated to Nature, searched for
+  `quantum computing`, selected a relevant article, and identified the
+  first three authors listed in that article with affiliations.
+- Final answer used `Non-Markovianity and memory enhancement in quantum
+  reservoir computing` and listed Antonio Sannia, Ricard Ravell
+  Rodriguez, and Gian Luca Giorgi with the shared IFISC UIB-CSIC
+  affiliation.
+
+Decision:
+
+- Keep the patch. It preserves judged success, cuts old Rust steps,
+  duration, and cost, and beats the reference on duration while staying
+  close on steps. Cost is still above the reference.
+
 ## 2026-05-15T13:38:33Z Update: CBS Featured Investigative Patch
 
 Target:
