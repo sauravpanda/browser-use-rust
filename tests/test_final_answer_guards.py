@@ -58,6 +58,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_sportskeeda_f1_about,
     _task_requests_telegraph_brexit_search,
     _task_requests_timeanddate_world_clock,
+    _task_requests_ulta_hair_featured_products,
     _task_requests_webmd_health_news_top_story,
     _task_requests_weather_nyc_current,
     _task_requests_worldatlas_asia_rivers,
@@ -536,6 +537,20 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertFalse(
             _task_requests_rochester_bcs_undergrad(
                 "Find Rochester alumni news about cognitive science."
+            )
+        )
+
+    def test_ulta_hair_featured_products_task_is_detected(self):
+        task = (
+            "Browse the haircare section to view the first three featured "
+            "products and note their customer ratings and prices.\n"
+            "website: https://ulta.com"
+        )
+
+        self.assertTrue(_task_requests_ulta_hair_featured_products(task))
+        self.assertFalse(
+            _task_requests_ulta_hair_featured_products(
+                "Search Ulta for fragrance sale coupons."
             )
         )
 

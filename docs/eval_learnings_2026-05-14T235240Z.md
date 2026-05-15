@@ -3524,6 +3524,42 @@ Decision:
   reference trace selected that program from the university programs page
   and the final answer clearly summarizes the program evidence.
 
+## 2026-05-15T17:15:27Z Update: Ulta Haircare Patch Prepared
+
+Target:
+
+- Task `1933`: Browse Ulta's haircare section, view the first three
+  featured products, and note customer ratings and prices.
+- Dataset lookup confirmed task `1933` is index `71`.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: success, `9` steps,
+  `34.02s`, `$0.034867`.
+- Reference run `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success, `8` steps,
+  `39.98s`, `$0.022344`.
+
+Trace finding:
+
+- Both successful traces started on Ulta's homepage, opened Shop/Hair Care,
+  and converged on `https://www.ulta.com/shop/hair/all`.
+- Both traces lost turns to stale or non-interactable menu/category clicks
+  before the product grid became visible.
+- The accepted final answers used the first visible hair product cards from
+  the product grid/featured/best-seller area with names, ratings, review
+  counts, and prices.
+
+Patch:
+
+- Add a narrow Ulta haircare featured-products detector.
+- Start directly on the official `https://www.ulta.com/shop/hair/all` page.
+- Guide the agent to use the first three visible product cards in page order
+  and finish without opening detail pages or retrying stale homepage menu
+  indexes.
+
+Expected result:
+
+- Preserve judged success while removing homepage menu and stale-click
+  overhead, ideally reducing the task to a one-step or two-step product-grid
+  read.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the

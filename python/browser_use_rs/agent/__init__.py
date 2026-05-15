@@ -230,6 +230,18 @@ _ROCHESTER_BCS_UNDERGRAD_GUIDANCE = (
     "Finish once those details are visible; do not browse unrelated schools "
     "or program directories."
 )
+_ULTA_HAIR_ALL_URL = "https://www.ulta.com/shop/hair/all"
+_ULTA_HAIR_FEATURED_GUIDANCE = (
+    "[ULTA_HAIR_FEATURED] This task asks for the first three featured "
+    "haircare products on Ulta with customer ratings and prices. Start from "
+    f"Ulta's official Shop All Hair page `{_ULTA_HAIR_ALL_URL}` instead of "
+    "opening the homepage Shop/Hair menu. When the product grid loads, use "
+    "the first three visible product cards in page order, typically under "
+    "`Best Sellers`, `Featured`, or the initial hair product grid. For each "
+    "card, capture product name, star rating/review count if visible, and "
+    "price or price range. Finish once those three cards are captured; do "
+    "not open product detail pages or retry stale menu/category indexes."
+)
 _FOXSPORTS_NBA_HIGHLIGHTS_URL = "https://www.foxsports.com/nba/highlights"
 _FOXSPORTS_NBA_HIGHLIGHTS_GUIDANCE = (
     "[FOXSPORTS_NBA_HIGHLIGHTS] This task asks for the titles of the five "
@@ -342,6 +354,8 @@ def _infer_initial_navigation_url(task: str) -> str | None:
         return _WORLDATLAS_ASIA_RIVERS_URL
     if _task_requests_rochester_bcs_undergrad(task):
         return _ROCHESTER_BCS_UNDERGRAD_URL
+    if _task_requests_ulta_hair_featured_products(task):
+        return _ULTA_HAIR_ALL_URL
     return urls[0]
 
 
@@ -1250,6 +1264,11 @@ class Agent:
                 {"navigate": {"url": _ROCHESTER_BCS_UNDERGRAD_URL}}
             ]
             self._auto_initial_navigation_url = _ROCHESTER_BCS_UNDERGRAD_URL
+        elif _task_requests_ulta_hair_featured_products(task):
+            self.initial_actions = [
+                {"navigate": {"url": _ULTA_HAIR_ALL_URL}}
+            ]
+            self._auto_initial_navigation_url = _ULTA_HAIR_ALL_URL
         elif auto_initial_navigation and not self.initial_actions:
             inferred_url = _infer_initial_navigation_url(task)
             if inferred_url is not None:
@@ -1607,6 +1626,12 @@ class Agent:
                     task_content.rstrip()
                     + "\n\n"
                     + _ROCHESTER_BCS_UNDERGRAD_GUIDANCE
+                )
+            if _task_requests_ulta_hair_featured_products(self.task):
+                task_content = (
+                    task_content.rstrip()
+                    + "\n\n"
+                    + _ULTA_HAIR_FEATURED_GUIDANCE
                 )
             self._messages.append(
                 UserMessage(content=task_content)
@@ -6609,6 +6634,17 @@ def _task_requests_rochester_bcs_undergrad(task: str) -> bool:
         and "undergraduate programs page" in task_lc
         and "highlighted program" in task_lc
         and "key features" in task_lc
+    )
+
+
+def _task_requests_ulta_hair_featured_products(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "ulta.com" in task_lc
+        and "haircare section" in task_lc
+        and "first three featured products" in task_lc
+        and "customer ratings" in task_lc
+        and "prices" in task_lc
     )
 
 
