@@ -3658,3 +3658,62 @@ Expected result:
 - Preserve success.
 - Cut the stale-URL/notfound/search loop toward the reference's `16`
   steps.
+
+## 2026-05-15T12:48:08Z Update: Xbox Minecraft Targeted Eval Launched
+
+- Commit: `51a0a0cf069f439a333824d49bf4b23a49ed20f0`.
+- Dashboard run: `kh790xv1e7f5sr5j78jde0kzqd86sf51`.
+- GitHub workflow: `25918594677`.
+- Dataset lookup confirmed task `2711` is index `139`, so the targeted
+  range is `start=139`, `end=140`, `total_tasks=1`.
+- Config preserves the requested reference shape:
+  `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking_level=minimal`, headed
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
+Expected result:
+
+- Preserve the accessibility-feature answer.
+- Avoid the stale Help Center FAQ URL and repeated `notfound` searches.
+
+## 2026-05-15T12:52:01Z Update: Xbox Minecraft Targeted Eval Completed
+
+Targeted run:
+
+- Run `kh790xv1e7f5sr5j78jde0kzqd86sf51`, workflow `25918594677`,
+  commit `51a0a0cf069f439a333824d49bf4b23a49ed20f0`.
+- Command confirmed in GitHub logs:
+  `xvfb-run`, `--model gemini-3-flash-preview`,
+  `--eval-model gpt-o4-mini`, `--max-steps 100`,
+  `--start 139`, `--end 140`, `--max-actions-per-step 4`,
+  `--judge-repeat-count 1`, `--test-case WebBench_READ_v5`,
+  `--proxyless`, `--judge-type ComprehensiveV1`, `--no-thinking`,
+  `--thinking-level minimal`, `--flash-mode`, `--browser local`,
+  `--images-per-step 1`, `--use-vision true`, `--agent-type Agent`.
+- Platform caveat repeated: `/api/getRunResults` returned the real Xbox
+  row plus an empty CDC row; use the task `2711` row.
+
+Result for task `2711`:
+
+- Judge/self-report: success / `success=false`.
+- Steps: `14` vs old Rust `49` and reference `16`.
+- Duration: `48.94s` vs old Rust `163.79s` and reference `79.54s`.
+- Cost: `$0.045858` vs old Rust `$0.134392` and reference `$0.033863`.
+- Action errors/access denied/tool failures: `0/0/0`.
+
+Trace proof:
+
+- The run avoided the stale Help Center FAQ URL that caused the old
+  `notfound` loop.
+- It navigated to the correct Minecraft Help Center article by step
+  `11`, extracted the accessibility settings at step `13`, and finished
+  at step `14`.
+
+Decision:
+
+- Keep the patch. It preserves judged success, beats the reference on
+  steps and duration, and cuts old Rust cost by about two-thirds.
