@@ -2621,3 +2621,49 @@ Decision:
   by about `82%`.
 - Blast radius is low: no global tool surface or prompt payload change;
   the new force-final path only activates for Newegg Review Bytes tasks.
+
+## 2026-05-15T10:57:06Z Update: People Crime Search-Loop Targeted
+
+Trace comparison for task `1334`:
+
+- Task: Navigate to People.com's `"Crime"` section, open the featured
+  article, and summarize its headline in one sentence.
+- Old Rust full run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: failed after
+  `99` steps, `740.07s`, and `$0.407383`.
+- Python reference `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: passed after
+  `21` steps, `91.13s`, and `$0.030460`.
+
+Observed Rust failure pattern:
+
+- People.com showed a Cloudflare/Turnstile challenge.
+- The agent then fell into a search fallback loop and repeatedly typed
+  new queries into DuckDuckGo's search input without clearing stale
+  text, creating concatenated queries and burning the budget.
+- The reference used search-result evidence for the headline after
+  direct People.com access stayed blocked.
+
+Patch candidate:
+
+- Add a narrow People Crime task nudge after repeated People.com
+  challenge states.
+- Tell the agent to use fresh `web_search(...)` calls rather than
+  manually editing search boxes.
+- Tell the agent to call `extract_result_cards(...)` on search results
+  and use the top same-site People crime article title if the article
+  itself remains blocked.
+
+Verification so far:
+
+- Focused final-answer guard tests pass.
+- `compileall` for the touched agent/test paths passes.
+- `2026-05-15T10:57:33Z`: full local verification passed:
+  `python3 -m unittest discover -s tests -q`,
+  `python3 -m compileall -q python/browser_use_rs tests bench`,
+  `cargo check -p bu-py`, `cargo test -p bu-browser`,
+  `git diff --check`, and
+  `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`.
+
+Next decision gate:
+
+- Commit/push, then run targeted task-`1334` eval with the exact
+  minimal-thinking Gemini config.
