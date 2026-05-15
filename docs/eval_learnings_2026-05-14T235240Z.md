@@ -3767,6 +3767,46 @@ Configuration:
   `proxyless=true`, `parallel_runs=1`.
 - No literal `developerId` was sent in `/api/startRun`.
 
+## 2026-05-15T13:13:04Z Update: GetYourGuide Targeted Eval Completed
+
+Targeted run:
+
+- Run `kh7bka1rng7v10k0mkbdgyvf4s86svnx`, workflow `25919556059`,
+  commit `5a689b411ebb2f5f2486381bd3fbb9a211962a4f`.
+- Command confirmed in GitHub logs:
+  `xvfb-run`, `--model gemini-3-flash-preview`,
+  `--eval-model gpt-o4-mini`, `--max-steps 100`,
+  `--start 89`, `--end 90`, `--max-actions-per-step 4`,
+  `--judge-repeat-count 1`, `--test-case WebBench_READ_v5`,
+  `--proxyless`, `--judge-type ComprehensiveV1`, `--no-thinking`,
+  `--thinking-level minimal`, `--flash-mode`, `--browser local`,
+  `--images-per-step 1`, `--use-vision true`, `--agent-type Agent`.
+- Platform caveat repeated: `/api/getRunResults` returned the real
+  GetYourGuide row plus an empty CDC row; use the task `645` row.
+
+Result for task `645`:
+
+- Judge/self-report: success / `success=true`.
+- Steps: `8` vs old Rust `16` and reference `4`.
+- Duration: `25.58s` vs old Rust `56.23s` and reference `14.20s`.
+- Cost: `$0.028878` vs old Rust `$0.059767` and reference `$0.007393`.
+- Action errors/access denied/tool failures: `0/0/0`.
+
+Trace proof:
+
+- The GetYourGuide-specific nudge fired at step `1`, but Gemini still
+  retried the stale cookie button three times before navigating directly
+  to `https://www.getyourguide.com/paris-l16/` at step `5`.
+- It had sufficient visible card evidence at step `6`, finished once at
+  step `7`, and repeated the final answer at step `8`.
+
+Decision:
+
+- Keep the patch. It preserves judged success and cuts old Rust steps,
+  duration, and cost. It does not beat the reference; the wording was
+  not strong enough to force the direct URL immediately after the first
+  cookie failure.
+
 ## 2026-05-15T13:07:14Z Update: Flickr Targeted Eval Completed
 
 Targeted run:
@@ -3840,6 +3880,25 @@ Expected result:
 
 - Preserve success while removing the old Rust cookie-banner and
   re-verification tail.
+
+## 2026-05-15T13:09:44Z Update: GetYourGuide Targeted Eval Launched
+
+Targeted run:
+
+- Run `kh7bka1rng7v10k0mkbdgyvf4s86svnx`, workflow `25919556059`,
+  commit `5a689b411ebb2f5f2486381bd3fbb9a211962a4f`.
+- Dataset range: `start_index=89`, `end_index=90`, task `645`.
+- User message: `bu-rust getyourguide-paris targeted no-thinking gpt-o4-mini`.
+
+Configuration:
+
+- `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking_level=minimal`, headed
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
 
 ## 2026-05-15T12:59:13Z Update: Daily Mail Targeted Eval Completed
 
