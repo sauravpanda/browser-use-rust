@@ -3267,6 +3267,41 @@ Decision:
   the site's own search flow and the final answer is extracted from
   visible result cards.
 
+## 2026-05-15T16:51:03Z Update: Oxford Integrity Patch Prepared
+
+Target:
+
+- Task `2625`: Read the definitions and usage notes for `"integrity"` and
+  write a reflective note around 100 words on how the concept applies in
+  ethical contexts.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: success, `5` steps,
+  `23.90s`, `$0.020650`.
+- Reference run `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success, `4`
+  steps, `25.63s`, `$0.009530`.
+
+Trace finding:
+
+- Old Rust initially fought the Oxford homepage cookie/search UI, then
+  navigated directly to:
+  `https://www.oxfordlearnersdictionaries.com/us/definition/english/integrity?q=integrity`.
+- The reference searched on Oxford and landed on the same English
+  definition page shape, then extracted definitions and examples before
+  writing the reflective note.
+
+Patch:
+
+- Add a narrow Oxford integrity reflection task detector.
+- Start the exact task at the Oxford Learner's Dictionary definition page
+  for `integrity`.
+- Add guidance to ground the reflective note in the page definitions,
+  usage labels, examples/collocations, and meanings of honest moral
+  principles plus wholeness/not being divided.
+
+Expected result:
+
+- Preserve judged success while cutting homepage cookie/search overhead
+  and keeping the final answer grounded in Oxford page evidence.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
