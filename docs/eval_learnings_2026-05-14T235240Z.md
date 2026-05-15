@@ -4096,6 +4096,38 @@ Decision:
   cost by `88.2%` from old Rust and `75.5%` from the previously kept Rust
   patch, but only `4.3%` from the stronger reference.
 
+## 2026-05-15T18:13:25Z Update: CBS Initial Guidance Patch Prepared
+
+Target:
+
+- Task `225`, dataset index `57`: Locate the featured investigative
+  report on the CBS News homepage and summarize its main argument.
+- Existing kept Rust patch run `kh7abhwt4etprqsykzb1yfgat586renz`:
+  success, `5` steps, `16.90s`, `$0.017168`.
+- Old Rust baseline: success, `13` steps, `42.99s`, `$0.055460`.
+- Reference run `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success, `3` steps,
+  `10.26s`, `$0.004803`.
+
+Trace finding:
+
+- The kept patch succeeded, but the CBS nudge fired only after the first
+  model action had already tried `find_text("Investigates")`.
+- The reference path treated the top homepage `Exclusive`/lead story as
+  the featured investigative report and did not detour to `/investigations/`.
+
+Patch:
+
+- Promote the CBS nudge text into a reusable guidance constant.
+- For the exact CBS featured-investigative task, explicitly start from
+  `https://www.cbsnews.com/` and include the guidance in the initial task
+  message before the first model step.
+- Keep the existing later nudge as a fallback using the same guidance.
+
+Expected result:
+
+- Remove the first-step `find_text("Investigates")` waste and move the
+  kept Rust path closer to the reference's three-step homepage-lead flow.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
