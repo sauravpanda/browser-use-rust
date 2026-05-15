@@ -1930,3 +1930,57 @@ Decision learning:
 - This task should not drive a full release decision by itself because
   the judge's effective "this weekend" date has varied across reference
   and targeted runs.
+
+## 2026-05-15T06:27:37Z Update: LLM State Screenshot Cost Patch
+
+Problem from the 20-task current-head slice:
+
+- Run `kh7e6asf9bjg77sj0gxhqwxze986rs40` succeeded infra-clean with
+  16/20 task success and materially better wall time than the reference,
+  but mean cost was worse than the reference.
+- Prompt metrics showed the largest cost lever was not DOM text. It was
+  image payload size: several tasks carried per-step screenshot base64
+  in the 0.4MB-1.9MB range, dominating `prompt_state_msg_bytes` and
+  `prompt_image_bytes`.
+- Keeping `use_vision=true` is part of the reference-aligned config, so
+  disabling screenshots would not be an apples-to-apples release test.
+
+Patch:
+
+- Added a Rust CDP path for `Page.captureScreenshot` with
+  `format="jpeg"` and configurable quality, while preserving the public
+  PNG `session.screenshot()` behavior.
+- Exposed `session.screenshot_jpeg(quality=60)` through the PyO3
+  binding.
+- Changed automatic per-step LLM page-state capture to prefer JPEG when
+  `use_vision=True`, and added `BrowserStateSummary.screenshot_media_type`
+  so the prompt injection uses `image/jpeg` instead of hardcoded
+  `image/png`.
+- Kept the explicit screenshot tool on the existing PNG API so tool
+  behavior remains compatible.
+
+Local verification:
+
+- `python3 -m unittest tests.test_prompt_metrics -q`
+- `python3 -m compileall -q python/browser_use_rs tests bench`
+- `cargo check -p bu-py`
+- `git diff --check`
+- `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`
+- `python3 -m unittest discover -s tests -q`
+- `cargo test -p bu-browser`
+
+Verification caveats:
+
+- `cargo fmt --check` still reports formatting differences across
+  existing Rust files, including many unrelated lines, so no Rust
+  formatting churn was applied.
+- `cargo test -p bu-py` fails at the local link step with missing Python
+  symbols on macOS; `cargo check -p bu-py` passes and catches the new
+  Rust/PyO3 API shape.
+
+Next measurement:
+
+- Run a small high-image eval slice with the exact minimal-thinking
+  Gemini config (`gemini-3-flash-preview`, `--no-thinking`,
+  `thinking_level=minimal`, `max_steps=100`) to confirm whether JPEG
+  shrinks `prompt_image_bytes` and total cost without hurting success.

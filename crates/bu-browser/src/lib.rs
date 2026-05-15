@@ -931,12 +931,30 @@ impl BrowserSession {
     }
 
     pub async fn screenshot(&self) -> Result<Vec<u8>> {
+        self.screenshot_with_format("png", None).await
+    }
+
+    pub async fn screenshot_jpeg(&self, quality: u8) -> Result<Vec<u8>> {
+        self.screenshot_with_format("jpeg", Some(quality.clamp(1, 100))).await
+    }
+
+    async fn screenshot_with_format(
+        &self,
+        format: &str,
+        quality: Option<u8>,
+    ) -> Result<Vec<u8>> {
         let sid = self.session_id().await;
+        let mut params = json!({ "format": format });
+        if format == "jpeg" {
+            if let Some(quality) = quality {
+                params["quality"] = json!(quality);
+            }
+        }
         let r = self
             .conn
             .send(
                 "Page.captureScreenshot",
-                json!({ "format": "png" }),
+                params,
                 Some(&sid),
             )
             .await?;

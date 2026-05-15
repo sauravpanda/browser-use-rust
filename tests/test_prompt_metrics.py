@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT / "python"))
 from browser_use_rs.agent import Agent, HistoryItem  # noqa: E402
 from browser_use_rs.llm.base import (  # noqa: E402
     AssistantMessage,
+    ImagePart,
     ToolCall,
     ToolResultMessage,
     UserMessage,
@@ -23,6 +24,50 @@ from browser_use_rs.views import (  # noqa: E402
 
 
 class PromptMetricsTests(unittest.TestCase):
+    def _agent_for_state_injection(self, *, use_vision: bool = True):
+        agent = Agent.__new__(Agent)
+        agent.use_vision = use_vision
+        agent._messages = [UserMessage("task")]
+        agent._read_state_for_next_turn = []
+        agent._previous_evaluation = ""
+        agent._memory = ""
+        agent._next_goal = ""
+        agent._valid_indices = set()
+        return agent
+
+    def test_inject_page_state_uses_screenshot_media_type(self):
+        agent = self._agent_for_state_injection()
+
+        agent._inject_page_state(
+            BrowserStateSummary(
+                url="https://example.com",
+                screenshot="abc123",
+                screenshot_media_type="image/jpeg",
+                elements_text="[1]<button>Continue",
+            )
+        )
+
+        content = agent._messages[-1].content
+        self.assertIsInstance(content, list)
+        image = next(part for part in content if isinstance(part, ImagePart))
+        self.assertEqual(image.media_type, "image/jpeg")
+
+    def test_inject_page_state_defaults_screenshot_media_type_to_png(self):
+        agent = self._agent_for_state_injection()
+
+        agent._inject_page_state(
+            BrowserStateSummary(
+                url="https://example.com",
+                screenshot="abc123",
+                elements_text="[1]<button>Continue",
+            )
+        )
+
+        content = agent._messages[-1].content
+        self.assertIsInstance(content, list)
+        image = next(part for part in content if isinstance(part, ImagePart))
+        self.assertEqual(image.media_type, "image/png")
+
     def test_compute_call_metrics_splits_history_and_read_state_bytes(self):
         agent = Agent.__new__(Agent)
         agent.system_prompt = "system prompt"

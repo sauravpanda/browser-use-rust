@@ -136,6 +136,7 @@ class BrowserStateSummary:
     url: str = ""
     title: str = ""
     screenshot: str | None = None
+    screenshot_media_type: str = "image/png"
     # browser_use writes screenshots to disk and exposes the path; we keep
     # the base64 in-memory and don't write a file by default. Consumers
     # that need a path can write `screenshot` themselves.

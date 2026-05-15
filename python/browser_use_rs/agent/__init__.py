@@ -3258,14 +3258,19 @@ class Agent:
             except Exception:
                 return ""
 
-        async def _safe_screenshot() -> str | None:
+        async def _safe_screenshot() -> tuple[str | None, str]:
             try:
+                if self.use_vision and hasattr(self.session, "screenshot_jpeg"):
+                    jpg = await asyncio.wait_for(
+                        self.session.screenshot_jpeg(60), timeout=15.0
+                    )
+                    return base64.b64encode(jpg).decode("ascii"), "image/jpeg"
                 png = await asyncio.wait_for(
                     self.session.screenshot(), timeout=15.0
                 )
-                return base64.b64encode(png).decode("ascii")
+                return base64.b64encode(png).decode("ascii"), "image/png"
             except Exception:
-                return None
+                return None, "image/png"
 
         # Capture both the rendered text AND the index→selector map
         # in a single CDP roundtrip. The selector map drives
@@ -3336,9 +3341,10 @@ class Agent:
                 # available)" placeholder instead of crashing the run.
                 return "", {}, None
 
-        url, screenshot_b64, dom_triple = await asyncio.gather(
+        url, screenshot_pair, dom_triple = await asyncio.gather(
             _safe_url(), _safe_screenshot(), _safe_dom()
         )
+        screenshot_b64, screenshot_media_type = screenshot_pair
         dom_text, self._index_to_selector, dom_metrics = dom_triple
         if dom_metrics is not None:
             # v0.12.1: log the per-snapshot DOM size breakdown so it's
@@ -3393,6 +3399,7 @@ class Agent:
             url=url,
             title="",
             screenshot=screenshot_b64,
+            screenshot_media_type=screenshot_media_type,
             elements_text=dom_text,
             dom_metrics=dom_metrics,
         )
@@ -3743,7 +3750,10 @@ class Agent:
                 UserMessage(
                     content=[
                         TextPart(text=body),
-                        ImagePart(data=state.screenshot, media_type="image/png"),
+                        ImagePart(
+                            data=state.screenshot,
+                            media_type=state.screenshot_media_type or "image/png",
+                        ),
                     ]
                 )
             )
