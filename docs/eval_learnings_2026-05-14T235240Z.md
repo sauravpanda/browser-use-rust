@@ -3739,6 +3739,30 @@ Expected result:
 - Preserve judged success while removing homepage navigation, search-box
   interaction, stale exact-phrase results, and repeated article validation.
 
+## 2026-05-15T17:37:06Z Update: Fox News Targeted Eval Launched
+
+Targeted run:
+
+- Run `kh763rp57bqzjy5qq843krxnyd86s1dr`, workflow `25932200933`,
+  commit `391303ea6866ba88ce7abba44ef688258add5b96`.
+- Dataset lookup confirmed task `579` is index `111`; range is
+  `start_index=111`, `end_index=112`.
+- User message: `bu-rust foxnews-2024-election targeted no-thinking gpt-o4-mini`.
+- First `/api/startRun` attempt returned a transient server error without a
+  run ID; retry succeeded. No dispatch was sent for the failed attempt.
+
+Configuration:
+
+- Same corrected object-shaped dispatch and minimal-thinking Gemini
+  config: `runtime=rs`, `gemini-3-flash-preview`,
+  `eval_model=gpt-o4-mini`, `max_steps=100`, `--no-thinking`,
+  `thinking_level=minimal`, headed local browser,
+  `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
