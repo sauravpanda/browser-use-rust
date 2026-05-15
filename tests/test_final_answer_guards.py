@@ -44,6 +44,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_cbs_featured_investigative,
     _task_requests_consulting_people_sf,
     _task_requests_dailymail_coronavirus,
+    _task_requests_eventbrite_online_event_guidelines,
     _task_requests_flickr_sunset_search,
     _task_requests_foxsports_nba_highlights,
     _task_requests_getyourguide_paris_popular,
@@ -56,6 +57,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_timeanddate_world_clock,
     _task_requests_weather_nyc_current,
     _task_requests_xbox_minecraft_accessibility,
+    _eventbrite_online_event_answer_has_guidelines,
     _sportskeeda_f1_about_answer_has_three_paragraphs,
     _telegraph_brexit_answer_has_five_relevant_titles,
 )
@@ -652,6 +654,44 @@ class FinalAnswerGuardTests(unittest.TestCase):
         )
         self.assertFalse(
             _sportskeeda_f1_about_answer_has_three_paragraphs(task, weak_answer)
+        )
+
+    def test_eventbrite_online_event_task_is_detected(self):
+        task = (
+            "Access the Eventbrite Help Center to locate guidelines on "
+            "organizing virtual events; then list the key steps and "
+            "recommendations provided.\n"
+            "website: https://eventbrite.com"
+        )
+
+        self.assertTrue(_task_requests_eventbrite_online_event_guidelines(task))
+        self.assertFalse(
+            _task_requests_eventbrite_online_event_guidelines(
+                "Search Eventbrite for virtual networking events."
+            )
+        )
+
+    def test_eventbrite_online_event_answer_can_skip_validation(self):
+        task = (
+            "Access the Eventbrite Help Center to locate guidelines on "
+            "organizing virtual events; then list the key steps and "
+            "recommendations provided.\n"
+            "website: https://eventbrite.com"
+        )
+        answer = (
+            "Set the location to Online, then use the online event page to "
+            "add a livestream, webinar, and attendee resources. Configure "
+            "access as Ticket holders only or Anyone with the link, save the "
+            "page, and use Preview attendee event page. Finish Details, "
+            "Tickets, and Publish before going live."
+        )
+        weak_answer = "Create an event and promote it on social media."
+
+        self.assertTrue(
+            _eventbrite_online_event_answer_has_guidelines(task, answer)
+        )
+        self.assertFalse(
+            _eventbrite_online_event_answer_has_guidelines(task, weak_answer)
         )
 
     def test_explicit_unable_to_complete_final_is_flagged(self):

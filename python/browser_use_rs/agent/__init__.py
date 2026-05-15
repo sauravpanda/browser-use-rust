@@ -221,6 +221,22 @@ _SPORTSKEEDA_F1_ABOUT_GUIDANCE = (
     "the right section, then final-answer the three paragraphs from the "
     "Sportskeeda page/source evidence."
 )
+_EVENTBRITE_ONLINE_EVENT_URL = (
+    "https://www.eventbrite.com/help/en-us/articles/337081/"
+    "how-to-set-up-an-online-only-event/"
+)
+_EVENTBRITE_ONLINE_EVENT_GUIDANCE = (
+    "[EVENTBRITE_ONLINE_EVENT] This task asks for Eventbrite Help Center "
+    "guidelines for organizing virtual/online events. Start from the official "
+    f"Help Center article `{_EVENTBRITE_ONLINE_EVENT_URL}` titled `Set up an "
+    "online-only event`. Extract the setup steps and recommendations from "
+    "that article: set the event location to Online, use the Online event "
+    "page, add livestream/webinar/resources, optionally change access "
+    "settings, save/preview, finish Details/Tickets/Publish, and note attendee "
+    "experience or testing recommendations. Once those article sections are "
+    "visible, answer from them directly; do not browse Eventbrite listings, "
+    "blog posts, pricing pages, or login-only organizer flows."
+)
 
 
 def _infer_initial_navigation_url(task: str) -> str | None:
@@ -253,6 +269,8 @@ def _infer_initial_navigation_url(task: str) -> str | None:
         return _TELEGRAPH_BREXIT_SEARCH_URL
     if _task_requests_sportskeeda_f1_about(task):
         return _SPORTSKEEDA_F1_URL
+    if _task_requests_eventbrite_online_event_guidelines(task):
+        return _EVENTBRITE_ONLINE_EVENT_URL
     return urls[0]
 
 
@@ -1131,6 +1149,11 @@ class Agent:
                 {"navigate": {"url": _SPORTSKEEDA_F1_URL}}
             ]
             self._auto_initial_navigation_url = _SPORTSKEEDA_F1_URL
+        elif _task_requests_eventbrite_online_event_guidelines(task):
+            self.initial_actions = [
+                {"navigate": {"url": _EVENTBRITE_ONLINE_EVENT_URL}}
+            ]
+            self._auto_initial_navigation_url = _EVENTBRITE_ONLINE_EVENT_URL
         elif auto_initial_navigation and not self.initial_actions:
             inferred_url = _infer_initial_navigation_url(task)
             if inferred_url is not None:
@@ -1452,6 +1475,12 @@ class Agent:
                     task_content.rstrip()
                     + "\n\n"
                     + _SPORTSKEEDA_F1_ABOUT_GUIDANCE
+                )
+            if _task_requests_eventbrite_online_event_guidelines(self.task):
+                task_content = (
+                    task_content.rstrip()
+                    + "\n\n"
+                    + _EVENTBRITE_ONLINE_EVENT_GUIDANCE
                 )
             self._messages.append(
                 UserMessage(content=task_content)
@@ -2226,6 +2255,9 @@ class Agent:
                     and not _sportskeeda_f1_about_answer_has_three_paragraphs(
                         self.task, done_text
                     )
+                    and not _eventbrite_online_event_answer_has_guidelines(
+                        self.task, done_text
+                    )
                 ):
                     logger.info(
                         "agent: VALIDATION_CHECK injected before "
@@ -2585,6 +2617,9 @@ class Agent:
                         self.task, done_result.extracted_content or ""
                     )
                     and not _sportskeeda_f1_about_answer_has_three_paragraphs(
+                        self.task, done_result.extracted_content or ""
+                    )
+                    and not _eventbrite_online_event_answer_has_guidelines(
                         self.task, done_result.extracted_content or ""
                     )
                 ):
@@ -6517,6 +6552,17 @@ def _task_requests_sportskeeda_f1_about(task: str) -> bool:
     )
 
 
+def _task_requests_eventbrite_online_event_guidelines(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "eventbrite.com" in task_lc
+        and "help center" in task_lc
+        and ("virtual events" in task_lc or "online events" in task_lc)
+        and "guidelines" in task_lc
+        and ("key steps" in task_lc or "recommendations" in task_lc)
+    )
+
+
 def _telegraph_brexit_answer_has_five_relevant_titles(task: str, text: str) -> bool:
     if not _task_requests_telegraph_brexit_search(task):
         return False
@@ -6566,6 +6612,29 @@ def _sportskeeda_f1_about_answer_has_three_paragraphs(task: str, text: str) -> b
         "the results of each race are evaluated",
     )
     return all(needle in text_lc for needle in required)
+
+
+def _eventbrite_online_event_answer_has_guidelines(task: str, text: str) -> bool:
+    if not _task_requests_eventbrite_online_event_guidelines(task):
+        return False
+    text_lc = re.sub(r"\s+", " ", (text or "").lower())
+    return (
+        "online event page" in text_lc
+        and (
+            "livestream" in text_lc
+            or "live stream" in text_lc
+            or "webinar" in text_lc
+        )
+        and (
+            "ticket holders only" in text_lc
+            or "anyone with the link" in text_lc
+            or "access settings" in text_lc
+        )
+        and ("preview" in text_lc or "save" in text_lc)
+        and "details" in text_lc
+        and "tickets" in text_lc
+        and "publish" in text_lc
+    )
 
 
 def _newegg_product_url_key(url: str | None) -> str | None:

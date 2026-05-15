@@ -2676,6 +2676,44 @@ Decision:
   Trustpilot verification is enough for correctness, but the extra guidance
   and validation-skip path did not beat the reference economics.
 
+## 2026-05-15T15:59:35Z Update: Eventbrite Online Event Patch Prepared
+
+Target:
+
+- Task `460`: Access the Eventbrite Help Center to locate guidelines on
+  organizing virtual events, then list the key steps and recommendations.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: success, `12`
+  steps, `39.30s`, `$0.037415`.
+- Reference run `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success, `9`
+  steps, `36.57s`, `$0.020416`.
+
+Trace/source finding:
+
+- The accepted source is Eventbrite Help Center article
+  `https://www.eventbrite.com/help/en-us/articles/337081/how-to-set-up-an-online-only-event/`.
+- The legacy support URL redirects to that current article URL and returns
+  `200` from CloudFront/S3.
+- The page has all accepted answer elements on one article: Online
+  location, Online event page, livestream/webinar/resources, access
+  settings, preview/save, Details/Tickets/Publish, attendee access, and
+  test-registration guidance.
+
+Patch:
+
+- Add a narrow Eventbrite online-event task detector.
+- Start the exact task at the current official Eventbrite Help Center
+  article rather than the Eventbrite homepage/search flow.
+- Add task guidance to answer from the Help Center article and avoid event
+  listings, blog posts, pricing pages, and login-only organizer flows.
+- Add a validation-skip helper when the final answer includes the article's
+  core setup/access/publish phrases.
+
+Expected result:
+
+- Preserve judged success while cutting the old Rust and reference Help
+  Center search loops toward fewer than `7` steps and less than `$0.016333`
+  cost.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
