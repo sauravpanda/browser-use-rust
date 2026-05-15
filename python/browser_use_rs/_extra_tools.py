@@ -26,11 +26,7 @@ import re
 import tempfile
 import uuid
 from datetime import datetime
-from math import asin, cos, radians, sin, sqrt
 from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 
 from browser_use_rs.tools import tool
 
@@ -72,46 +68,6 @@ def _runtime_context_for_extractor() -> str:
 
 
 _SEARCH_CHALLENGE_CACHE: dict[tuple[int, str], str] = {}
-
-_VA_FACILITY_API_URL = "https://api.va.gov/facilities_api/v2/va"
-_VA_FACILITY_HEADERS = {
-    "Accept": "application/json",
-    "Content-Type": "application/json",
-    "Source-App-Name": "facilities",
-    "User-Agent": "Mozilla/5.0",
-    "X-Key-Inflection": "camel",
-}
-_VA_FACILITY_TYPE_ALIASES = {
-    "": "health",
-    "facility": "health",
-    "facilities": "health",
-    "health": "health",
-    "medical": "health",
-    "clinic": "health",
-    "clinics": "health",
-    "va facilities": "health",
-    "va health": "health",
-    "benefit": "benefits",
-    "benefits": "benefits",
-    "cemetery": "cemetery",
-    "cemeteries": "cemetery",
-    "vet center": "vet_center",
-    "vet centers": "vet_center",
-    "vet_center": "vet_center",
-    "all": "",
-    "all facilities": "",
-    "all va facilities": "",
-}
-_VA_SERVICE_TYPE_ALIASES = {
-    "": "",
-    "all": "",
-    "primary care": "PrimaryCare",
-    "primarycare": "PrimaryCare",
-    "mental health": "MentalHealth",
-    "dental": "Dental",
-    "urgent care": "UrgentCare",
-    "emergency care": "EmergencyCare",
-}
 
 
 def _search_challenge_url_reason(url: str) -> str:
@@ -230,186 +186,6 @@ def _search_challenge_message(
         "one alternative engine or a same-site endpoint, then finish with "
         "success=false if the required site data remains inaccessible."
     )
-
-
-def _normalize_va_lookup_text(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
-
-
-def _known_va_locator_center(address: str) -> tuple[float, float] | None:
-    normalized = _normalize_va_lookup_text(address)
-    if "arlington" in normalized and (
-        re.search(r"\bva\b", normalized) or "virginia" in normalized
-    ):
-        return 38.8769326, -77.0893094
-    return None
-
-
-def _nominatim_center(address: str) -> tuple[float, float]:
-    query = urlencode({"format": "json", "limit": "1", "q": address})
-    req = Request(
-        f"https://nominatim.openstreetmap.org/search?{query}",
-        headers={
-            "Accept": "application/json",
-            "User-Agent": "browser-use-rs/va-locator",
-        },
-    )
-    with urlopen(req, timeout=8) as resp:
-        data = json.loads(resp.read().decode("utf-8", "replace"))
-    if not data:
-        raise ValueError(f"no geocoding result for {address!r}")
-    first = data[0]
-    return float(first["lat"]), float(first["lon"])
-
-
-def _va_locator_center(address: str) -> tuple[float, float]:
-    return _known_va_locator_center(address) or _nominatim_center(address)
-
-
-def _bbox_around(lat: float, lon: float, radius_miles: float = 15.0) -> list[str]:
-    radius_miles = max(5.0, min(float(radius_miles), 75.0))
-    lat_delta = radius_miles / 69.0
-    lon_delta = radius_miles / max(10.0, 69.0 * cos(radians(lat)))
-    return [
-        f"{lon - lon_delta:.6f}",
-        f"{lat - lat_delta:.6f}",
-        f"{lon + lon_delta:.6f}",
-        f"{lat + lat_delta:.6f}",
-    ]
-
-
-def _haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    dlat = radians(lat2 - lat1)
-    dlon = radians(lon2 - lon1)
-    rlat1 = radians(lat1)
-    rlat2 = radians(lat2)
-    a = sin(dlat / 2) ** 2 + cos(rlat1) * cos(rlat2) * sin(dlon / 2) ** 2
-    return 3958.8 * 2 * asin(sqrt(a))
-
-
-def _va_facility_type_code(facility_type: str) -> str:
-    normalized = _normalize_va_lookup_text(facility_type).replace(" ", "_")
-    spaced = normalized.replace("_", " ")
-    return _VA_FACILITY_TYPE_ALIASES.get(
-        normalized,
-        _VA_FACILITY_TYPE_ALIASES.get(spaced, facility_type.strip()),
-    )
-
-
-def _va_service_type_code(service_type: str) -> str:
-    normalized = _normalize_va_lookup_text(service_type)
-    return _VA_SERVICE_TYPE_ALIASES.get(
-        normalized,
-        re.sub(r"\s+", "", service_type.strip()),
-    )
-
-
-def _va_facility_address(attributes: dict[str, Any]) -> str:
-    address = attributes.get("address") or {}
-    physical = address.get("physical") or {}
-    parts = [
-        physical.get("address1"),
-        physical.get("address2"),
-        physical.get("address3"),
-    ]
-    city_line = ", ".join(
-        part
-        for part in (
-            physical.get("city"),
-            " ".join(
-                part
-                for part in (physical.get("state"), physical.get("zip"))
-                if part
-            ),
-        )
-        if part
-    )
-    if city_line:
-        parts.append(city_line)
-    return ", ".join(str(part).strip() for part in parts if str(part or "").strip())
-
-
-def _va_facility_locator_sync(
-    address: str,
-    limit: int,
-    facility_type: str,
-    service_type: str,
-) -> str:
-    address = (address or "").strip()
-    if not address:
-        return "(missing address)"
-    limit = max(1, min(int(limit or 3), 10))
-    type_code = _va_facility_type_code(facility_type)
-    service_code = _va_service_type_code(service_type)
-    try:
-        lat, lon = _va_locator_center(address)
-    except Exception as e:
-        return f"(could not geocode {address!r}: {type(e).__name__}: {str(e)[:240]})"
-
-    body: dict[str, Any] = {
-        "address": address,
-        "bbox": _bbox_around(lat, lon),
-        "latitude": lat,
-        "longitude": lon,
-        "page": 1,
-        "per_page": 10,
-    }
-    if type_code:
-        body["type"] = type_code
-    if type_code in {"health", "vet_center"}:
-        body["mobile"] = False
-    if type_code in {"health", "benefits"} and service_code:
-        body["services"] = [service_code]
-
-    req = Request(
-        _VA_FACILITY_API_URL,
-        data=json.dumps(body).encode("utf-8"),
-        headers=_VA_FACILITY_HEADERS,
-        method="POST",
-    )
-    try:
-        with urlopen(req, timeout=15) as resp:
-            payload = json.loads(resp.read().decode("utf-8", "replace"))
-    except HTTPError as e:
-        detail = e.read().decode("utf-8", "replace")[:300]
-        return f"(VA facility API HTTP {e.code}: {detail})"
-    except (URLError, TimeoutError, OSError) as e:
-        return f"(VA facility API error: {type(e).__name__}: {str(e)[:240]})"
-    except json.JSONDecodeError as e:
-        return f"(VA facility API returned invalid JSON: {e})"
-
-    rows = list(payload.get("data") or [])
-    if not rows:
-        label = type_code or "all"
-        return f"(no VA.gov facility locator results for {address!r}, type={label})"
-
-    def sort_key(item: dict[str, Any]) -> tuple[float, str]:
-        attrs = item.get("attributes") or {}
-        try:
-            dist = _haversine_miles(lat, lon, float(attrs["lat"]), float(attrs["long"]))
-        except Exception:
-            dist = float("inf")
-        return dist, str(attrs.get("name") or "")
-
-    sorted_rows = sorted(rows, key=sort_key)[:limit]
-    label = type_code or "all VA facilities"
-    if service_code:
-        label = f"{label}, service={service_code}"
-    out = [
-        f"VA.gov facility locator results for {address} "
-        f"({label}; sorted nearest first):"
-    ]
-    for idx, item in enumerate(sorted_rows, 1):
-        attrs = item.get("attributes") or {}
-        name = str(
-            attrs.get("name")
-            or attrs.get("officialStationName")
-            or item.get("id")
-            or ""
-        ).strip()
-        address_line = _va_facility_address(attrs)
-        out.append(f"{idx}. {name} — {address_line}".strip())
-    return "\n".join(out)
 
 
 # ---------------------------------------------------------------------------
@@ -991,34 +767,6 @@ async def go_back(session) -> str:
     browser's back button."""
     await session.evaluate("(() => { history.back(); return ''; })()")
     return "navigated back"
-
-
-@tool
-async def va_facility_locator(
-    session,
-    address: str,
-    limit: int = 3,
-    facility_type: str = "health",
-    service_type: str = "",
-) -> str:
-    """Search VA.gov's official facility locator API near an address.
-    Use for VA.gov facility-locator tasks asking for VA facilities,
-    clinics, names, or addresses near a place.
-
-    Args:
-        address: City/state, ZIP, or full address to search near.
-        limit: Number of facilities to return. Default 3.
-        facility_type: health (default), benefits, cemetery, vet_center,
-            or all.
-        service_type: Optional VA health service, e.g. Primary care.
-    """
-    return await asyncio.to_thread(
-        _va_facility_locator_sync,
-        address,
-        limit,
-        facility_type,
-        service_type,
-    )
 
 
 @tool
@@ -2204,7 +1952,6 @@ EXTRA_STATELESS_TOOLS = [
     send_keys,
     go_back,
     evaluate_js,
-    va_facility_locator,
     web_search,        # v0.6.5
     extract_links,     # v0.6.5
     extract_images,    # v0.6.5
