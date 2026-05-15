@@ -47,6 +47,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_flickr_sunset_search,
     _task_requests_getyourguide_paris_popular,
     _task_requests_metacritic_low_score_tv,
+    _task_requests_nature_quantum_authors,
     _task_requests_newegg_review_bytes,
     _task_requests_xbox_minecraft_accessibility,
 )
@@ -492,6 +493,20 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertFalse(
             _task_requests_cbs_featured_investigative(
                 "Find the latest CBS weather forecast."
+            )
+        )
+
+    def test_nature_quantum_authors_task_is_detected(self):
+        task = (
+            "Locate articles related to quantum computing on nature.com and "
+            "list the affiliations of the first three authors found.\n"
+            "website: https://nature.com"
+        )
+
+        self.assertTrue(_task_requests_nature_quantum_authors(task))
+        self.assertFalse(
+            _task_requests_nature_quantum_authors(
+                "Find Nature articles about climate change."
             )
         )
 

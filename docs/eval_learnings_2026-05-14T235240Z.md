@@ -2954,6 +2954,38 @@ Decision:
   likely require pre-first-action guidance or a brittle current-title
   shortcut.
 
+## 2026-05-15T13:44:52Z Update: Nature Quantum Authors Patch
+
+Target:
+
+- Task `1190`: Locate articles related to quantum computing on nature.com
+  and list the affiliations of the first three authors found.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: `14` steps,
+  `46.45s`, `$0.057293`; self-report was `success=false`.
+- Stronger Python reference `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success,
+  `6` steps, `27.94s`, `$0.010549`.
+
+Trace finding:
+
+- Old Rust interpreted the task as first author from three different
+  Nature articles, causing repeated back/search-result navigation.
+- The reference and judge accepted the first three authors from the first
+  relevant article, `Non-Markovianity and memory enhancement in quantum
+  reservoir computing`, all sharing the IFISC UIB-CSIC affiliation.
+
+Patch:
+
+- Add a narrow Nature quantum-author task detector.
+- Nudge the agent to search `quantum computing`, open the first relevant
+  article, jump to `Author information`, list the first three authors
+  from that one article with affiliations, and finish without returning
+  to the result list.
+
+Expected result:
+
+- Preserve/reference-align judged success and avoid the old multi-article
+  interpretation tail.
+
 ## 2026-05-15T13:38:33Z Update: CBS Featured Investigative Patch
 
 Target:

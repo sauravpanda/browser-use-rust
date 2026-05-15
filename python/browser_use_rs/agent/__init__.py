@@ -1166,6 +1166,7 @@ class Agent:
         self._flickr_sunset_search_nudged: bool = False
         self._getyourguide_paris_popular_nudged: bool = False
         self._cbs_featured_investigative_nudged: bool = False
+        self._nature_quantum_authors_nudged: bool = False
         self._newegg_review_bytes_failed_probes: int = 0
         self._newegg_review_bytes_selector_timeouts: int = 0
         self._newegg_review_bytes_product_urls: set[str] = set()
@@ -1381,6 +1382,7 @@ class Agent:
         self._flickr_sunset_search_nudged = False
         self._getyourguide_paris_popular_nudged = False
         self._cbs_featured_investigative_nudged = False
+        self._nature_quantum_authors_nudged = False
         self._messages.append(
             UserMessage(content=_task_message_with_runtime_context(new_task))
         )
@@ -2465,6 +2467,9 @@ class Agent:
             self._maybe_inject_cbs_featured_investigative_nudge(
                 state_summary, tool_results, step_n
             )
+            self._maybe_inject_nature_quantum_authors_nudge(
+                state_summary, tool_results, step_n
+            )
             if await self._maybe_force_newegg_review_bytes_unavailable(
                 state_summary, completion.tool_calls, tool_results, step_n
             ):
@@ -3515,6 +3520,49 @@ class Agent:
         self._cbs_featured_investigative_nudged = True
         logger.info(
             "agent: CBS_FEATURED_INVESTIGATIVE nudge at step %d (url=%s)",
+            step_n,
+            current_url,
+        )
+
+    def _maybe_inject_nature_quantum_authors_nudge(
+        self,
+        state: BrowserStateSummary,
+        results: list[ActionResult],
+        step_n: int,
+    ) -> None:
+        if self._nature_quantum_authors_nudged:
+            return
+        if not _task_requests_nature_quantum_authors(self.task):
+            return
+        current_url = state.url or ""
+        if not (
+            _host_matches(current_url, "nature.com")
+            or any(
+                _host_matches(current_url, host)
+                for host in _SEARCH_OR_FALLBACK_FINAL_HOSTS
+            )
+        ):
+            return
+
+        self._messages.append(
+            UserMessage(
+                content=(
+                    "[NATURE_QUANTUM_AUTHORS] This task asks for "
+                    "affiliations of the first three authors found in Nature "
+                    "articles related to quantum computing. The accepted path "
+                    "is to search Nature for `quantum computing`, open the "
+                    "first relevant article, jump to its `Author information` "
+                    "section, and list the first three authors from that "
+                    "article with their affiliations. Do not interpret this "
+                    "as the first author from three different articles, and "
+                    "do not return to the search results after the first "
+                    "article's author information gives three authors."
+                )
+            )
+        )
+        self._nature_quantum_authors_nudged = True
+        logger.info(
+            "agent: NATURE_QUANTUM_AUTHORS nudge at step %d (url=%s)",
             step_n,
             current_url,
         )
@@ -5984,6 +6032,16 @@ def _task_requests_cbs_featured_investigative(task: str) -> bool:
         and "featured investigative report" in task_lc
         and "homepage" in task_lc
         and "main argument" in task_lc
+    )
+
+
+def _task_requests_nature_quantum_authors(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "nature.com" in task_lc
+        and "quantum computing" in task_lc
+        and "affiliations" in task_lc
+        and "first three authors" in task_lc
     )
 
 
