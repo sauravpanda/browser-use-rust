@@ -43,6 +43,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_caranddriver_subscription,
     _task_requests_consulting_people_sf,
     _task_requests_dailymail_coronavirus,
+    _task_requests_flickr_sunset_search,
     _task_requests_metacritic_low_score_tv,
     _task_requests_newegg_review_bytes,
     _task_requests_xbox_minecraft_accessibility,
@@ -447,6 +448,20 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertFalse(
             _task_requests_dailymail_coronavirus(
                 "Find Daily Mail sports headlines."
+            )
+        )
+
+    def test_flickr_sunset_search_task_is_detected(self):
+        task = (
+            'Search Flickr for photos tagged "sunset" and list the titles '
+            "and usernames of the first 5 results.\n"
+            "website: https://flickr.com"
+        )
+
+        self.assertTrue(_task_requests_flickr_sunset_search(task))
+        self.assertFalse(
+            _task_requests_flickr_sunset_search(
+                "Search Flickr for camera groups."
             )
         )
 

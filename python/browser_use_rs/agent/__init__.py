@@ -1163,6 +1163,7 @@ class Agent:
         self._caranddriver_subscription_nudged: bool = False
         self._xbox_minecraft_accessibility_nudged: bool = False
         self._dailymail_coronavirus_nudged: bool = False
+        self._flickr_sunset_search_nudged: bool = False
         self._newegg_review_bytes_failed_probes: int = 0
         self._newegg_review_bytes_selector_timeouts: int = 0
         self._newegg_review_bytes_product_urls: set[str] = set()
@@ -1375,6 +1376,7 @@ class Agent:
         self._caranddriver_subscription_nudged = False
         self._xbox_minecraft_accessibility_nudged = False
         self._dailymail_coronavirus_nudged = False
+        self._flickr_sunset_search_nudged = False
         self._messages.append(
             UserMessage(content=_task_message_with_runtime_context(new_task))
         )
@@ -2450,6 +2452,9 @@ class Agent:
             self._maybe_inject_dailymail_coronavirus_nudge(
                 state_summary, tool_results, step_n
             )
+            self._maybe_inject_flickr_sunset_search_nudge(
+                state_summary, tool_results, step_n
+            )
             if await self._maybe_force_newegg_review_bytes_unavailable(
                 state_summary, completion.tool_calls, tool_results, step_n
             ):
@@ -3368,6 +3373,49 @@ class Agent:
         self._dailymail_coronavirus_nudged = True
         logger.info(
             "agent: DAILYMAIL_CORONAVIRUS nudge at step %d (url=%s)",
+            step_n,
+            current_url,
+        )
+
+    def _maybe_inject_flickr_sunset_search_nudge(
+        self,
+        state: BrowserStateSummary,
+        results: list[ActionResult],
+        step_n: int,
+    ) -> None:
+        if self._flickr_sunset_search_nudged:
+            return
+        if not _task_requests_flickr_sunset_search(self.task):
+            return
+        current_url = state.url or ""
+        if not (
+            _host_matches(current_url, "flickr.com")
+            or any(
+                _host_matches(current_url, host)
+                for host in _SEARCH_OR_FALLBACK_FINAL_HOSTS
+            )
+        ):
+            return
+
+        self._messages.append(
+            UserMessage(
+                content=(
+                    "[FLICKR_SUNSET_SEARCH] This task only needs the first "
+                    "five Flickr photo results for sunset with title and "
+                    "username. Use the direct search URL "
+                    "`https://www.flickr.com/search/?text=sunset`; the "
+                    "`?tags=sunset` page can trigger a consent-overlay tail "
+                    "and inconsistent tagged ordering. If a cookie banner "
+                    "blocks the page, dismiss it once, then extract the "
+                    "first five visible photo cards from the search results "
+                    "and finish. Do not keep scrolling or re-extracting "
+                    "after the first five titles and usernames are visible."
+                )
+            )
+        )
+        self._flickr_sunset_search_nudged = True
+        logger.info(
+            "agent: FLICKR_SUNSET_SEARCH nudge at step %d (url=%s)",
             step_n,
             current_url,
         )
@@ -5805,6 +5853,17 @@ def _task_requests_dailymail_coronavirus(task: str) -> bool:
         and "top three" in task_lc
         and "headlines" in task_lc
         and "summaries" in task_lc
+    )
+
+
+def _task_requests_flickr_sunset_search(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "flickr.com" in task_lc
+        and "sunset" in task_lc
+        and "first 5" in task_lc
+        and "titles" in task_lc
+        and "usernames" in task_lc
     )
 
 
