@@ -172,6 +172,57 @@ class ContextBloatGuardTests(unittest.TestCase):
         self.assertIn("omitted 2 ad/challenge iframe target(s)", out)
         self.assertLess(len(out), 1100)
 
+    def test_dismiss_cookie_overlay_checks_iframes_and_restores_active_target(self):
+        extra_tools = _load_extra_tools_module()
+
+        class Session:
+            def __init__(self):
+                self.active = "page1"
+                self.switches = []
+                self.evaluated = []
+
+            async def list_tabs(self):
+                return [
+                    (
+                        "page1",
+                        "https://www.bbcgoodfood.com/search?q=paleo+pancakes",
+                        "Good Food",
+                        "page",
+                        self.active == "page1",
+                    ),
+                    (
+                        "cmp1",
+                        "https://cmp.example/privacy",
+                        "Privacy Choices",
+                        "iframe",
+                        self.active == "cmp1",
+                    ),
+                ]
+
+            async def switch_tab(self, target_id):
+                self.switches.append(target_id)
+                self.active = target_id
+
+            async def evaluate(self, _expression):
+                self.evaluated.append(self.active)
+                if self.active == "cmp1":
+                    return (
+                        '{"clicked": true, "label": "Accept and continue", '
+                        '"url": "https://cmp.example/privacy"}'
+                    )
+                return (
+                    '{"clicked": false, "consentContext": false, '
+                    '"candidates": ["Page 1", "Search"]}'
+                )
+
+        session = Session()
+        out = asyncio.run(extra_tools.dismiss_cookie_overlay(session))
+
+        self.assertIn("clicked consent control in iframe:cmp1", out)
+        self.assertIn("Accept and continue", out)
+        self.assertEqual(session.active, "page1")
+        self.assertEqual(session.evaluated, ["page1", "cmp1"])
+
     def test_click_waits_for_new_tab_to_leave_about_blank(self):
         browser_tools = _load_browser_tools_module()
 

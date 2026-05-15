@@ -1018,6 +1018,171 @@ async def evaluate_js(session, expression: str) -> str:
     return raw[:5000] + ("…" if len(raw) > 5000 else "")
 
 
+_CONSENT_DISMISS_JS = r"""
+(() => {
+  const visible = (el) => {
+    try {
+      const r = el.getBoundingClientRect();
+      const s = getComputedStyle(el);
+      return r.width > 0 && r.height > 0 &&
+        s.visibility !== 'hidden' && s.display !== 'none' &&
+        Number(s.opacity || '1') > 0.01;
+    } catch (_) {
+      return false;
+    }
+  };
+  const labelFor = (el) => [
+    el.innerText,
+    el.textContent,
+    el.value,
+    el.getAttribute && el.getAttribute('aria-label'),
+    el.getAttribute && el.getAttribute('title'),
+    el.id,
+    el.className,
+  ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+  const pageText = ((document.body && (
+    document.body.innerText || document.body.textContent
+  )) || '').replace(/\s+/g, ' ').slice(0, 2000);
+  const consentContext =
+    /\b(cookie|cookies|consent|privacy|personal data|data processing|partners|contentpass|continue to site)\b/i
+      .test(pageText);
+  const strong =
+    /\b(accept|agree|allow|yes,?\s*i\s*accept|ok(?:ay)?|got it)\b/i;
+  const continueish =
+    /\b(accept\s*(?:all)?\s*(?:&|and)?\s*continue|accept\s+and\s+continue|continue\s+to\s+site|continue)\b/i;
+  const reject =
+    /\b(reject|decline|manage|settings|preferences|more options|learn more|sign in|subscribe)\b/i;
+  const selectors = [
+    'button',
+    '[role="button"]',
+    'input[type="button"]',
+    'input[type="submit"]',
+    'a',
+  ];
+  const seen = new Set();
+  const candidates = [];
+  for (const el of document.querySelectorAll(selectors.join(','))) {
+    if (seen.has(el)) continue;
+    seen.add(el);
+    if (!visible(el)) continue;
+    const label = labelFor(el);
+    if (!label) continue;
+    candidates.push(label.slice(0, 120));
+    const isStrong = strong.test(label);
+    const isContinue = continueish.test(label) && consentContext;
+    if ((isStrong || isContinue) && !reject.test(label)) {
+      el.click();
+      return JSON.stringify({
+        clicked: true,
+        label: label.slice(0, 160),
+        url: String(location.href).slice(0, 240),
+      });
+    }
+  }
+  return JSON.stringify({
+    clicked: false,
+    url: String(location.href).slice(0, 240),
+    consentContext,
+    candidates: candidates.slice(0, 8),
+  });
+})()
+"""
+
+
+@tool
+async def dismiss_cookie_overlay(session) -> str:
+    """Dismiss a cookie/privacy consent overlay in the page or iframes.
+
+    Use this when an "Accept", "Accept and continue", "Agree", or
+    similar cookie/privacy overlay is visible but normal `click(index=...)`
+    or top-document JavaScript cannot reach it. The tool checks the
+    active page and attachable iframe targets, clicks only consent-like
+    controls, and restores the original browser target before returning.
+    """
+
+    try:
+        targets = await session.list_tabs()
+    except Exception as e:
+        return f"(could not list browser targets: {type(e).__name__}: {str(e)[:300]})"
+
+    active_id = ""
+    ordered: list[tuple[str, str, str, str, bool]] = []
+    for target in targets or []:
+        try:
+            tid, url, title, ttype, active = target
+        except Exception:
+            continue
+        if active:
+            active_id = str(tid)
+            ordered.insert(0, target)
+        elif str(ttype or "") in {"iframe", "page"}:
+            ordered.append(target)
+
+    if not ordered:
+        return "(no page or iframe targets available for consent dismissal)"
+
+    inspected: list[str] = []
+    clicked = ""
+    for tid, url, title, ttype, active in ordered[:12]:
+        tid_s = str(tid)
+        ttype_s = str(ttype or "")
+        url_s = str(url or "")
+        title_s = str(title or "")
+        switched = False
+        try:
+            if not active:
+                await session.switch_tab(tid_s)
+                switched = True
+            raw = await session.evaluate(_CONSENT_DISMISS_JS)
+            data = json.loads(raw) if raw else {}
+        except Exception as e:
+            inspected.append(
+                f"{ttype_s}:{tid_s} error={type(e).__name__}: {str(e)[:120]}"
+            )
+            continue
+        finally:
+            if switched and active_id:
+                try:
+                    await session.switch_tab(active_id)
+                except Exception:
+                    pass
+
+        label = str(data.get("label") or "")
+        context = "consent-context" if data.get("consentContext") else "no-consent-context"
+        if data.get("clicked"):
+            clicked = (
+                f"clicked consent control in {ttype_s}:{tid_s}: "
+                f"{label or '(unlabelled control)'}"
+            )
+            try:
+                await asyncio.sleep(0.5)
+            except Exception:
+                pass
+            break
+        candidates = ", ".join(str(x)[:80] for x in data.get("candidates") or [])
+        inspected.append(
+            f"{ttype_s}:{tid_s} {context} {title_s[:80]} {url_s[:120]}"
+            + (f" buttons=[{candidates}]" if candidates else "")
+        )
+
+    if active_id and clicked:
+        try:
+            await session.switch_tab(active_id)
+        except Exception:
+            pass
+        return clicked
+
+    if active_id:
+        try:
+            await session.switch_tab(active_id)
+        except Exception:
+            pass
+    detail = "; ".join(inspected[:8])
+    if len(inspected) > 8:
+        detail += f"; ... {len(inspected) - 8} more targets"
+    return "(no cookie/privacy accept control found" + (f": {detail}" if detail else "") + ")"
+
+
 # ---------------------------------------------------------------------------
 # Stateful tools — capture the agent in a closure (extract uses LLM,
 # file tools share a sandboxed dir per-agent run).
@@ -1790,4 +1955,5 @@ EXTRA_STATELESS_TOOLS = [
     web_search,        # v0.6.5
     extract_links,     # v0.6.5
     extract_images,    # v0.6.5
+    dismiss_cookie_overlay,
 ]

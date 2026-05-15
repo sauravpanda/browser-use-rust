@@ -382,6 +382,25 @@ class FinalAnswerGuardTests(unittest.TestCase):
 
         self.assertTrue(_looks_like_failed_consent_overlay_attempt(calls, results))
 
+    def test_consent_selector_query_error_is_detected(self):
+        calls = [
+            ToolCall(
+                id="1",
+                name="find_elements",
+                args={"selector": 'button:has-text("Accept All & Continue")'},
+            )
+        ]
+        results = [
+            ActionResult(
+                extracted_content=(
+                    "(query error: SyntaxError: "
+                    "'button:has-text(...)' is not a valid selector.)"
+                )
+            )
+        ]
+
+        self.assertTrue(_looks_like_failed_consent_overlay_attempt(calls, results))
+
     def test_non_consent_not_found_is_not_consent_overlay_attempt(self):
         calls = [
             ToolCall(

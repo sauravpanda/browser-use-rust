@@ -506,8 +506,11 @@ Overlays: cookie consents / age gates / newsletter modals / "log in to
 continue" overlays often cover the actual content. If the snapshot is
 dominated by such an overlay, your FIRST action must be to dismiss it
 (Accept, Agree, Continue, OK, Got it, Allow, Dismiss, Close, Skip,
-Maybe later, No thanks, X). Do NOT conclude "task impossible" on
-your first turn — the real content is almost always one click away.
+Maybe later, No thanks, X). If normal indexed clicks or top-document
+JavaScript cannot reach a visible cookie/privacy button, call
+`dismiss_cookie_overlay()` once before retrying manually; it can inspect
+attachable iframe targets. Do NOT conclude "task impossible" on your
+first turn — the real content is almost always one click away.
 
 Blocked sites — alternative approaches REQUIRED:
 If the target site returns 403 / "access denied" / Cloudflare bot-
@@ -2677,7 +2680,7 @@ class Agent:
             self._consent_loop_nudged = False
 
         self._consent_loop_count += 1
-        if self._consent_loop_count < 3 or self._consent_loop_nudged:
+        if self._consent_loop_count < 2 or self._consent_loop_nudged:
             return
 
         direct_url = _direct_section_url_for_consent_recovery(
@@ -2688,10 +2691,12 @@ class Agent:
         nudge = (
             "[CONSENT_OVERLAY_LOOP] Repeated cookie/privacy consent "
             "button attempts returned not-found results without moving "
-            "the page. Stop trying to click consent controls. Use the "
-            "fresh page state, navigate directly to the requested "
-            "same-site section/page, or extract the content behind the "
-            "overlay."
+            "the page. If you have not already done so, call "
+            "`dismiss_cookie_overlay()` once; it can inspect iframe "
+            "targets that are invisible to top-document JavaScript. "
+            "Then use the fresh page state, navigate directly to the "
+            "requested same-site section/page, or extract the content "
+            "behind the overlay."
         )
         if direct_url:
             nudge += (
@@ -4850,7 +4855,9 @@ _CONSENT_TOOL_TEXT_RE = re.compile(
 _CONSENT_NOT_FOUND_RE = re.compile(
     r"(?i)\b(?:button|element|target)?\s*(?:still\s+)?not\s+found\b|"
     r"\bnot\s+found\s+(?:in|via)\b|"
-    r"\bno\s+(?:matching\s+)?(?:button|element)\b"
+    r"\bno\s+(?:matching\s+)?(?:button|element)\b|"
+    r"\bquery\s+error\b|"
+    r"\bnot\s+a\s+valid\s+selector\b"
 )
 _DIRECT_SECTION_SLUGS: tuple[tuple[str, str], ...] = (
     ("opinion", "opinion"),
