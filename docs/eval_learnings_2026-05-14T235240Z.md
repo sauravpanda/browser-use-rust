@@ -2714,6 +2714,28 @@ Expected result:
   Center search loops toward fewer than `7` steps and less than `$0.016333`
   cost.
 
+## 2026-05-15T16:01:29Z Update: Eventbrite Targeted Eval Launched
+
+Targeted run:
+
+- Run `kh751km428cf4xc47gx4fbczzs86rs0s`, workflow `25927795290`,
+  commit `c0412b7de510d250c56ff0f6605b70e295893bba`.
+- Dataset range: `start_index=158`, `end_index=159`, task `460`.
+- User message:
+  `bu-rust eventbrite-online-event targeted no-thinking gpt-o4-mini`.
+
+Configuration:
+
+- Same corrected object-shaped dispatch and minimal-thinking Gemini
+  config: `runtime=rs`, `gemini-3-flash-preview`,
+  `eval_model=gpt-o4-mini`, `max_steps=100`, `--no-thinking`,
+  `thinking_level=minimal`, headed local browser,
+  `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
