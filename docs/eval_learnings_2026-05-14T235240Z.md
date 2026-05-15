@@ -3560,6 +3560,27 @@ Expected result:
   overhead, ideally reducing the task to a one-step or two-step product-grid
   read.
 
+## 2026-05-15T17:17:27Z Update: Ulta Targeted Eval Launched
+
+Targeted run:
+
+- Run `kh7d6hv5m3m4b1csvzawbkc5ns86s293`, workflow `25931304518`,
+  commit `ce9b922fd3fd358790293df6bd91ced946223d13`.
+- Dataset range: `start_index=71`, `end_index=72`, task `1933`.
+- User message: `bu-rust ulta-haircare targeted no-thinking gpt-o4-mini`.
+
+Configuration:
+
+- Same corrected object-shaped dispatch and minimal-thinking Gemini
+  config: `runtime=rs`, `gemini-3-flash-preview`,
+  `eval_model=gpt-o4-mini`, `max_steps=100`, `--no-thinking`,
+  `thinking_level=minimal`, headed local browser,
+  `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
