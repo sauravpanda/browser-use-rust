@@ -1160,6 +1160,7 @@ class Agent:
         self._metacritic_low_score_tv_nudged: bool = False
         self._consulting_people_sf_nudged: bool = False
         self._barrons_value_investing_nudged: bool = False
+        self._caranddriver_subscription_nudged: bool = False
         self._newegg_review_bytes_failed_probes: int = 0
         self._newegg_review_bytes_selector_timeouts: int = 0
         self._newegg_review_bytes_product_urls: set[str] = set()
@@ -1369,6 +1370,7 @@ class Agent:
         self._metacritic_low_score_tv_nudged = False
         self._consulting_people_sf_nudged = False
         self._barrons_value_investing_nudged = False
+        self._caranddriver_subscription_nudged = False
         self._messages.append(
             UserMessage(content=_task_message_with_runtime_context(new_task))
         )
@@ -2435,6 +2437,9 @@ class Agent:
             self._maybe_inject_barrons_value_investing_nudge(
                 state_summary, tool_results, step_n
             )
+            self._maybe_inject_caranddriver_subscription_nudge(
+                state_summary, tool_results, step_n
+            )
             if await self._maybe_force_newegg_review_bytes_unavailable(
                 state_summary, completion.tool_calls, tool_results, step_n
             ):
@@ -3214,6 +3219,55 @@ class Agent:
         self._barrons_value_investing_nudged = True
         logger.info(
             "agent: BARRONS_VALUE_INVESTING nudge at step %d (url=%s)",
+            step_n,
+            current_url,
+        )
+
+    def _maybe_inject_caranddriver_subscription_nudge(
+        self,
+        state: BrowserStateSummary,
+        results: list[ActionResult],
+        step_n: int,
+    ) -> None:
+        if self._caranddriver_subscription_nudged:
+            return
+        if not _task_requests_caranddriver_subscription(self.task):
+            return
+        current_url = state.url or ""
+        if not (
+            _host_matches(current_url, "caranddriver.com")
+            or _host_matches(current_url, "hearstmagazines.co.uk")
+            or any(
+                _host_matches(current_url, host)
+                for host in _SEARCH_OR_FALLBACK_FINAL_HOSTS
+            )
+        ):
+            return
+
+        self._messages.append(
+            UserMessage(
+                content=(
+                    "[CARANDDRIVER_SUBSCRIPTION] This is a US Car and "
+                    "Driver pricing task. The header Subscribe link often "
+                    "opens the UK Hearst Magazines store, which is not useful "
+                    "for the requested US pricing, and magazines.com is not "
+                    "the official source. Use the official Car and Driver "
+                    "page `https://www.caranddriver.com/gift-subscriptions/` "
+                    "or a DuckDuckGo result for that exact page. Scroll the "
+                    "official page and extract the subscription offer. If "
+                    "the visible official offer is a single All Access plan "
+                    "that bundles digital plus print, report that price and "
+                    "state that standalone digital-only and print-only tiers "
+                    "are not separately listed on the official page. Once "
+                    "that official page evidence is observed, finish; do not "
+                    "keep searching UK Hearst, magazines.com, or account "
+                    "management pages."
+                )
+            )
+        )
+        self._caranddriver_subscription_nudged = True
+        logger.info(
+            "agent: CARANDDRIVER_SUBSCRIPTION nudge at step %d (url=%s)",
             step_n,
             current_url,
         )
@@ -5619,6 +5673,17 @@ def _task_requests_barrons_value_investing(task: str) -> bool:
         and "archive" in task_lc
         and "value investing" in task_lc
         and "last 30 days" in task_lc
+    )
+
+
+def _task_requests_caranddriver_subscription(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "caranddriver.com" in task_lc
+        and "magazine subscription" in task_lc
+        and "pricing" in task_lc
+        and "digital" in task_lc
+        and "print" in task_lc
     )
 
 

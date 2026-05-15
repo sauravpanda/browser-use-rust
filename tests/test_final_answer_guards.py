@@ -40,6 +40,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _newegg_review_bytes_evidence_labels,
     _newegg_review_bytes_should_force,
     _task_requests_barrons_value_investing,
+    _task_requests_caranddriver_subscription,
     _task_requests_consulting_people_sf,
     _task_requests_metacritic_low_score_tv,
     _task_requests_newegg_review_bytes,
@@ -403,6 +404,20 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertFalse(
             _task_requests_barrons_value_investing(
                 "Search Barron's for Tesla stock news."
+            )
+        )
+
+    def test_caranddriver_subscription_task_is_detected(self):
+        task = (
+            "Browse to the magazine subscription page and list the pricing "
+            "details for both the digital and print subscription options.\n"
+            "website: https://caranddriver.com"
+        )
+
+        self.assertTrue(_task_requests_caranddriver_subscription(task))
+        self.assertFalse(
+            _task_requests_caranddriver_subscription(
+                "Find the latest Car and Driver EV review."
             )
         )
 

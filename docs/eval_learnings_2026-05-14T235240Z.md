@@ -3441,3 +3441,37 @@ Decision:
 - Reject the direct-DuckDuckGo refinement.
 - Restore the first Barron's nudge wording from commit `e86b980`,
   which preserved judged success while improving old Rust materially.
+
+## 2026-05-15T12:30:34Z Update: Car and Driver Subscription Patch
+
+Target:
+
+- Task `211`: Browse to the Car and Driver magazine subscription page
+  and list pricing details for digital and print subscription options.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: success, `40`
+  steps, `424.94s`, `$0.128172`.
+- Stronger Python reference `kh7b4qp4610am5s99j7e3bzy0d86rfwn`:
+  success, `12` steps, `58.55s`, `$0.024260`.
+
+Trace finding:
+
+- Old Rust spent many steps on the UK Hearst Magazines store, timed-out
+  direct navigation, generic search, and magazines.com.
+- The useful evidence came from the official
+  `https://www.caranddriver.com/gift-subscriptions/` page.
+- The accepted answer reports the official All Access bundle at `$14.99`
+  for one year, with digital and print bundled rather than separately
+  listed as standalone official tiers.
+
+Patch:
+
+- Add a narrow Car and Driver subscription pricing task detector.
+- Nudge away from UK Hearst, magazines.com, and account-management pages.
+- Direct the agent to the official gift-subscriptions page and allow it
+  to finish once the All Access digital-plus-print pricing is observed.
+
+Expected result:
+
+- Preserve success.
+- Cut the old Rust detour through unrelated subscription stores toward
+  the reference's `12` steps.
