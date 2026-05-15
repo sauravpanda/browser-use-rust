@@ -3075,6 +3075,37 @@ Decision:
   starting there directly can collapse menu/cookie discovery into a
   one-step accepted answer without hard-coding page content.
 
+## 2026-05-15T16:37:47Z Update: Softonic Latest Articles Patch Prepared
+
+Target:
+
+- Task `2249`: Browse the news page for the latest tech news articles on
+  Softonic and extract the headlines of the three most recent posts.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: success, `5` steps,
+  `17.69s`, `$0.015128`.
+- Reference run `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success, `3`
+  steps, `15.34s`, `$0.003490`.
+
+Trace finding:
+
+- Both successful traces used Softonic's official articles/news page:
+  `https://en.softonic.com/articles`.
+- The judge accepted the first three entries in the `Latest articles`
+  section as the requested latest tech-news posts.
+
+Patch:
+
+- Add a narrow Softonic latest-articles task detector.
+- Start the exact task at `https://en.softonic.com/articles`.
+- Add guidance to read the first three visible article headlines in page
+  order and finish without opening individual articles or app-download
+  pages.
+
+Expected result:
+
+- Preserve judged success while cutting the old Rust navigation and
+  re-reading path toward a direct page-read answer.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the

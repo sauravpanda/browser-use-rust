@@ -52,6 +52,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_nature_quantum_authors,
     _task_requests_newegg_review_bytes,
     _task_requests_people_entertainment_video_description,
+    _task_requests_softonic_latest_articles,
     _task_requests_sportskeeda_f1_about,
     _task_requests_telegraph_brexit_search,
     _task_requests_timeanddate_world_clock,
@@ -476,6 +477,20 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertFalse(
             _task_requests_webmd_health_news_top_story(
                 "Open WebMD and search for allergy symptoms."
+            )
+        )
+
+    def test_softonic_latest_articles_task_is_detected(self):
+        task = (
+            "Browse the news page for the latest tech news articles on "
+            "Softonic and extract the headlines of the three most recent "
+            "posts.\nwebsite: https://en.softonic.com/"
+        )
+
+        self.assertTrue(_task_requests_softonic_latest_articles(task))
+        self.assertFalse(
+            _task_requests_softonic_latest_articles(
+                "Find Softonic download pages for video editors."
             )
         )
 

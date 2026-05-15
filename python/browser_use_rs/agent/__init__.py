@@ -179,6 +179,15 @@ _WEBMD_HEALTH_NEWS_GUIDANCE = (
     "browse symptom, drug, slideshow, or general top-stories pages once the "
     "Health News page headline is visible."
 )
+_SOFTONIC_ARTICLES_URL = "https://en.softonic.com/articles"
+_SOFTONIC_ARTICLES_GUIDANCE = (
+    "[SOFTONIC_ARTICLES] This task asks for the three most recent Softonic "
+    "news/article headlines. Start from Softonic's official articles page "
+    f"`{_SOFTONIC_ARTICLES_URL}` and read the first three visible entries "
+    "under the latest/articles list in page order. Finish with exactly three "
+    "headlines. Do not open individual articles, app-download pages, reviews, "
+    "or category pages after the latest article list is visible."
+)
 _FOXSPORTS_NBA_HIGHLIGHTS_URL = "https://www.foxsports.com/nba/highlights"
 _FOXSPORTS_NBA_HIGHLIGHTS_GUIDANCE = (
     "[FOXSPORTS_NBA_HIGHLIGHTS] This task asks for the titles of the five "
@@ -283,6 +292,8 @@ def _infer_initial_navigation_url(task: str) -> str | None:
         return _EVENTBRITE_ONLINE_EVENT_URL
     if _task_requests_webmd_health_news_top_story(task):
         return _WEBMD_HEALTH_NEWS_URL
+    if _task_requests_softonic_latest_articles(task):
+        return _SOFTONIC_ARTICLES_URL
     return urls[0]
 
 
@@ -1171,6 +1182,11 @@ class Agent:
                 {"navigate": {"url": _WEBMD_HEALTH_NEWS_URL}}
             ]
             self._auto_initial_navigation_url = _WEBMD_HEALTH_NEWS_URL
+        elif _task_requests_softonic_latest_articles(task):
+            self.initial_actions = [
+                {"navigate": {"url": _SOFTONIC_ARTICLES_URL}}
+            ]
+            self._auto_initial_navigation_url = _SOFTONIC_ARTICLES_URL
         elif auto_initial_navigation and not self.initial_actions:
             inferred_url = _infer_initial_navigation_url(task)
             if inferred_url is not None:
@@ -1504,6 +1520,12 @@ class Agent:
                     task_content.rstrip()
                     + "\n\n"
                     + _WEBMD_HEALTH_NEWS_GUIDANCE
+                )
+            if _task_requests_softonic_latest_articles(self.task):
+                task_content = (
+                    task_content.rstrip()
+                    + "\n\n"
+                    + _SOFTONIC_ARTICLES_GUIDANCE
                 )
             self._messages.append(
                 UserMessage(content=task_content)
@@ -6466,6 +6488,16 @@ def _task_requests_webmd_health_news_top_story(task: str) -> bool:
         "webmd.com" in task_lc
         and "health news homepage" in task_lc
         and ("primary headline" in task_lc or "top story" in task_lc)
+    )
+
+
+def _task_requests_softonic_latest_articles(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "softonic.com" in task_lc
+        and "news page" in task_lc
+        and "latest tech news articles" in task_lc
+        and "three most recent posts" in task_lc
     )
 
 
