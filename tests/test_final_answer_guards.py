@@ -54,14 +54,12 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_people_entertainment_video_description,
     _task_requests_sportskeeda_f1_about,
     _task_requests_telegraph_brexit_search,
-    _task_requests_texas_payments_faq,
     _task_requests_timeanddate_world_clock,
     _task_requests_weather_nyc_current,
     _task_requests_xbox_minecraft_accessibility,
     _eventbrite_online_event_answer_has_guidelines,
     _sportskeeda_f1_about_answer_has_three_paragraphs,
     _telegraph_brexit_answer_has_five_relevant_titles,
-    _texas_payments_faq_answer_has_top_three,
 )
 from browser_use_rs.llm.base import ToolCall  # noqa: E402
 from browser_use_rs.views import ActionResult, BrowserStateSummary  # noqa: E402
@@ -694,44 +692,6 @@ class FinalAnswerGuardTests(unittest.TestCase):
         )
         self.assertFalse(
             _eventbrite_online_event_answer_has_guidelines(task, weak_answer)
-        )
-
-    def test_texas_payments_faq_task_is_detected(self):
-        task = (
-            "Use Texas.gov's search tool to navigate to the FAQs section for "
-            "payments on Texas.gov applications and list the top three "
-            "frequently asked questions provided.\n"
-            "website: https://texas.gov"
-        )
-
-        self.assertTrue(_task_requests_texas_payments_faq(task))
-        self.assertFalse(
-            _task_requests_texas_payments_faq(
-                "Find Texas.gov voter registration FAQs."
-            )
-        )
-
-    def test_texas_payments_faq_answer_can_skip_validation(self):
-        task = (
-            "Use Texas.gov's search tool to navigate to the FAQs section for "
-            "payments on Texas.gov applications and list the top three "
-            "frequently asked questions provided.\n"
-            "website: https://texas.gov"
-        )
-        answer = (
-            "1. Why was my payment declined?\n"
-            "2. Why is my card getting charged even though the payment was "
-            "declined?\n"
-            "3. I'm paying with a corporate card and need to enter a billing "
-            "ZIP code. What should I do?"
-        )
-
-        self.assertTrue(_texas_payments_faq_answer_has_top_three(task, answer))
-        self.assertFalse(
-            _texas_payments_faq_answer_has_top_three(
-                task,
-                "The page includes payment questions and other application FAQs.",
-            )
         )
 
     def test_explicit_unable_to_complete_final_is_flagged(self):

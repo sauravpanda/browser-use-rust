@@ -2831,6 +2831,39 @@ Configuration:
   `proxyless=true`, `parallel_runs=1`.
 - No literal `developerId` was sent in `/api/startRun`.
 
+## 2026-05-15T16:14:01Z Update: Texas.gov Targeted Eval Result
+
+Targeted run:
+
+- Run `kh7fxyzf3evf4c0ba5wzcpcnfx86secj`, workflow `25928108474`,
+  commit `eac490ec24e1e6290d36d7b44fa81998b9be4811`.
+- Dataset range: `start_index=126`, `end_index=127`, task `1772`.
+
+Result for task `1772`:
+
+- Judge/self-report: failed / `success=true`.
+- Score: `0`.
+- Steps: `1` vs old Rust `11` and reference `7`.
+- Duration: `4.44s` vs old Rust `37.29s` and reference `30.27s`.
+- Usage cost: `$0.006077` vs old Rust `$0.028801` and reference
+  `$0.008553`.
+- Tokens: platform `tokensUsed=10995`, usage `total_tokens=12671`.
+
+Judge finding:
+
+- The answer listed the correct top three Payments FAQ questions, but the
+  judge rejected the run because the task explicitly required using
+  Texas.gov's search tool. Directly opening the FAQ anchor skipped that
+  required process.
+
+Decision:
+
+- Reject the shortcut and remove the Texas-specific direct navigation and
+  validation-skip hooks.
+- Learning: for tasks that explicitly say `use the site's search tool`,
+  preserving the navigation process is part of the judged requirement even
+  when the final answer is correct and the direct path is faster/cheaper.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
