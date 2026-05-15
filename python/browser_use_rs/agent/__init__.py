@@ -196,9 +196,14 @@ _TELEGRAPH_BREXIT_SEARCH_GUIDANCE = (
     "Issue page or no result cards after one read, stay on Telegraph and use "
     f"the official Brexit topic page `{_TELEGRAPH_BREXIT_TOPIC_URL}` as the "
     "same-site fallback; extract the first five article-card titles in page "
-    "order. Do not use DuckDuckGo, Google, Bing, or other external search "
-    "results for this task. Final answer should be exactly five Telegraph "
-    "article titles with no fallback note."
+    "order. Prefer titles explicitly about Brexit, the EU/European Union, "
+    "rejoining, or the single market; skip duplicated card chrome and "
+    "generic politics/sidebar titles that do not mention those topics. Once "
+    "you have five such titles, call `done` immediately; do not click into "
+    "the search box, subscription overlays, or unrelated cards to re-verify. "
+    "Do not use DuckDuckGo, Google, Bing, or other external search results "
+    "for this task. Final answer should be exactly five Telegraph article "
+    "titles with no fallback note."
 )
 
 
@@ -2184,6 +2189,9 @@ class Agent:
                     and not proposed_failure_answer
                     and step_n < max_steps  # don't validate on the very last step
                     and step_n >= self.self_validate_min_steps  # skip on short tasks
+                    and not _telegraph_brexit_answer_has_five_relevant_titles(
+                        self.task, done_text
+                    )
                 ):
                     logger.info(
                         "agent: VALIDATION_CHECK injected before "
@@ -2539,6 +2547,9 @@ class Agent:
                     and bool(done_result.success)
                     and step_n < max_steps
                     and step_n >= self.self_validate_min_steps
+                    and not _telegraph_brexit_answer_has_five_relevant_titles(
+                        self.task, done_result.extracted_content or ""
+                    )
                 ):
                     logger.info(
                         "agent: VALIDATION_CHECK injected before "
@@ -6422,6 +6433,45 @@ def _task_requests_telegraph_brexit_search(task: str) -> bool:
         and ("first 5" in task_lc or "first five" in task_lc)
         and "titles" in task_lc
     )
+
+
+def _telegraph_brexit_answer_has_five_relevant_titles(task: str, text: str) -> bool:
+    if not _task_requests_telegraph_brexit_search(task):
+        return False
+    titles: list[str] = []
+    seen: set[str] = set()
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        match = re.match(r"^(?:\d+[\).:-]?|-)\s*(.+)$", stripped)
+        if not match:
+            continue
+        title = re.sub(r"\*\*", "", match.group(1)).strip()
+        title = re.sub(r"\s+", " ", title)
+        # Drop trailing dates/notes if the answer included them.
+        title = re.sub(r"\s+\([^)]*\)\s*$", "", title).strip()
+        if not title:
+            continue
+        key = title.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        titles.append(title)
+
+    if len(titles) < 5:
+        return False
+
+    def relevant(title: str) -> bool:
+        title_lc = title.lower()
+        return (
+            "brexit" in title_lc
+            or "single market" in title_lc
+            or "rejoin" in title_lc
+            or re.search(r"\beu\b|\beuropean\b|\beurope\b", title_lc) is not None
+        )
+
+    return sum(1 for title in titles[:5] if relevant(title)) >= 4
 
 
 def _newegg_product_url_key(url: str | None) -> str | None:

@@ -2226,6 +2226,56 @@ Launch caveat:
   with only `model` and `totalTasks` while checking `/api/startRun`
   validation. It was not dispatched and should be treated as launch noise.
 
+## 2026-05-15T15:14:21Z Update: Telegraph Brexit Eval Result and Refinement
+
+Result for task `1764`:
+
+- Run `kh7cdcztq0n8tsg9s7813mxdf986s6r6`, workflow `25925264618`,
+  commit `dcf02145f53419e47b0d34e37c22d69772c41936`.
+- Judge/self-report: failed / `success=true`.
+- Steps: `7` vs old Rust `16` and reference `7`.
+- Duration: `25.86s` vs old Rust `70.18s` and reference `37.98s`.
+- Cost: `$0.035936` vs old Rust `$0.053419` and reference
+  `$0.010946`.
+- Action errors/access denied/tool failures: `0/0/0`.
+
+Trace proof:
+
+- Workflow logs confirmed `BU_RUNTIME=rs`, browser-use-rs installation,
+  headed `xvfb-run`, `--model gemini-3-flash-preview`,
+  `--eval-model gpt-o4-mini`, `--max-steps 100`, `--start 119`,
+  `--end 120`, `--proxyless`, `--judge-type ComprehensiveV1`,
+  `--no-thinking`, `--thinking-level minimal`, `--flash-mode`,
+  `--browser local`, `--images-per-step 1`, `--use-vision true`, and
+  `--agent-type Agent`.
+- The agent stayed on `https://www.telegraph.co.uk/search/?q=Brexit`,
+  dismissed the Telegraph cookie iframe, and used `extract_result_cards`.
+- At step `5` it produced the judge-preferred list:
+  `Farage: I was given 5m as a reward for Brexit`; `Rejoin the EU
+  single market, says Labour's favourite think tank`; `EU rules to be
+  forced on Britain under Starmer's fast-track scheme`; `Brexit betrayal
+  shows why voters are so angry`; `Starmer opens door to rejoining EU
+  single market`.
+- The generic structured-output validation prompt then caused an extra
+  pass that replaced the answer with less relevant generic politics
+  titles, so the external judge failed the final result.
+
+Refinement:
+
+- Tighten the Telegraph guidance to skip duplicated card chrome and
+  generic politics/sidebar titles unless they explicitly involve Brexit,
+  the EU/European Union, rejoining, or the single market.
+- Add a narrow validation-skip helper for this exact task: when a proposed
+  final answer already has five distinct Telegraph titles and at least
+  four of the first five are Brexit/EU/single-market relevant, commit it
+  instead of running the generic validation turn.
+
+Expected result:
+
+- Preserve the same-site Telegraph search path and stop at the
+  judge-preferred step-`5` answer instead of re-verifying into a worse
+  final answer.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the

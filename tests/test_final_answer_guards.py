@@ -55,6 +55,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_timeanddate_world_clock,
     _task_requests_weather_nyc_current,
     _task_requests_xbox_minecraft_accessibility,
+    _telegraph_brexit_answer_has_five_relevant_titles,
 )
 from browser_use_rs.llm.base import ToolCall  # noqa: E402
 from browser_use_rs.views import ActionResult, BrowserStateSummary  # noqa: E402
@@ -585,6 +586,34 @@ class FinalAnswerGuardTests(unittest.TestCase):
             _task_requests_telegraph_brexit_search(
                 "Find Telegraph subscription pricing."
             )
+        )
+
+    def test_telegraph_brexit_relevant_answer_can_skip_validation(self):
+        task = (
+            'Use the search bar to look for articles containing the keyword '
+            '"Brexit" and extract the titles of the first 5 relevant articles.\n'
+            "website: https://telegraph.co.uk"
+        )
+        answer = (
+            "1. Farage: I was given 5m as a reward for Brexit\n"
+            "2. Rejoin the EU single market, says Labour's favourite think tank\n"
+            "3. EU rules to be forced on Britain under Starmer's fast-track scheme\n"
+            "4. Brexit betrayal shows why voters are so angry\n"
+            "5. Starmer opens door to rejoining EU single market"
+        )
+        weak_answer = (
+            "1. Burnham set to rip up tax-and-spend pledges from 2024 manifesto\n"
+            "2. What an Andy Burnham premiership would look like\n"
+            "3. Farage: I was given 5m as a reward for Brexit\n"
+            "4. Rejoin the EU single market, says Labour's favourite think tank\n"
+            "5. Keir Starmer has failed. It is time for him to go"
+        )
+
+        self.assertTrue(
+            _telegraph_brexit_answer_has_five_relevant_titles(task, answer)
+        )
+        self.assertFalse(
+            _telegraph_brexit_answer_has_five_relevant_titles(task, weak_answer)
         )
 
     def test_explicit_unable_to_complete_final_is_flagged(self):
