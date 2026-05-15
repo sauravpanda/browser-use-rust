@@ -3886,6 +3886,41 @@ Learning:
 - The agent still hit a challenge page, but direct filtered search reduced
   enough filter and product-search overhead for a clear net win.
 
+## 2026-05-15T17:50:10Z Update: GetYourGuide Direct Paris Patch Prepared
+
+Target:
+
+- Task `645`, dataset index `89`: Browse GetYourGuide's homepage to
+  identify the most popular activity in Paris based on user ratings and
+  note its name and starting price.
+- Existing kept Rust patch run `kh7bka1rng7v10k0mkbdgyvf4s86svnx`:
+  success, `8` steps, `25.58s`, `$0.028878`.
+- Old Rust baseline: success, `16` steps, `56.23s`, `$0.059767`.
+- Reference run `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success, `4` steps,
+  `14.20s`, `$0.007393`.
+
+Trace finding:
+
+- The kept patch succeeded, but the task-specific nudge only fired after the
+  first model step. Gemini still retried a stale cookie button three times
+  before navigating to `https://www.getyourguide.com/paris-l16/`.
+- The successful answer came from that Paris city page, so the remaining
+  waste is pre-navigation and cookie-banner retry overhead.
+
+Patch:
+
+- Add explicit GetYourGuide homepage and Paris city page constants.
+- For the exact task, run initial actions that open the homepage for task
+  grounding and then open the official Paris city page before the first LLM
+  step.
+- Inject the Paris-page guidance with the initial task message as well as
+  the later nudge path.
+
+Expected result:
+
+- Preserve judged success while removing the stale cookie-button retries,
+  targeting the reference's four-step path and lower cost.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the

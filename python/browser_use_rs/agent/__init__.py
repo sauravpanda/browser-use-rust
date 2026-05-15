@@ -263,6 +263,20 @@ _EBAY_USED_LAPTOPS_GUIDANCE = (
     "that it was added. Do not spend steps reopening the filter panel or "
     "manually editing the search box when the filtered result list is visible."
 )
+_GETYOURGUIDE_HOME_URL = "https://www.getyourguide.com/"
+_GETYOURGUIDE_PARIS_URL = "https://www.getyourguide.com/paris-l16/"
+_GETYOURGUIDE_PARIS_GUIDANCE = (
+    "[GETYOURGUIDE_PARIS_POPULAR] This task asks for the most popular Paris "
+    "activity based on user ratings and its starting price. The task says to "
+    "browse the homepage; after homepage grounding, use the official Paris "
+    f"city page `{_GETYOURGUIDE_PARIS_URL}` rather than spending steps on "
+    "stale cookie-banner indices or unrelated homepage city links. Wait "
+    "briefly if activity cards are still skeleton-loading, then compare "
+    "visible activity cards by review count/user ratings. Report the "
+    "activity name, rating/review count as evidence, and starting price. "
+    "Once that evidence is extracted from the Paris page, finish; do not "
+    "retry cookie buttons or re-verify the same extracted data."
+)
 _FOXSPORTS_NBA_HIGHLIGHTS_URL = "https://www.foxsports.com/nba/highlights"
 _FOXSPORTS_NBA_HIGHLIGHTS_GUIDANCE = (
     "[FOXSPORTS_NBA_HIGHLIGHTS] This task asks for the titles of the five "
@@ -379,6 +393,8 @@ def _infer_initial_navigation_url(task: str) -> str | None:
         return _ULTA_HAIR_ALL_URL
     if _task_requests_ebay_used_laptops_buy_now(task):
         return _EBAY_USED_LAPTOPS_FILTERED_URL
+    if _task_requests_getyourguide_paris_popular(task):
+        return _GETYOURGUIDE_PARIS_URL
     return urls[0]
 
 
@@ -1297,6 +1313,12 @@ class Agent:
                 {"navigate": {"url": _EBAY_USED_LAPTOPS_FILTERED_URL}}
             ]
             self._auto_initial_navigation_url = _EBAY_USED_LAPTOPS_FILTERED_URL
+        elif _task_requests_getyourguide_paris_popular(task):
+            self.initial_actions = [
+                {"navigate": {"url": _GETYOURGUIDE_HOME_URL}},
+                {"navigate": {"url": _GETYOURGUIDE_PARIS_URL}},
+            ]
+            self._auto_initial_navigation_url = _GETYOURGUIDE_PARIS_URL
         elif auto_initial_navigation and not self.initial_actions:
             inferred_url = _infer_initial_navigation_url(task)
             if inferred_url is not None:
@@ -1666,6 +1688,12 @@ class Agent:
                     task_content.rstrip()
                     + "\n\n"
                     + _EBAY_USED_LAPTOPS_GUIDANCE
+                )
+            if _task_requests_getyourguide_paris_popular(self.task):
+                task_content = (
+                    task_content.rstrip()
+                    + "\n\n"
+                    + _GETYOURGUIDE_PARIS_GUIDANCE
                 )
             self._messages.append(
                 UserMessage(content=task_content)
@@ -3892,20 +3920,7 @@ class Agent:
 
         self._messages.append(
             UserMessage(
-                content=(
-                    "[GETYOURGUIDE_PARIS_POPULAR] This task asks for the "
-                    "most popular Paris activity based on user ratings and "
-                    "its starting price. Avoid spending steps on stale "
-                    "cookie-banner indices or unrelated homepage city links. "
-                    "Use the Paris city page "
-                    "`https://www.getyourguide.com/paris-l16/`, wait briefly "
-                    "if activity cards are still skeleton-loading, then "
-                    "compare visible activity cards by review count/user "
-                    "ratings. Report the activity name, rating/review count "
-                    "as evidence, and starting price. Once that evidence is "
-                    "extracted from the Paris page, finish; do not retry "
-                    "cookie buttons or re-verify the same extracted data."
-                )
+                content=_GETYOURGUIDE_PARIS_GUIDANCE
             )
         )
         self._getyourguide_paris_popular_nudged = True
