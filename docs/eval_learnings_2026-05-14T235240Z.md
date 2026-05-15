@@ -3472,6 +3472,27 @@ Expected result:
 - Preserve judged success while cutting the old and reference navigation
   path to a one-step or two-step evidence read.
 
+## 2026-05-15T17:10:30Z Update: Rochester Targeted Eval Launched
+
+Targeted run:
+
+- Run `kh72az90xk3yhsms8engam6xzn86s7rr`, workflow `25930992840`,
+  commit `6deaadf8dfbde19e12f8f984b0a6749905abd68a`.
+- Dataset range: `start_index=7`, `end_index=8`, task `1480`.
+- User message: `bu-rust rochester-bcs targeted no-thinking gpt-o4-mini`.
+
+Configuration:
+
+- Same corrected object-shaped dispatch and minimal-thinking Gemini
+  config: `runtime=rs`, `gemini-3-flash-preview`,
+  `eval_model=gpt-o4-mini`, `max_steps=100`, `--no-thinking`,
+  `thinking_level=minimal`, headed local browser,
+  `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
