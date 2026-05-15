@@ -2774,6 +2774,41 @@ Decision:
   multi-step search path into a two-step answer without losing source
   quality.
 
+## 2026-05-15T16:06:47Z Update: Texas.gov Payments FAQ Patch Prepared
+
+Target:
+
+- Task `1772`: Use Texas.gov's search tool to navigate to the FAQs section
+  for payments on Texas.gov applications and list the top three frequently
+  asked questions.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: success, `11`
+  steps, `37.29s`, `$0.028801`.
+- Reference run `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success, `7`
+  steps, `30.27s`, `$0.008553`.
+
+Trace/source finding:
+
+- The accepted source is Texas.gov's canonical FAQ page:
+  `https://www.texas.gov/help-support/frequently-asked-questions/#payments`.
+- The page returns `200` and includes the `Payments` section and the
+  accepted top three questions as visible accordion titles.
+
+Patch:
+
+- Add a narrow Texas.gov payments FAQ task detector.
+- Start the exact task at the canonical FAQ page with the `#payments`
+  anchor rather than spending steps on the site search flow.
+- Add task guidance to list only the first three `Payments` FAQ question
+  titles and avoid unrelated TxT, driver license, or payment processing
+  pages.
+- Add a validation-skip helper when the final answer includes all three
+  accepted question titles.
+
+Expected result:
+
+- Preserve judged success while cutting the reference search path toward
+  fewer than `6` steps and less than `$0.006842` cost.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the

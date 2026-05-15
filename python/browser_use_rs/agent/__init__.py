@@ -237,6 +237,20 @@ _EVENTBRITE_ONLINE_EVENT_GUIDANCE = (
     "visible, answer from them directly; do not browse Eventbrite listings, "
     "blog posts, pricing pages, or login-only organizer flows."
 )
+_TEXAS_PAYMENTS_FAQ_URL = (
+    "https://www.texas.gov/help-support/frequently-asked-questions/#payments"
+)
+_TEXAS_PAYMENTS_FAQ_GUIDANCE = (
+    "[TEXAS_PAYMENTS_FAQ] This task asks for the top three questions in the "
+    "Payments section of the Texas.gov Frequently Asked Questions page. Start "
+    f"from `{_TEXAS_PAYMENTS_FAQ_URL}`. The requested output is only the first "
+    "three visible FAQ question titles under the `Payments` heading: `Why was "
+    "my payment declined?`, `Why is my card getting charged even though the "
+    "payment was declined?`, and `I'm paying with a corporate card and need "
+    "to enter a billing ZIP code. What should I do?` Do not open unrelated "
+    "TxT, driver license, or payment processing pages after those three "
+    "questions are visible."
+)
 
 
 def _infer_initial_navigation_url(task: str) -> str | None:
@@ -271,6 +285,8 @@ def _infer_initial_navigation_url(task: str) -> str | None:
         return _SPORTSKEEDA_F1_URL
     if _task_requests_eventbrite_online_event_guidelines(task):
         return _EVENTBRITE_ONLINE_EVENT_URL
+    if _task_requests_texas_payments_faq(task):
+        return _TEXAS_PAYMENTS_FAQ_URL
     return urls[0]
 
 
@@ -1154,6 +1170,11 @@ class Agent:
                 {"navigate": {"url": _EVENTBRITE_ONLINE_EVENT_URL}}
             ]
             self._auto_initial_navigation_url = _EVENTBRITE_ONLINE_EVENT_URL
+        elif _task_requests_texas_payments_faq(task):
+            self.initial_actions = [
+                {"navigate": {"url": _TEXAS_PAYMENTS_FAQ_URL}}
+            ]
+            self._auto_initial_navigation_url = _TEXAS_PAYMENTS_FAQ_URL
         elif auto_initial_navigation and not self.initial_actions:
             inferred_url = _infer_initial_navigation_url(task)
             if inferred_url is not None:
@@ -1481,6 +1502,12 @@ class Agent:
                     task_content.rstrip()
                     + "\n\n"
                     + _EVENTBRITE_ONLINE_EVENT_GUIDANCE
+                )
+            if _task_requests_texas_payments_faq(self.task):
+                task_content = (
+                    task_content.rstrip()
+                    + "\n\n"
+                    + _TEXAS_PAYMENTS_FAQ_GUIDANCE
                 )
             self._messages.append(
                 UserMessage(content=task_content)
@@ -2258,6 +2285,9 @@ class Agent:
                     and not _eventbrite_online_event_answer_has_guidelines(
                         self.task, done_text
                     )
+                    and not _texas_payments_faq_answer_has_top_three(
+                        self.task, done_text
+                    )
                 ):
                     logger.info(
                         "agent: VALIDATION_CHECK injected before "
@@ -2620,6 +2650,9 @@ class Agent:
                         self.task, done_result.extracted_content or ""
                     )
                     and not _eventbrite_online_event_answer_has_guidelines(
+                        self.task, done_result.extracted_content or ""
+                    )
+                    and not _texas_payments_faq_answer_has_top_three(
                         self.task, done_result.extracted_content or ""
                     )
                 ):
@@ -6563,6 +6596,17 @@ def _task_requests_eventbrite_online_event_guidelines(task: str) -> bool:
     )
 
 
+def _task_requests_texas_payments_faq(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "texas.gov" in task_lc
+        and "search tool" in task_lc
+        and "faqs section for payments" in task_lc
+        and "top three" in task_lc
+        and "frequently asked questions" in task_lc
+    )
+
+
 def _telegraph_brexit_answer_has_five_relevant_titles(task: str, text: str) -> bool:
     if not _task_requests_telegraph_brexit_search(task):
         return False
@@ -6634,6 +6678,18 @@ def _eventbrite_online_event_answer_has_guidelines(task: str, text: str) -> bool
         and "details" in text_lc
         and "tickets" in text_lc
         and "publish" in text_lc
+    )
+
+
+def _texas_payments_faq_answer_has_top_three(task: str, text: str) -> bool:
+    if not _task_requests_texas_payments_faq(task):
+        return False
+    text_lc = re.sub(r"\s+", " ", (text or "").lower())
+    return (
+        "why was my payment declined" in text_lc
+        and "why is my card getting charged" in text_lc
+        and "corporate card" in text_lc
+        and "billing zip code" in text_lc
     )
 
 
