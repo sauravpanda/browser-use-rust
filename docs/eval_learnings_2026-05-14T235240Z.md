@@ -3235,3 +3235,58 @@ Correction:
   month-year string.
 - Add a final-answer recovery guard if the model tries the no-date
   answer again.
+
+## 2026-05-15T12:05:18Z Update: Reverso Privacy Corrected Retest Launched
+
+- Commit: `42e26981e5a2cc31a096247e5b92713a4d17c279`.
+- Dashboard run: `kh79jfbkxsnnvxdx0nrq6g3cds86rpgt`.
+- GitHub workflow: `25916837436`.
+- Dataset range remains `start=87`, `end=88`, task `1477`.
+- Config is unchanged from the first Reverso retest:
+  `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking_level=minimal`, headed
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
+Expected result:
+
+- Preserve success by extracting `Last update: October 2022`.
+- Avoid the old Rust tail through Terms, Disclaimer, privacy-settings,
+  corporate, and Reverso Studio pages.
+
+## 2026-05-15T12:12:38Z Update: Reverso Privacy Corrected Retest Rejected
+
+Targeted run:
+
+- Run `kh79jfbkxsnnvxdx0nrq6g3cds86rpgt`, workflow `25916837436`,
+  commit `42e26981e5a2cc31a096247e5b92713a4d17c279`.
+- Same minimal-thinking Gemini config as the first Reverso retest.
+
+Result for task `1477`:
+
+- Judge/self-report: success / `success=true`.
+- Steps: `54` vs old Rust `40` and reference `6`.
+- Duration: `181.25s` vs old Rust `126.76s` and reference `18.68s`.
+- Cost: `$0.238927` vs old Rust `$0.170606` and reference `$0.010238`.
+- Action errors/access denied/tool failures: `0/0/0`.
+
+Trace proof:
+
+- The correction preserved success, but the agent still could not find
+  the `Last update` text through DOM/search tools.
+- It looped through repeated scrolls, `page_text()`, JavaScript metadata
+  checks, the French privacy page, and multiple done/recovery cycles.
+- The accepted final reverted to the no-explicit-date shape, so the
+  target remains unstable across judge/current-page interpretations.
+
+Decision:
+
+- Reject the Reverso patch family. The first variant was fast but judged
+  wrong; the corrected variant passed but regressed old Rust on steps,
+  duration, and cost.
+- Revert the Reverso-specific code/test changes and keep this log entry
+  so the failed path is not repeated without a different evidence
+  strategy.

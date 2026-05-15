@@ -24,7 +24,6 @@ from browser_use_rs.agent import (  # noqa: E402
     _looks_like_imdb_weekend_budget_thin_answer,
     _looks_like_past_dated_forward_answer,
     _looks_like_pending_tool_action,
-    _looks_like_reverso_privacy_missing_date_answer,
     _looks_like_round_trip_answer_uses_one_way_only,
     _looks_like_search_result_query_mismatch_answer,
     _looks_like_search_host_final,
@@ -43,7 +42,6 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_consulting_people_sf,
     _task_requests_metacritic_low_score_tv,
     _task_requests_newegg_review_bytes,
-    _task_requests_reverso_privacy_policy,
 )
 from browser_use_rs.llm.base import ToolCall  # noqa: E402
 from browser_use_rs.views import ActionResult, BrowserStateSummary  # noqa: E402
@@ -389,38 +387,6 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertFalse(
             _task_requests_consulting_people_sf(
                 "Return four consulting firms in New York."
-            )
-        )
-
-    def test_reverso_privacy_policy_task_is_detected(self):
-        task = (
-            "When was the Reverso Privacy Policy last updated?\n"
-            "website: https://reverso.net"
-        )
-
-        self.assertTrue(_task_requests_reverso_privacy_policy(task))
-        self.assertFalse(
-            _task_requests_reverso_privacy_policy(
-                "Open Reverso and translate a short phrase."
-            )
-        )
-
-    def test_reverso_privacy_no_date_answer_needs_recovery(self):
-        task = (
-            "When was the Reverso Privacy Policy last updated?\n"
-            "website: https://reverso.net"
-        )
-
-        self.assertTrue(
-            _looks_like_reverso_privacy_missing_date_answer(
-                task,
-                "The official page does not explicitly state a Last "
-                "Updated, Effective Date, revised date, or version date.",
-            )
-        )
-        self.assertFalse(
-            _looks_like_reverso_privacy_missing_date_answer(
-                task, "The Reverso Privacy Policy says Last update: October 2022."
             )
         )
 
