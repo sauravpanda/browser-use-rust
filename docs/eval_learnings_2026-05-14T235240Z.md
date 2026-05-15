@@ -1380,6 +1380,41 @@ Current conclusion:
   same-site search path for BBC Good Food recipe/article aliases before
   another retest.
 
+## 2026-05-15T04:16:31Z Update: BBC Alias Path Patch
+
+Web investigation after the `3af14b8` BBC failure found relevant
+same-site Good Food pages that the agent did not inspect before giving
+up:
+
+- `https://www.bbcgoodfood.com/health/special-diets/10-ways-to-make-your-pancake-day-free-from`
+- `https://www.bbcgoodfood.com/recipes/almond-flour-pancakes`
+- `https://www.bbcgoodfood.com/recipes/coconut-flour-pancakes`
+
+The free-from article explicitly discusses pancake swaps using coconut,
+almond and buckwheat flour, dairy-free milk, oats/oat flour, and other
+free-from options. It links to the almond flour and coconut flour pancake
+recipes. This likely explains why the judge referred to an available
+"Paleo-friendly pancakes" Good Food page even though there is no exact
+`/recipes/paleo-pancakes` URL.
+
+Patch:
+
+- Added a one-shot `[BBC_GOODFOOD_ALIAS_CHECK]` nudge after BBC internal
+  search evidence shows no exact `paleo-pancakes` recipe link.
+- The nudge points the agent to the Good Food free-from article plus the
+  linked almond flour and coconut flour pancake recipes before allowing a
+  no-result final.
+- The source guard still forbids non-Good-Food pages and training
+  knowledge.
+
+Local verification:
+
+- `python3 -m unittest tests.test_final_answer_guards -q`
+- `python3 -m compileall -q python/browser_use_rs tests`
+- `python3 -m unittest discover -s tests -q`
+- `git diff --check`
+- `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the

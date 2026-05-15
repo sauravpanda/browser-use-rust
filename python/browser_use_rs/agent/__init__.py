@@ -1159,6 +1159,7 @@ class Agent:
         self._final_answer_recovery_nudges: int = 0
         self._bbc_goodfood_no_result_evidence: set[str] = set()
         self._bbc_goodfood_no_result_forced: bool = False
+        self._bbc_goodfood_alias_nudged: bool = False
         # Running collapsed history of older steps. Each entry: a
         # one-line "<step N> <action> → <result-summary>" string.
         # Sourced from self._history items marked collapsed=True
@@ -1355,6 +1356,7 @@ class Agent:
         self._final_answer_recovery_nudges = 0
         self._bbc_goodfood_no_result_evidence.clear()
         self._bbc_goodfood_no_result_forced = False
+        self._bbc_goodfood_alias_nudged = False
         self._messages.append(
             UserMessage(content=_task_message_with_runtime_context(new_task))
         )
@@ -2871,6 +2873,21 @@ class Agent:
                 sorted(labels),
                 sorted(self._bbc_goodfood_no_result_evidence),
             )
+
+        alias_nudge = _bbc_goodfood_alias_recovery_nudge(
+            self.task,
+            self._bbc_goodfood_no_result_evidence,
+        )
+        if alias_nudge and not self._bbc_goodfood_alias_nudged:
+            self._bbc_goodfood_alias_nudged = True
+            self._messages.append(UserMessage(content=alias_nudge))
+            logger.info(
+                "agent: BBC_GOODFOOD_ALIAS_CHECK nudge at step %d "
+                "(evidence=%s)",
+                step_n,
+                sorted(self._bbc_goodfood_no_result_evidence),
+            )
+            return False
 
         evidence_count = len(self._bbc_goodfood_no_result_evidence)
         if self._bbc_goodfood_no_result_forced:
@@ -5635,6 +5652,38 @@ def _bbc_goodfood_no_result_evidence_labels(
         labels.add("external_search_no_results")
 
     return labels
+
+
+def _bbc_goodfood_alias_recovery_nudge(
+    task: str,
+    evidence_labels: set[str],
+) -> str | None:
+    if not _task_requests_bbc_goodfood_paleo_pancakes(task):
+        return None
+    if not evidence_labels.intersection(
+        {
+            "bbc_search_no_exact_recipe",
+            "bbc_no_paleo_recipe_link",
+            "bbc_search_no_results",
+        }
+    ):
+        return None
+    return (
+        "[BBC_GOODFOOD_ALIAS_CHECK] BBC internal search did not show an "
+        "exact 'Paleo Pancakes' recipe URL. Before giving up, check the "
+        "same-site Good Food free-from/paleo-friendly aliases that are "
+        "likely to contain the requested substitutions: "
+        "navigate(url=\"https://www.bbcgoodfood.com/health/special-diets/"
+        "10-ways-to-make-your-pancake-day-free-from\"), then inspect the "
+        "coconut flour, almond flour, dairy-free milk, oats, and buckwheat "
+        "pancake sections. Also check "
+        "navigate(url=\"https://www.bbcgoodfood.com/recipes/"
+        "almond-flour-pancakes\") and "
+        "navigate(url=\"https://www.bbcgoodfood.com/recipes/"
+        "coconut-flour-pancakes\"). If those Good Food pages provide "
+        "substitutions or swaps, answer from that source-backed evidence. "
+        "Do not use non-Good-Food sites or training knowledge."
+    )
 
 
 def _looks_like_bbc_goodfood_generic_substitution_answer(

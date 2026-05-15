@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT / "python"))
 from browser_use_rs.agent import (  # noqa: E402
     Agent,
     _bbc_goodfood_no_result_evidence_labels,
+    _bbc_goodfood_alias_recovery_nudge,
     _direct_section_url_for_consent_recovery,
     _final_answer_recovery_nudge,
     _looks_like_bbc_goodfood_generic_substitution_answer,
@@ -481,6 +482,24 @@ class FinalAnswerGuardTests(unittest.TestCase):
             ),
             {"bbc_search_no_exact_recipe", "bbc_no_paleo_recipe_link"},
         )
+
+    def test_bbc_goodfood_alias_recovery_nudge_points_to_same_site_pages(self):
+        task = (
+            'Open the "Paleo Pancakes" recipe page and compile a list of '
+            "the suggested ingredient substitutions provided. "
+            "website: https://www.bbcgoodfood.com/"
+        )
+
+        nudge = _bbc_goodfood_alias_recovery_nudge(
+            task,
+            {"bbc_search_no_exact_recipe"},
+        )
+
+        self.assertIsNotNone(nudge)
+        self.assertIn("BBC_GOODFOOD_ALIAS_CHECK", nudge or "")
+        self.assertIn("10-ways-to-make-your-pancake-day-free-from", nudge or "")
+        self.assertIn("almond-flour-pancakes", nudge or "")
+        self.assertIn("coconut-flour-pancakes", nudge or "")
 
     def test_bbc_goodfood_generic_substitution_answer_is_recoverable(self):
         task = (
