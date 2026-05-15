@@ -7176,3 +7176,31 @@ Decision:
 
 - Keep the patch. It converts Newegg Review Bytes from a cost miss into
   a clear reference beat on steps, duration, and cost.
+
+## 2026-05-15T18:51:15Z Update: Current-Head Full Release Launched
+
+Full release run:
+
+- First `/api/startRun` attempt for commit `c952449` returned HTTP `500`
+  before producing a run id; `/api/listRuns` did not show a dashboard row
+  for that attempt.
+- Retry dashboard run: `kh76w3znrfg1410g433rc480qx86r7k5`.
+- GitHub workflow: `25935559776`.
+- Dispatch install ref:
+  `c952449010672355ee08edf49b82c7b0842295ee`.
+- Dataset range: `start_index=0`, `end_index=198`,
+  `total_tasks=198`.
+- User message:
+  `bu-rust current-head release WebBench_READ_v5 minimal-thinking gpt-o4-mini c952449 retry`.
+
+Configuration:
+
+- `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking_level=minimal`, headed
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `browser=local`, `images_per_step=1`, `use_vision=true`,
+  `agent_type=Agent`, `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+- Local preflight before launch passed with only the pre-existing
+  local-only untracked `bench/monitor_runs.sh`.
