@@ -1723,6 +1723,62 @@ Patch direction:
   `$1 million` in search queries; it should search title plus
   budget/production-budget terms only.
 
+## 2026-05-15T14:06:49Z Update: IMDb Current-Head Retest Launched
+
+Targeted run:
+
+- Run `kh76scpea8tp2x2r94tztpwexs86s647`, workflow `25922231567`,
+  commit `c8b3bbefe2bf208630ff64a373c4edd5d80751a9`.
+- Dataset range: `start_index=179`, `end_index=180`, task `2717`.
+- User message:
+  `bu-rust imdb-weekend-budget-current targeted no-thinking gpt-o4-mini`.
+
+Configuration:
+
+- `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking_level=minimal`, headed
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
+## 2026-05-15T14:17:04Z Update: IMDb Current-Head Retest Rejected
+
+Result for task `2717`:
+
+- Judge/self-report: failure / `success=false`.
+- Steps: `91` vs old Rust `84`, prior current-head guard `12`, and
+  reference `31`.
+- Duration: `298.61s` vs old Rust `283.07s`, prior current-head guard
+  `42.80s`, and reference `187.19s`.
+- Cost: `$0.531886` vs old Rust `$0.463680`, prior current-head guard
+  `$0.056386`, and reference `$0.128855`.
+- Action errors/access denied/tool failures: `0/0/0`.
+
+Trace finding:
+
+- The run rediscovered the bad broad-budget path:
+  `In the Grey` at `$80M-$100M` from Flickonclick and `Life Hack` as an
+  assumed micro-budget, yielding an approximate `$89M` difference.
+- It eventually included the full IMDb release-calendar cluster, but only
+  after spending most of the run searching for unsupported Life Hack,
+  Driver's Ed, and Is God Is budget evidence.
+- The tail entered repeated DuckDuckGo result clicks/search retries.
+- Workflow command verified the intended config:
+  `gemini-3-flash-preview`, `gpt-o4-mini`, `max_steps=100`,
+  `--no-thinking`, `--thinking-level minimal`, `WebBench_READ_v5`,
+  `ComprehensiveV1`, headed local browser, `images_per_step=1`,
+  `use_vision=true`, and `agent_type=Agent`.
+
+Decision:
+
+- Do not treat current-head IMDb as an improvement. This retest is worse
+  than old Rust and the reference on every metric and still judge-fails.
+- Do not spend another blind edit here without a different strategy, such
+  as a hard early termination when the model falls back to Flickonclick or
+  micro-budget assumptions.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
