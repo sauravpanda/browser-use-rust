@@ -2247,3 +2247,48 @@ Local verification:
 - `cargo test -p bu-browser`
 - `git diff --check`
 - `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`
+
+## 2026-05-15T08:55:41Z Update: Compact Alias Tool Descriptions Rejected
+
+Run `kh78jmswb83jzatyzzn4pppv5x86svx9`, workflow `25907860945`,
+tested commit `6b048c1eb00a39e53034be0dbcd9a58524904422` on the exact
+minimal-thinking Gemini slice config:
+
+- `gemini-3-flash-preview`, `gpt-o4-mini` judge.
+- `--no-thinking`, `--thinking-level minimal`, `--max-steps 100`.
+- `start=10`, `end=30`, `WebBench_READ_v5`,
+  `ComprehensiveV1`, `max_actions_per_step=4`,
+  `judge_repeat_count=1`, headed local browser, vision on,
+  `images_per_step=1`.
+- Workflow log confirmed the command. `/api/getRun` reported the same
+  `gitCommitHash` as the prior baseline (`933e28...`), so do not use
+  that field alone to verify the browser-use-rs candidate ref. Check the
+  workflow command/user message as well.
+
+Candidate result vs prior exact-config slice
+`kh7e6asf9bjg77sj0gxhqwxze986rs40`:
+
+- Success: `14/20` vs `16/20` (`-10pp`).
+- Total cost: `$0.882451` vs `$0.934796` (`5.6%` lower), but the lower
+  cost does not offset the success loss.
+- Average steps: `14.4` vs `13.1` (`+1.3`).
+- Duration: `1070.56s` total and `53.53s` average vs `1023.99s` total
+  and `51.20s` average.
+- Access denied: `5` vs `3`.
+- Tool/action failures: `0`, so this was a behavioral regression, not
+  eval infrastructure breakage.
+
+Failed tasks:
+
+- Old-failed again: `895`, `1494`, `2027`, `2657`.
+- New failures versus the prior exact-config slice: `1510`, `2423`.
+- `2657` was especially bad despite already being an old-failed task:
+  `80` steps, `277.47s`, `$0.281366`, still judge failed.
+
+Decision:
+
+- Reject compact alias tool descriptions. The tool-prompt byte reduction
+  is real, but this 20-task slice regressed success and wall time.
+- Revert commit `6b048c1` and remove the alias-description test.
+- Keep the validation-skip-after-fresh-evidence patch for now; this run
+  does not isolate a regression in that change.

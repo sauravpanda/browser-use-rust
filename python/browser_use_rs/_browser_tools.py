@@ -687,10 +687,6 @@ def _alias(target_tool, alias_name):
     import copy
     new = copy.copy(target_tool)
     new.name = alias_name
-    new.description = (
-        f"Alias of `{target_tool.name}`. Prefer `{target_tool.name}`; "
-        "same arguments."
-    )
     return new
 
 
