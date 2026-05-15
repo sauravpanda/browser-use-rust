@@ -52,7 +52,6 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_metacritic_low_score_tv,
     _task_requests_nature_quantum_authors,
     _task_requests_newegg_review_bytes,
-    _task_requests_oxford_integrity_reflection,
     _task_requests_people_entertainment_video_description,
     _task_requests_softonic_latest_articles,
     _task_requests_sportskeeda_f1_about,
@@ -507,21 +506,6 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertFalse(
             _task_requests_coursera_data_science_courses(
                 "Search Coursera for project management certificates."
-            )
-        )
-
-    def test_oxford_integrity_reflection_task_is_detected(self):
-        task = (
-            'Read the definitions and usage notes for "integrity" and write '
-            "a reflective note (around 100 words) on how this concept "
-            "applies within ethical contexts.\n"
-            "website: https://www.oxfordlearnersdictionaries.com/us/"
-        )
-
-        self.assertTrue(_task_requests_oxford_integrity_reflection(task))
-        self.assertFalse(
-            _task_requests_oxford_integrity_reflection(
-                "Look up integrity quotes on Oxford Reference."
             )
         )
 

@@ -3323,6 +3323,28 @@ Configuration:
   `proxyless=true`, `parallel_runs=1`.
 - No literal `developerId` was sent in `/api/startRun`.
 
+## 2026-05-15T16:56:49Z Update: Oxford Targeted Eval Completed
+
+Targeted run:
+
+- Run `kh7f0rpe7ra5e7hnae7zeq54q986rnf5`, workflow `25930232177`,
+  commit `fe37602e6df9c0ac1c7a8b5357081093356df057`.
+- Task `2625` produced judge success and self-report success.
+- Steps: `5` vs old Rust `5` and reference `4`.
+- Duration: `17.40s` vs old Rust `23.90s` and reference `25.63s`.
+- Cost: `$0.027048` vs old Rust `$0.020650` and reference `$0.009530`.
+- Tokens: platform `tokensUsed=64615`; usage total `66922`.
+
+Decision:
+
+- Reject the Oxford-specific shortcut. It improved duration but did not cut
+  steps versus old Rust, stayed one step worse than the reference, and raised
+  cost versus both old Rust and the reference.
+- Learning: direct dictionary-entry navigation can reduce wall time for
+  definition tasks, but the extra prompt guidance can outweigh the savings
+  under minimal-thinking Gemini. Keep only task guides that improve at least
+  one of the objective dimensions without materially worsening the others.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the

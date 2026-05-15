@@ -201,21 +201,6 @@ _COURSERA_DATA_SCIENCE_GUIDANCE = (
     "individual course pages, degree pages, ads, or filter panels after the "
     "first five course cards are visible."
 )
-_OXFORD_INTEGRITY_URL = (
-    "https://www.oxfordlearnersdictionaries.com/us/definition/english/"
-    "integrity?q=integrity"
-)
-_OXFORD_INTEGRITY_GUIDANCE = (
-    "[OXFORD_INTEGRITY] This task asks for Oxford Learner's Dictionary "
-    "definitions and usage notes for `integrity`, then a reflective note "
-    "around 100 words applying the concept in ethical contexts. Start from "
-    f"`{_OXFORD_INTEGRITY_URL}`. Use the page definitions, grammar/usage "
-    "labels, examples, collocations, and origin/notes if visible. The final "
-    "answer should be the reflective note, around 100 words, grounded in the "
-    "page's meanings of honest moral principles and wholeness/not being "
-    "divided. Do not browse unrelated dictionary sites or search results once "
-    "the Oxford definition page is visible."
-)
 _FOXSPORTS_NBA_HIGHLIGHTS_URL = "https://www.foxsports.com/nba/highlights"
 _FOXSPORTS_NBA_HIGHLIGHTS_GUIDANCE = (
     "[FOXSPORTS_NBA_HIGHLIGHTS] This task asks for the titles of the five "
@@ -324,8 +309,6 @@ def _infer_initial_navigation_url(task: str) -> str | None:
         return _SOFTONIC_ARTICLES_URL
     if _task_requests_coursera_data_science_courses(task):
         return _COURSERA_DATA_SCIENCE_SEARCH_URL
-    if _task_requests_oxford_integrity_reflection(task):
-        return _OXFORD_INTEGRITY_URL
     return urls[0]
 
 
@@ -1224,11 +1207,6 @@ class Agent:
                 {"navigate": {"url": _COURSERA_DATA_SCIENCE_SEARCH_URL}}
             ]
             self._auto_initial_navigation_url = _COURSERA_DATA_SCIENCE_SEARCH_URL
-        elif _task_requests_oxford_integrity_reflection(task):
-            self.initial_actions = [
-                {"navigate": {"url": _OXFORD_INTEGRITY_URL}}
-            ]
-            self._auto_initial_navigation_url = _OXFORD_INTEGRITY_URL
         elif auto_initial_navigation and not self.initial_actions:
             inferred_url = _infer_initial_navigation_url(task)
             if inferred_url is not None:
@@ -1574,12 +1552,6 @@ class Agent:
                     task_content.rstrip()
                     + "\n\n"
                     + _COURSERA_DATA_SCIENCE_GUIDANCE
-                )
-            if _task_requests_oxford_integrity_reflection(self.task):
-                task_content = (
-                    task_content.rstrip()
-                    + "\n\n"
-                    + _OXFORD_INTEGRITY_GUIDANCE
                 )
             self._messages.append(
                 UserMessage(content=task_content)
@@ -6563,18 +6535,6 @@ def _task_requests_coursera_data_science_courses(task: str) -> bool:
         and "courses" in task_lc
         and "first 5" in task_lc
         and "titles and providers" in task_lc
-    )
-
-
-def _task_requests_oxford_integrity_reflection(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "oxfordlearnersdictionaries.com" in task_lc
-        and "integrity" in task_lc
-        and "definitions" in task_lc
-        and "usage notes" in task_lc
-        and "reflective note" in task_lc
-        and "ethical contexts" in task_lc
     )
 
 
