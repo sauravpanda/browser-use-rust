@@ -3669,6 +3669,34 @@ Configuration:
   `proxyless=true`, `parallel_runs=1`.
 - No literal `developerId` was sent in `/api/startRun`.
 
+## 2026-05-15T17:30:40Z Update: Virginia COVID Search Rejected
+
+Targeted result:
+
+- Run `kh7a30wd78tshqdjzcj9atvnjx86r641`, workflow `25931705826`,
+  commit `4a3d0d4185c727a491c5e9580ffb4fce9555390b`.
+- Judge result: success, `8` steps, `33.13s`, `$0.032399`.
+- Old Rust baseline: success, `8` steps, `25.97s`, `$0.032542`.
+- Reference run `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success, `5` steps,
+  `25.81s`, `$0.010342`.
+
+Decision:
+
+- Reject the patch. It preserved judged success but did not reduce steps,
+  regressed duration versus both baselines, and stayed materially more
+  expensive than the reference.
+- Remove the Virginia-specific detector, guidance, and unit test.
+
+Learning:
+
+- Explicit search-bar guidance can preserve compliance on tasks that require
+  site search, but it is not enough when the trace overhead is driven by
+  interaction latency and repeated observation/extraction after the right page
+  is already found.
+- Do not replace this task with a direct advisory URL without a different
+  compliance strategy; the task wording explicitly requires using the site's
+  search bar.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
