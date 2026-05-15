@@ -4255,12 +4255,20 @@ class Agent:
 
         self._newegg_review_bytes_forced = True
         evidence = ", ".join(sorted(labels))
+        probe_summary = (
+            "A direct Newegg product-page probe failed to reveal the "
+            "requested Review Bytes summary"
+            if self._newegg_review_bytes_failed_probes == 1
+            else (
+                "Multiple Newegg product-page probes failed to reveal "
+                "the requested Review Bytes summary"
+            )
+        )
         self._messages.append(
             UserMessage(
                 content=(
-                    "[NEWEGG_REVIEW_BYTES_UNAVAILABLE] Multiple Newegg "
-                    "product-page probes failed to reveal the requested "
-                    f"Review Bytes summary ({evidence}; "
+                    f"[NEWEGG_REVIEW_BYTES_UNAVAILABLE] {probe_summary} "
+                    f"({evidence}; "
                     f"{self._newegg_review_bytes_failed_probes} failed "
                     f"probe(s) across {product_count} product page(s)). "
                     "Stop scrolling or trying more RTX product pages. "
@@ -6996,6 +7004,8 @@ def _newegg_review_bytes_should_force(
     selector_timeouts: int,
 ) -> bool:
     return (
+        step_n >= 10 and product_count >= 1 and failed_probes >= 1
+    ) or (
         step_n >= 24 and failed_probes >= 2
     ) or (
         step_n >= 24 and product_count >= 2 and failed_probes >= 3

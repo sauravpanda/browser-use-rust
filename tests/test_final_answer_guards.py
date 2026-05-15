@@ -374,17 +374,17 @@ class FinalAnswerGuardTests(unittest.TestCase):
     def test_newegg_review_bytes_force_threshold_waits_for_repeated_misses(self):
         self.assertFalse(
             _newegg_review_bytes_should_force(
-                23, failed_probes=2, product_count=1, selector_timeouts=0
+                9, failed_probes=1, product_count=1, selector_timeouts=0
             )
         )
         self.assertFalse(
             _newegg_review_bytes_should_force(
-                24, failed_probes=1, product_count=1, selector_timeouts=0
+                10, failed_probes=1, product_count=0, selector_timeouts=0
             )
         )
         self.assertTrue(
             _newegg_review_bytes_should_force(
-                24, failed_probes=2, product_count=1, selector_timeouts=0
+                10, failed_probes=1, product_count=1, selector_timeouts=0
             )
         )
 

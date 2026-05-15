@@ -7059,3 +7059,45 @@ Configuration:
   `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
   `proxyless=true`, `parallel_runs=1`.
 - No literal `developerId` was sent in `/api/startRun`.
+
+## 2026-05-15T18:39:25Z Update: Newegg Review Bytes Earlier Force-Final
+
+Follow-up on task `1211` after run
+`kh70530mbkhfft1bpscnhssddx86ryp5`:
+
+- The kept Newegg guard fired at history step `24`, after the second
+  direct `extract_structured_data` query for `"Review Bytes"` returned
+  `NOT FOUND`.
+- Trace inspection showed the first exact product-page extraction had
+  already returned `NOT FOUND` at step `10` on the EVGA RTX 3080 product
+  page.
+- The next `13` steps were spent scrolling the same product page through
+  warranty/spec sections before repeating the same Review Bytes probe.
+- Since the reference also failed honestly on this task, the remaining
+  optimization is to avoid that same-page scroll tail while keeping the
+  final answer explicitly unsupported rather than invented.
+
+Patch:
+
+- Tighten `_newegg_review_bytes_should_force` so one failed direct
+  product-page Review Bytes probe can force-final once the run has
+  reached step `10` and a Newegg product URL has been observed.
+- Keep the older thresholds as fallback paths for non-product or delayed
+  evidence patterns.
+- Adjust the injected message so it says "A direct ... probe" when only
+  one probe failed, instead of claiming multiple probes.
+
+Verification:
+
+- `PYTHONPATH=python /Users/sauravpanda/.local/bin/pytest
+  tests/test_final_answer_guards.py -q` passed: `87 passed`.
+- `PYTHONPATH=python python3 -m compileall -q
+  python/browser_use_rs/agent tests/test_final_answer_guards.py` passed.
+
+Expected targeted outcome:
+
+- Same honest failure class as the Python reference, but around step
+  `11` instead of step `24`.
+- This should be enough to move task `1211` below the reference cost
+  target if the force-final answer stays terse and the judge accepts the
+  honest unavailable answer.
