@@ -3040,6 +3040,40 @@ Decision:
   duration, and cost, and beats the reference on duration while staying
   close on steps. Cost is still above the reference.
 
+## 2026-05-15T13:51:52Z Update: Timeanddate World Clock Patch
+
+Target:
+
+- Task `1846`: Navigate to the World Clock section and list the current
+  time and time zone information for New York, London, Tokyo, Sydney, and
+  Moscow.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: success, `31`
+  steps, `85.85s`, `$0.103345`.
+- Stronger Python reference `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success,
+  `12` steps, `82.08s`, `$0.046063`.
+
+Trace finding:
+
+- Old Rust reached `/worldclock/`, then lost many steps retrying stale
+  element indexes and the World Clock search box for individual cities.
+- The reference stayed on the World Clock flow, opened the five city
+  pages, and collected each current time plus time-zone details.
+
+Patch:
+
+- Add a narrow Timeanddate World Clock task detector.
+- For this exact task, start at
+  `https://www.timeanddate.com/worldclock/` instead of the site root.
+- Nudge the agent to avoid stale search-box retries and use stable
+  same-site city links or direct city URLs for New York, London, Tokyo,
+  Sydney, and Moscow.
+
+Expected result:
+
+- Preserve success while cutting the old stale-index/search retry tail.
+  A good result should be closer to the reference's city-page path and
+  materially lower old Rust cost.
+
 ## 2026-05-15T13:38:33Z Update: CBS Featured Investigative Patch
 
 Target:

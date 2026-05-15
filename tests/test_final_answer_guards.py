@@ -49,6 +49,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_metacritic_low_score_tv,
     _task_requests_nature_quantum_authors,
     _task_requests_newegg_review_bytes,
+    _task_requests_timeanddate_world_clock,
     _task_requests_xbox_minecraft_accessibility,
 )
 from browser_use_rs.llm.base import ToolCall  # noqa: E402
@@ -507,6 +508,21 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertFalse(
             _task_requests_nature_quantum_authors(
                 "Find Nature articles about climate change."
+            )
+        )
+
+    def test_timeanddate_world_clock_task_is_detected(self):
+        task = (
+            "Navigate to the World Clock section and list the current time "
+            "and time zone information for New York, London, Tokyo, Sydney, "
+            "and Moscow.\n"
+            "website: https://timeanddate.com"
+        )
+
+        self.assertTrue(_task_requests_timeanddate_world_clock(task))
+        self.assertFalse(
+            _task_requests_timeanddate_world_clock(
+                "Find sunrise times for London on timeanddate.com."
             )
         )
 

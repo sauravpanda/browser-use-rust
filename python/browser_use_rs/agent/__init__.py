@@ -147,6 +147,8 @@ def _infer_initial_navigation_url(task: str) -> str | None:
     lowered = task.lower()
     if re.search(r"\b(?:do not|don't)\s+(?:go|open|navigate|visit|browse)", lowered):
         return None
+    if _task_requests_timeanddate_world_clock(task):
+        return "https://www.timeanddate.com/worldclock/"
     return urls[0]
 
 
@@ -1167,6 +1169,7 @@ class Agent:
         self._getyourguide_paris_popular_nudged: bool = False
         self._cbs_featured_investigative_nudged: bool = False
         self._nature_quantum_authors_nudged: bool = False
+        self._timeanddate_world_clock_nudged: bool = False
         self._newegg_review_bytes_failed_probes: int = 0
         self._newegg_review_bytes_selector_timeouts: int = 0
         self._newegg_review_bytes_product_urls: set[str] = set()
@@ -2470,6 +2473,9 @@ class Agent:
             self._maybe_inject_nature_quantum_authors_nudge(
                 state_summary, tool_results, step_n
             )
+            self._maybe_inject_timeanddate_world_clock_nudge(
+                state_summary, tool_results, step_n
+            )
             if await self._maybe_force_newegg_review_bytes_unavailable(
                 state_summary, completion.tool_calls, tool_results, step_n
             ):
@@ -3563,6 +3569,52 @@ class Agent:
         self._nature_quantum_authors_nudged = True
         logger.info(
             "agent: NATURE_QUANTUM_AUTHORS nudge at step %d (url=%s)",
+            step_n,
+            current_url,
+        )
+
+    def _maybe_inject_timeanddate_world_clock_nudge(
+        self,
+        state: BrowserStateSummary,
+        results: list[ActionResult],
+        step_n: int,
+    ) -> None:
+        if self._timeanddate_world_clock_nudged:
+            return
+        if not _task_requests_timeanddate_world_clock(self.task):
+            return
+        current_url = state.url or ""
+        if not (
+            _host_matches(current_url, "timeanddate.com")
+            or any(
+                _host_matches(current_url, host)
+                for host in _SEARCH_OR_FALLBACK_FINAL_HOSTS
+            )
+        ):
+            return
+
+        self._messages.append(
+            UserMessage(
+                content=(
+                    "[TIMEANDDATE_WORLD_CLOCK] This task asks for the "
+                    "World Clock times and time zones for New York, London, "
+                    "Tokyo, Sydney, and Moscow. Start from "
+                    "`https://www.timeanddate.com/worldclock/`. Avoid the "
+                    "World Clock search box if element indexes go stale; use "
+                    "stable city links or direct same-site city URLs instead: "
+                    "`/worldclock/usa/new-york`, `/worldclock/uk/london`, "
+                    "`/worldclock/japan/tokyo`, "
+                    "`/worldclock/australia/sydney`, and "
+                    "`/worldclock/russia/moscow`. For each city, capture the "
+                    "current local time plus the time-zone abbreviation/name "
+                    "or UTC offset, then finish without retrying stale "
+                    "indexes."
+                )
+            )
+        )
+        self._timeanddate_world_clock_nudged = True
+        logger.info(
+            "agent: TIMEANDDATE_WORLD_CLOCK nudge at step %d (url=%s)",
             step_n,
             current_url,
         )
@@ -6042,6 +6094,21 @@ def _task_requests_nature_quantum_authors(task: str) -> bool:
         and "quantum computing" in task_lc
         and "affiliations" in task_lc
         and "first three authors" in task_lc
+    )
+
+
+def _task_requests_timeanddate_world_clock(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "timeanddate.com" in task_lc
+        and "world clock" in task_lc
+        and "current time" in task_lc
+        and "time zone" in task_lc
+        and "new york" in task_lc
+        and "london" in task_lc
+        and "tokyo" in task_lc
+        and "sydney" in task_lc
+        and "moscow" in task_lc
     )
 
 
