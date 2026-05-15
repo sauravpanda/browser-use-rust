@@ -4020,6 +4020,37 @@ Learning:
   methodology, list, rejected alternatives, or text after the price, to see
   if completion tokens can fall below the `20%` cost-improvement target.
 
+## 2026-05-15T18:07:31Z Update: GetYourGuide Final-Format Retest Completed
+
+Targeted run:
+
+- Run `kh70f6x8hjywdr75t46dc86xwd86rnyb`, workflow `25933448751`,
+  commit `71fba470ff574c78c4179af33ad66b2602e694b9`.
+- Dataset range: `start_index=89`, `end_index=90`, task `645`.
+- User message: `bu-rust getyourguide-final-format targeted no-thinking
+  gpt-o4-mini`.
+
+Result:
+
+- Judge/self-report: success / `success=true`.
+- Steps: `1` vs reference `4`.
+- Duration: `4.50s` vs reference `14.20s`.
+- Cost: `$0.006583` vs reference `$0.007393`.
+- Final answer was one line:
+  `Disneyland® Paris 1-Day Ticket - 4.6 (52,956 reviews), starts at €52.`
+
+Learning:
+
+- The exact one-line format slightly improved cost and kept a one-step
+  success.
+- It also made the model choose by stronger star rating rather than the
+  previous/reference-style answer based on highest review count. The judge
+  accepted it, but the task wording says "most popular", and prior accepted
+  traces used review volume as the popularity signal.
+- Tighten the guidance again so review count is the primary popularity
+  signal and star rating is supporting evidence, while keeping the one-line
+  answer format.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
