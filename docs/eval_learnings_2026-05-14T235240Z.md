@@ -2526,6 +2526,46 @@ Configuration:
   `proxyless=true`, `parallel_runs=1`.
 - No literal `developerId` was sent in `/api/startRun`.
 
+## 2026-05-15T15:42:12Z Update: Sportskeeda F1 Targeted Eval Result
+
+Result for task `1582`:
+
+- Run `kh7ad3mkpxdjz9wnhjxb7zgsvx86spf4`, workflow `25926687987`,
+  commit `0c323de5667abe0b9da3e1c69cb7e25cfd92b8ec`.
+- Judge/self-report: success / `success=false`; score `1.0`.
+- Steps: `12` vs old Rust `1` and reference `22`.
+- Duration: `44.75s` vs old Rust `3.16s` and reference `141.97s`.
+- Cost: `$0.040127` vs old Rust `$0.003240` and reference `$0.074137`.
+- Tokens: `149,241` reported by the platform; usage total tokens
+  `153,234`; model `gemini-3-flash-preview`.
+
+Trace proof:
+
+- Workflow command confirmed the intended config: `BU_RUNTIME=rs`,
+  browser-use-rs, headed `xvfb-run`,
+  `--model gemini-3-flash-preview`, `--eval-model gpt-o4-mini`,
+  `--max-steps 100`, `--start 31`, `--end 32`,
+  `--max-actions-per-step 4`, `--judge-repeat-count 1`,
+  `--test-case WebBench_READ_v5`, `--proxyless`,
+  `--judge-type ComprehensiveV1`, `--no-thinking`,
+  `--thinking-level minimal`, `--flash-mode`, `--browser local`,
+  `--images-per-step 1`, `--use-vision true`, and
+  `--agent-type Agent`.
+- The trace ended on an archived Sportskeeda F1 page:
+  `https://web.archive.org/web/20260505142808/https://www.sportskeeda.com/f1`.
+- The final answer contained the three requested `About Formula 1`
+  paragraphs, and the judge accepted that the agent used an archived
+  version when live search was insufficient.
+
+Decision:
+
+- Keep the patch. It converts the old one-step 403 failure into a judged
+  pass and beats the successful reference by `45.5%` fewer steps, `68.5%`
+  lower duration, and `45.9%` lower cost.
+- Learning: for Sportskeeda category-page SEO sections, direct live access
+  may trigger WAF, but the judge accepts an archived same-page copy after
+  the live block is observed.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
