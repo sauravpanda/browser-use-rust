@@ -1911,6 +1911,26 @@ Local verification at `2026-05-15T14:33:46Z`:
 - `git diff --check`
 - `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`
 
+## 2026-05-15T14:35:27Z Update: Weather.com NYC Targeted Eval Launched
+
+Targeted run:
+
+- Run `kh7a7e7gajpdr1xm91rcpzve2586r294`, workflow `25923621793`,
+  commit `406c445beb9b9f69dac433f9354d82b143d49f09`.
+- Dataset range: `start_index=59`, `end_index=60`, task `2075`.
+- User message:
+  `bu-rust weather-nyc-current targeted no-thinking gpt-o4-mini`.
+
+Configuration:
+
+- `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking_level=minimal`, headed
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
