@@ -1328,3 +1328,91 @@ Local verification:
 - `python3 -m unittest discover -s tests -q`
 - `git diff --check`
 - `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`
+
+## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
+
+Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
+same worker shape as the reference: headed/xvfb, `gemini-3-flash-preview`,
+`eval_model=gpt-o4-mini`, `max_steps=100`, `max_actions_per_step=4`,
+`judge_repeat_count=1`, `test_case=WebBench_READ_v5`,
+`judge_type=ComprehensiveV1`, `--no-thinking`,
+`thinking_level=minimal`, `flash_mode=true`, `browser=local`,
+`images_per_step=1`, `use_vision=true`, and `agent_type=Agent`.
+
+Launch/platform learning:
+
+- `/api/startRun` created the dashboard rows but did not dispatch the
+  GitHub workers in this manual path.
+- Manual `repository_dispatch` to `browser-use/evaluations-internal`
+  with `client_payload.script_args` was required.
+- One accidental zero-task dashboard row was created while probing the
+  API: `kh7c8z558bwy0t8sajg0arqc9n86sf7w`. Treat it as launch noise.
+- Do not pass `developerId` or a literal developer name; use Saurav's
+  authenticated key and omit developer id fields.
+
+Southwest task `2656`:
+
+- Run: `kh75g0a4ctedkgmgdnw93yk3q986szd0`
+- GitHub workflow: `25899366650`
+- Command confirmed:
+  `--start 1 --end 2 --max-steps 100 --no-thinking --thinking-level minimal`
+- Result: judge success
+- Steps: 56
+- Duration: 210.546s
+- Cost: $0.183841
+- Tokens: 704,304
+- Action errors: 0
+- Access denials: 0
+- Final answer: ALB to MCO and ALB to BWI with doubled each-way totals
+  and travel dates.
+
+Learning:
+
+- The Southwest guard recovered the previous destination-only failure.
+- Cost is higher than the failed 9-step short path but lower than the
+  earlier 83-step success.
+- The final now includes route evidence, which the judge accepted.
+
+BBC Good Food task `2370`:
+
+- Run: `kh7afrpvvnby3f1zxhdkv44yrn86s4a3`
+- GitHub workflow: `25899366676`
+- Command confirmed:
+  `--start 4 --end 5 --max-steps 100 --no-thinking --thinking-level minimal`
+- Result: judge failure / Give Up
+- Steps: 78
+- Duration: 229.700s
+- Cost: $0.419250
+- Tokens: 1,339,994
+- Action errors: 0
+- Access denials: 1
+
+Learning:
+
+- Consent dismissal remained fixed.
+- The first BBC search returned generic pancake cards only, and the
+  trace later showed no `a[href*="paleo-pancakes"]` link.
+- The first BBC no-result guard was too strict: it only recorded
+  `bbc_search_no_results` late at step 72, so stagnation force-final
+  fired at step 79 instead.
+- The force-final answer still fabricated generic substitutions and was
+  rejected. This failure needs a source guard, not only a step cutoff.
+
+Follow-up patch after this retest:
+
+- Treat generic BBC search cards that match only `pancakes`, plus the
+  missing `paleo-pancakes` link, as independent no-exact-recipe evidence.
+- Lower the BBC cutoff threshold to two evidence labels after step 12,
+  or three labels after step 10.
+- Add a BBC source guard that rejects final answers compiling typical or
+  generic substitutions when the exact recipe page was not observed.
+- Make force-final prompts for this task explicitly forbid generic or
+  training-knowledge substitutions.
+
+Local verification after the follow-up patch:
+
+- `python3 -m unittest tests.test_final_answer_guards -q`
+- `python3 -m compileall -q python/browser_use_rs tests`
+- `python3 -m unittest discover -s tests -q`
+- `git diff --check`
+- `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`

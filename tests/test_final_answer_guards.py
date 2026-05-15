@@ -12,6 +12,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _bbc_goodfood_no_result_evidence_labels,
     _direct_section_url_for_consent_recovery,
     _final_answer_recovery_nudge,
+    _looks_like_bbc_goodfood_generic_substitution_answer,
     _looks_like_fabricated_blocked_answer,
     _looks_like_failed_consent_overlay_attempt,
     _looks_like_epa_aqs_airnow_answer,
@@ -453,6 +454,54 @@ class FinalAnswerGuardTests(unittest.TestCase):
             ),
             {"external_search_no_results"},
         )
+
+    def test_bbc_goodfood_generic_search_cards_count_as_no_exact_recipe(self):
+        task = (
+            'Open the "Paleo Pancakes" recipe page and compile a list of '
+            "the suggested ingredient substitutions provided. "
+            "website: https://www.bbcgoodfood.com/"
+        )
+        cards = (
+            "query terms: paleo, pancakes\n"
+            "1. View Easy pancakes\n"
+            "   url: https://www.bbcgoodfood.com/recipes/easy-pancakes\n"
+            "   query terms matched: pancakes\n"
+            "2. View American pancakes\n"
+            "   url: https://www.bbcgoodfood.com/recipes/american-pancakes\n"
+            "   query terms matched: pancakes"
+        )
+        missing_link = '(no elements match \'a[href*="paleo-pancakes"]\')'
+
+        self.assertEqual(
+            _bbc_goodfood_no_result_evidence_labels(
+                task,
+                "https://www.bbcgoodfood.com/search?q=Paleo+Pancakes",
+                cards,
+                missing_link,
+            ),
+            {"bbc_search_no_exact_recipe", "bbc_no_paleo_recipe_link"},
+        )
+
+    def test_bbc_goodfood_generic_substitution_answer_is_recoverable(self):
+        task = (
+            'Open the "Paleo Pancakes" recipe page and compile a list of '
+            "the suggested ingredient substitutions provided. "
+            "website: https://www.bbcgoodfood.com/"
+        )
+        answer = (
+            "Based on the BBC Good Food search results and typical Paleo "
+            "Pancakes recipes, common substitutions include almond flour, "
+            "coconut milk, and maple syrup. Note: due to technical "
+            "limitations in accessing the specific Paleo Pancakes recipe "
+            "sub-page, these substitutions are compiled from general "
+            "paleo-friendly guidelines."
+        )
+
+        self.assertTrue(
+            _looks_like_bbc_goodfood_generic_substitution_answer(task, answer)
+        )
+        self.assertTrue(_looks_like_unsupported_final_answer(task, answer))
+        self.assertIn("BBC_GOODFOOD_SOURCE_GUARD", _final_answer_recovery_nudge(task, answer))
 
     def test_failed_consent_overlay_attempt_is_detected(self):
         calls = [

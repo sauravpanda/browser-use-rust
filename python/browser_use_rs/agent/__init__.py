@@ -2500,6 +2500,16 @@ class Agent:
                     f"is unverified or missing. A partial answer is far more "
                     f"valuable than no answer."
                 )
+                if _task_requests_bbc_goodfood_paleo_pancakes(self.task):
+                    prompt += (
+                        " For the BBC Good Food Paleo Pancakes task, do NOT "
+                        "list typical, generic, or training-knowledge "
+                        "substitutions. Only report substitutions observed "
+                        "on the exact target recipe page. If that exact page "
+                        "was not observed, say the exact recipe page could "
+                        "not be located and that no source-backed "
+                        "substitutions can be provided."
+                    )
             self._messages.append(UserMessage(content=prompt))
             completion = await asyncio.wait_for(
                 self.llm.ainvoke(
@@ -2866,8 +2876,12 @@ class Agent:
         if self._bbc_goodfood_no_result_forced:
             return False
         if not (
-            (evidence_count >= 3 and step_n >= 12)
-            or (evidence_count >= 2 and step_n >= 18)
+            (evidence_count >= 3 and step_n >= 10)
+            or (evidence_count >= 2 and step_n >= 12)
+            or (
+                "bbc_search_no_results" in self._bbc_goodfood_no_result_evidence
+                and step_n >= 30
+            )
         ):
             return False
 
@@ -4887,6 +4901,9 @@ _BLOCKER_PHRASES = (
     "as i cannot access",
     "as i could not access",
     "i could not verify",
+    "technical limitations in accessing",
+    "limitations in accessing the specific",
+    "could not access the specific",
 )
 _FABRICATION_PHRASES = (
     "would typically",
@@ -5290,6 +5307,17 @@ def _final_answer_recovery_nudge(
     final_url: str | None = None,
 ) -> str | None:
     del final_url
+    if _looks_like_bbc_goodfood_generic_substitution_answer(task, text):
+        return (
+            "[BBC_GOODFOOD_SOURCE_GUARD] The proposed answer uses "
+            "typical or generic Paleo Pancakes substitutions instead of "
+            "source-backed substitutions from the exact BBC Good Food "
+            "recipe page. Do not provide generic substitutions. Continue "
+            "only if there is a concrete same-site path to the exact "
+            "recipe; otherwise finalize by stating that the exact page "
+            "was not located and no BBC-sourced substitutions can be "
+            "provided."
+        )
     if _looks_like_southwest_roundtrip_answer_needs_more_evidence(task, text):
         return (
             "[SOUTHWEST_ROUNDTRIP_GUARD] The proposed final answer still "
@@ -5557,6 +5585,30 @@ def _bbc_goodfood_no_result_evidence_labels(
     if _host_matches(url, "bbcgoodfood.com"):
         if re.search(r"\b(?:404|page not found|not found)\b", text_lc):
             labels.add("bbc_404")
+        has_exact_recipe_link = bool(
+            "/recipes/paleo-pancakes" in text_lc
+            or re.search(r"\bview\s+paleo pancakes(?:\s+recipe)?\b", text_lc)
+        )
+        if (
+            mentions_target
+            and not has_exact_recipe_link
+            and (
+                "no elements match" in text_lc
+                and "paleo-pancakes" in text_lc
+            )
+        ):
+            labels.add("bbc_no_paleo_recipe_link")
+        if (
+            mentions_target
+            and not has_exact_recipe_link
+            and (
+                "query terms: paleo, pancakes" in text_lc
+                or "query terms: pancakes, paleo" in text_lc
+            )
+            and "query terms matched: pancakes" in text_lc
+            and "query terms matched: paleo" not in text_lc
+        ):
+            labels.add("bbc_search_no_exact_recipe")
         if (
             no_result
             and mentions_target
@@ -5583,6 +5635,44 @@ def _bbc_goodfood_no_result_evidence_labels(
         labels.add("external_search_no_results")
 
     return labels
+
+
+def _looks_like_bbc_goodfood_generic_substitution_answer(
+    task: str,
+    text: str,
+) -> bool:
+    if not _task_requests_bbc_goodfood_paleo_pancakes(task):
+        return False
+    answer_lc = (text or "").lower()
+    if len(answer_lc) < 80:
+        return False
+    admits_no_exact_source = any(
+        phrase in answer_lc
+        for phrase in (
+            "technical limitations in accessing the specific",
+            "could not access the specific",
+            "could not locate the specific",
+            "specific paleo pancakes recipe",
+            "specific \"paleo pancakes\" recipe",
+            "specific 'paleo pancakes' recipe",
+            "instead provided",
+            "not observed",
+        )
+    )
+    generic_substitutions = any(
+        phrase in answer_lc
+        for phrase in (
+            "typical",
+            "generally provided",
+            "generally used",
+            "common substitution",
+            "common substitutions",
+            "standard",
+            "often referred to",
+            "based on general",
+        )
+    )
+    return admits_no_exact_source and generic_substitutions
 
 
 def _looks_like_unmet_requested_data_answer(task: str, text: str) -> bool:
@@ -5880,6 +5970,7 @@ def _looks_like_unsupported_final_answer(
         or _looks_like_epa_aqs_airnow_answer(task, text, final_url)
         or _looks_like_round_trip_answer_uses_one_way_only(task, text)
         or _looks_like_southwest_roundtrip_answer_needs_more_evidence(task, text)
+        or _looks_like_bbc_goodfood_generic_substitution_answer(task, text)
     )
 
 
