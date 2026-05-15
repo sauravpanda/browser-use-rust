@@ -2893,6 +2893,67 @@ Decision:
   `images_per_step=1`, `use_vision=true`, `agent_type=Agent`.
 - No literal `developerId` was sent in `/api/startRun`.
 
+## 2026-05-15T13:39:58Z Update: CBS Targeted Eval Launched
+
+Targeted run:
+
+- Run `kh7abhwt4etprqsykzb1yfgat586renz`, workflow `25920935943`,
+  commit `a2e614f9836af6bfc8a8dad5e798d9bc8da8fe57`.
+- Dataset range: `start_index=57`, `end_index=58`, task `225`.
+- User message: `bu-rust cbs-featured-investigative targeted no-thinking gpt-o4-mini`.
+
+Configuration:
+
+- `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking_level=minimal`, headed
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
+## 2026-05-15T13:43:21Z Update: CBS Targeted Eval Completed
+
+Targeted run:
+
+- Run `kh7abhwt4etprqsykzb1yfgat586renz`, workflow `25920935943`,
+  commit `a2e614f9836af6bfc8a8dad5e798d9bc8da8fe57`.
+- Command confirmed in GitHub logs:
+  `xvfb-run`, `--model gemini-3-flash-preview`,
+  `--eval-model gpt-o4-mini`, `--max-steps 100`,
+  `--start 57`, `--end 58`, `--max-actions-per-step 4`,
+  `--judge-repeat-count 1`, `--test-case WebBench_READ_v5`,
+  `--proxyless`, `--judge-type ComprehensiveV1`, `--no-thinking`,
+  `--thinking-level minimal`, `--flash-mode`, `--browser local`,
+  `--images-per-step 1`, `--use-vision true`, `--agent-type Agent`.
+- Platform caveat repeated: `/api/getRunResults` returned the real CBS
+  row plus an empty CDC row; use the task `225` row.
+
+Result for task `225`:
+
+- Judge/self-report: success / `success=true`.
+- Steps: `5` vs old Rust `13` and reference `3`.
+- Duration: `16.90s` vs old Rust `42.99s` and reference `10.26s`.
+- Cost: `$0.017168` vs old Rust `$0.055460` and reference `$0.004803`.
+- Action errors/access denied/tool failures: `0/0/0`.
+
+Trace proof:
+
+- The CBS nudge fired at step `1`, after the first model action had
+  already tried `find_text("Investigates")`.
+- The run used the homepage `EXCLUSIVE` story, opened it by step `3`,
+  and finished at step `5` with a judged-successful summary.
+- It avoided the old detour to `/investigations/`, but still had two
+  extra steps versus the reference because the nudge is injected after
+  the first action and the agent handled a cookie overlay.
+
+Decision:
+
+- Keep the patch. It preserves judged success and cuts old Rust steps,
+  duration, and cost. It does not beat the reference; getting there would
+  likely require pre-first-action guidance or a brittle current-title
+  shortcut.
+
 ## 2026-05-15T13:38:33Z Update: CBS Featured Investigative Patch
 
 Target:
