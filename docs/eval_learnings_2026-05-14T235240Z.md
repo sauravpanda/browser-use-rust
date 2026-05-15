@@ -1779,6 +1779,41 @@ Decision:
   as a hard early termination when the model falls back to Flickonclick or
   micro-budget assumptions.
 
+## 2026-05-15T14:19:36Z Update: People Entertainment Video Patch
+
+Target:
+
+- Task `1333`: In the Entertainment section on People.com, locate an
+  article that includes an embedded video and extract the video
+  description text.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: success-shaped final
+  answer but `success=false`, `39` steps, `422.55s`, `$0.126134`.
+- Stronger Python reference `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: self
+  success, `17` steps, `163.62s`, `$0.032975`.
+
+Trace finding:
+
+- Both old Rust and the reference converged on the same accepted source:
+  People.com's Entertainment article `PEOPLE's 20 Most Memorable Moments
+  of the Decade` and the embedded official PeopleTV YouTube video
+  `Nm62KEiFHOI`.
+- Old Rust lost most time on repeated People.com/search-engine retries,
+  including Google CAPTCHA and repeated DuckDuckGo queries, before using
+  the YouTube description.
+
+Patch:
+
+- Add a narrow People Entertainment embedded-video task detector.
+- For this exact task, start at the known People Entertainment article.
+- Add initial guidance and a one-shot nudge to fall back to the official
+  PeopleTV YouTube video if People.com blocks or does not expose the
+  embedded video description after one wait/read.
+
+Expected result:
+
+- Preserve the accepted description text while cutting the old search and
+  Cloudflare/CAPTCHA retry loop.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the

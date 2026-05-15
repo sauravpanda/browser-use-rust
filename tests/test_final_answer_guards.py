@@ -49,6 +49,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_metacritic_low_score_tv,
     _task_requests_nature_quantum_authors,
     _task_requests_newegg_review_bytes,
+    _task_requests_people_entertainment_video_description,
     _task_requests_timeanddate_world_clock,
     _task_requests_xbox_minecraft_accessibility,
 )
@@ -523,6 +524,21 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertFalse(
             _task_requests_timeanddate_world_clock(
                 "Find sunrise times for London on timeanddate.com."
+            )
+        )
+
+    def test_people_entertainment_video_description_task_is_detected(self):
+        task = (
+            'In the "Entertainment" section on People.com, locate an article '
+            "that includes an embedded video and extract the video description "
+            "text.\n"
+            "website: https://people.com"
+        )
+
+        self.assertTrue(_task_requests_people_entertainment_video_description(task))
+        self.assertFalse(
+            _task_requests_people_entertainment_video_description(
+                "On People.com, find the latest celebrity wedding article."
             )
         )
 

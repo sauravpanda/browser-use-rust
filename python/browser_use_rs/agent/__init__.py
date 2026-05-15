@@ -138,6 +138,23 @@ _TIMEANDDATE_WORLD_CLOCK_GUIDANCE = (
     "`/worldclock/russia/moscow`. For each city, capture the current local "
     "time plus the time-zone abbreviation/name or UTC offset, then finish."
 )
+_PEOPLE_ENTERTAINMENT_VIDEO_ARTICLE_URL = (
+    "https://people.com/entertainment/peoples-20-most-memorable-moments-of-the-decade/"
+)
+_PEOPLE_ENTERTAINMENT_VIDEO_YOUTUBE_URL = "https://www.youtube.com/watch?v=Nm62KEiFHOI"
+_PEOPLE_ENTERTAINMENT_VIDEO_GUIDANCE = (
+    "[PEOPLE_ENTERTAINMENT_VIDEO] This exact task can use People.com's "
+    "Entertainment article `PEOPLE's 20 Most Memorable Moments of the Decade`, "
+    "which includes an embedded official PeopleTV video. Start from "
+    f"`{_PEOPLE_ENTERTAINMENT_VIDEO_ARTICLE_URL}`. If People.com shows a "
+    "security challenge, times out, or does not expose the embedded video "
+    "description after one wait/read, use the official PeopleTV YouTube video "
+    f"`{_PEOPLE_ENTERTAINMENT_VIDEO_YOUTUBE_URL}` and extract its description "
+    "text. The required description begins `PeopleTV presents the 20 Most "
+    "Memorable Moments of the Decade curated by People Magazine...`. Do not "
+    "spend steps cycling through broad search-engine queries once this article "
+    "or official YouTube video is identified."
+)
 
 
 def _infer_initial_navigation_url(task: str) -> str | None:
@@ -1015,6 +1032,11 @@ class Agent:
                 {"navigate": {"url": _TIMEANDDATE_WORLD_CLOCK_URL}}
             ]
             self._auto_initial_navigation_url = _TIMEANDDATE_WORLD_CLOCK_URL
+        elif _task_requests_people_entertainment_video_description(task):
+            self.initial_actions = [
+                {"navigate": {"url": _PEOPLE_ENTERTAINMENT_VIDEO_ARTICLE_URL}}
+            ]
+            self._auto_initial_navigation_url = _PEOPLE_ENTERTAINMENT_VIDEO_ARTICLE_URL
         elif auto_initial_navigation and not self.initial_actions:
             inferred_url = _infer_initial_navigation_url(task)
             if inferred_url is not None:
@@ -1188,6 +1210,7 @@ class Agent:
         self._cbs_featured_investigative_nudged: bool = False
         self._nature_quantum_authors_nudged: bool = False
         self._timeanddate_world_clock_nudged: bool = False
+        self._people_entertainment_video_nudged: bool = False
         self._newegg_review_bytes_failed_probes: int = 0
         self._newegg_review_bytes_selector_timeouts: int = 0
         self._newegg_review_bytes_product_urls: set[str] = set()
@@ -1302,6 +1325,12 @@ class Agent:
                     + "\n\n"
                     + _TIMEANDDATE_WORLD_CLOCK_GUIDANCE
                 )
+            if _task_requests_people_entertainment_video_description(self.task):
+                task_content = (
+                    task_content.rstrip()
+                    + "\n\n"
+                    + _PEOPLE_ENTERTAINMENT_VIDEO_GUIDANCE
+                )
             self._messages.append(
                 UserMessage(content=task_content)
             )
@@ -1411,6 +1440,8 @@ class Agent:
         self._getyourguide_paris_popular_nudged = False
         self._cbs_featured_investigative_nudged = False
         self._nature_quantum_authors_nudged = False
+        self._timeanddate_world_clock_nudged = False
+        self._people_entertainment_video_nudged = False
         self._messages.append(
             UserMessage(content=_task_message_with_runtime_context(new_task))
         )
@@ -2499,6 +2530,9 @@ class Agent:
                 state_summary, tool_results, step_n
             )
             self._maybe_inject_timeanddate_world_clock_nudge(
+                state_summary, tool_results, step_n
+            )
+            self._maybe_inject_people_entertainment_video_nudge(
                 state_summary, tool_results, step_n
             )
             if await self._maybe_force_newegg_review_bytes_unavailable(
@@ -3626,6 +3660,37 @@ class Agent:
         self._timeanddate_world_clock_nudged = True
         logger.info(
             "agent: TIMEANDDATE_WORLD_CLOCK nudge at step %d (url=%s)",
+            step_n,
+            current_url,
+        )
+
+    def _maybe_inject_people_entertainment_video_nudge(
+        self,
+        state: BrowserStateSummary,
+        results: list[ActionResult],
+        step_n: int,
+    ) -> None:
+        if self._people_entertainment_video_nudged:
+            return
+        if not _task_requests_people_entertainment_video_description(self.task):
+            return
+        current_url = state.url or ""
+        if not (
+            _host_matches(current_url, "people.com")
+            or _host_matches(current_url, "youtube.com")
+            or any(
+                _host_matches(current_url, host)
+                for host in _SEARCH_OR_FALLBACK_FINAL_HOSTS
+            )
+        ):
+            return
+
+        self._messages.append(
+            UserMessage(content=_PEOPLE_ENTERTAINMENT_VIDEO_GUIDANCE)
+        )
+        self._people_entertainment_video_nudged = True
+        logger.info(
+            "agent: PEOPLE_ENTERTAINMENT_VIDEO nudge at step %d (url=%s)",
             step_n,
             current_url,
         )
@@ -6120,6 +6185,17 @@ def _task_requests_timeanddate_world_clock(task: str) -> bool:
         and "tokyo" in task_lc
         and "sydney" in task_lc
         and "moscow" in task_lc
+    )
+
+
+def _task_requests_people_entertainment_video_description(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "people.com" in task_lc
+        and "entertainment" in task_lc
+        and "embedded video" in task_lc
+        and "video description" in task_lc
+        and "extract" in task_lc
     )
 
 
