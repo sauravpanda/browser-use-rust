@@ -1931,6 +1931,78 @@ Configuration:
   `proxyless=true`, `parallel_runs=1`.
 - No literal `developerId` was sent in `/api/startRun`.
 
+Launch mistake:
+
+- The first manual dispatch sent `client_payload.script_args` as a list
+  of `key:value` strings. The current workflow expects
+  `script_args` as a mapping/object.
+- Because of that shape mismatch, `runtime` read empty in the workflow,
+  the `browser_use_rs` install steps were skipped, and the command would
+  have defaulted toward the upstream Python path and default indexes.
+- Workflow `25923621793` was cancelled and run
+  `kh7a7e7gajpdr1xm91rcpzve2586r294` should be treated as launch noise.
+
+## 2026-05-15T14:38:04Z Update: Weather.com NYC Corrected Eval Launched
+
+Corrected targeted run:
+
+- Run `kh74bmabntf38b3sz4xt67efs186sdxa`, workflow `25923752295`,
+  commit `18361e32b0ab60fa663605144006609f94914060`.
+- Dataset range: `start_index=59`, `end_index=60`, task `2075`.
+- User message:
+  `bu-rust weather-nyc-current corrected-dispatch no-thinking gpt-o4-mini`.
+
+Corrected dispatch learning:
+
+- Use `client_payload.script_args` as a JSON object, not a string list.
+- Required keys for the Rust path are `runtime=rs`,
+  `browser_use_rs_ref=<commit>`, `start_index`, `end_index`,
+  `total_tasks=1`, `run_id`, `headless=false`, `thinking=false`, and
+  `thinking_level=minimal`.
+- The corrected dispatch preserves the requested config:
+  `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`, `max_steps=100`,
+  `--no-thinking`, `--thinking-level minimal`, headed/Xvfb local
+  browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, and `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
+## 2026-05-15T14:41:59Z Update: Weather.com NYC Targeted Eval Result
+
+Result for task `2075`:
+
+- Judge/self-report: success / `success=true`.
+- Steps: `2` vs old Rust `16` and reference `5`.
+- Duration: `8.84s` vs old Rust `48.63s` and reference `27.33s`.
+- Cost: `$0.012178` vs old Rust `$0.048396` and reference `$0.011793`.
+- Action errors/access denied/tool failures: `0/0/0`.
+
+Trace proof:
+
+- Workflow logs confirmed `BU_RUNTIME=rs`, browser-use-rs installation,
+  headed `xvfb-run`, `--model gemini-3-flash-preview`,
+  `--eval-model gpt-o4-mini`, `--max-steps 100`, `--start 59`,
+  `--end 60`, `--proxyless`, `--judge-type ComprehensiveV1`,
+  `--no-thinking`, `--thinking-level minimal`, `--flash-mode`,
+  `--browser local`, `--images-per-step 1`, `--use-vision true`,
+  and `--agent-type Agent`.
+- The agent loaded the Weather.com location-id Today page, made one
+  `extract_structured_data` call, and finished with current conditions:
+  temperature `43°F`, humidity `86%`, and wind `13 mph (West)`.
+- The external judgement in the worker log stated that the agent
+  navigated to the correct Weather.com page for New York City and
+  extracted the requested temperature, humidity, and wind speed.
+- Platform caveat repeated: `/api/getRunResults?format=only_judge`
+  returned the real Weather row plus the empty CDC task `232`; use the
+  task `2075` row.
+
+Decision:
+
+- Keep the patch. It improves old Rust by `14` steps and `39.79s`, beats
+  the reference on steps and duration, and is effectively at reference
+  cost while preserving success.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
