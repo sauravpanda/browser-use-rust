@@ -2073,3 +2073,38 @@ Decision:
 - Automatic LLM state capture was reverted to full-viewport JPEG for
   now. The broader release candidate still needs a different cost lever;
   image encoding/scale alone is not enough to beat the reference on cost.
+
+## 2026-05-15T06:53:20Z Update: Skip Validation After Fresh Evidence
+
+Trace learning:
+
+- The current 20-task slice is already faster than the reference, but
+  cost is still worse. The main remaining lever is fewer model turns,
+  not smaller screenshot bytes.
+- Several successful READ traces spend an extra turn validating after a
+  recent read/extract tool already produced the final evidence.
+- The validation prompt already asks the model not to re-extract when it
+  has fresh evidence, but the agent loop always injected validation
+  anyway.
+
+Patch:
+
+- Added a recent-evidence guard for final answers. When the latest tool
+  results include non-empty content from read/extract tools such as
+  `extract_structured_data`, `page_text`, `get_text`, `get_links`, or
+  `search_page`, successful `done` answers can commit without the
+  self-validation turn.
+- Kept validation enabled for unsupported/thin finals, errors, missing
+  evidence, count-check failures, and short/no-evidence paths.
+- Added a regression test proving `extract_structured_data -> done`
+  completes in two model calls with self-validation enabled.
+
+Local verification:
+
+- `python3 -m unittest tests.test_done_count_helpers tests.test_prompt_metrics -q`
+- `python3 -m compileall -q python/browser_use_rs tests bench`
+- `python3 -m unittest discover -s tests -q`
+- `cargo check -p bu-py`
+- `cargo test -p bu-browser`
+- `git diff --check`
+- `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`
