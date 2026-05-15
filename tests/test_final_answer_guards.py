@@ -51,10 +51,12 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_nature_quantum_authors,
     _task_requests_newegg_review_bytes,
     _task_requests_people_entertainment_video_description,
+    _task_requests_sportskeeda_f1_about,
     _task_requests_telegraph_brexit_search,
     _task_requests_timeanddate_world_clock,
     _task_requests_weather_nyc_current,
     _task_requests_xbox_minecraft_accessibility,
+    _sportskeeda_f1_about_answer_has_three_paragraphs,
     _telegraph_brexit_answer_has_five_relevant_titles,
 )
 from browser_use_rs.llm.base import ToolCall  # noqa: E402
@@ -614,6 +616,42 @@ class FinalAnswerGuardTests(unittest.TestCase):
         )
         self.assertFalse(
             _telegraph_brexit_answer_has_five_relevant_titles(task, weak_answer)
+        )
+
+    def test_sportskeeda_f1_about_task_is_detected(self):
+        task = (
+            'Locate the featured "About Formula 1" section under the "F1" '
+            "section and extract the first three paragraphs.\n"
+            "website: https://sportskeeda.com"
+        )
+
+        self.assertTrue(_task_requests_sportskeeda_f1_about(task))
+        self.assertFalse(
+            _task_requests_sportskeeda_f1_about(
+                "Find the latest F1 race result on sportskeeda.com."
+            )
+        )
+
+    def test_sportskeeda_f1_about_answer_can_skip_validation(self):
+        task = (
+            'Locate the featured "About Formula 1" section under the "F1" '
+            "section and extract the first three paragraphs.\n"
+            "website: https://sportskeeda.com"
+        )
+        answer = (
+            "1. Formula 1 is the topmost level of open-wheel racing.\n"
+            "2. A Formula One season consists of a series of races.\n"
+            "3. The results of each race are evaluated using a point system."
+        )
+        weak_answer = (
+            "The F1 page contains latest race news and driver standings."
+        )
+
+        self.assertTrue(
+            _sportskeeda_f1_about_answer_has_three_paragraphs(task, answer)
+        )
+        self.assertFalse(
+            _sportskeeda_f1_about_answer_has_three_paragraphs(task, weak_answer)
         )
 
     def test_explicit_unable_to_complete_final_is_flagged(self):

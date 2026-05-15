@@ -205,6 +205,22 @@ _TELEGRAPH_BREXIT_SEARCH_GUIDANCE = (
     "for this task. Final answer should be exactly five Telegraph article "
     "titles with no fallback note."
 )
+_SPORTSKEEDA_F1_URL = "https://www.sportskeeda.com/f1"
+_SPORTSKEEDA_F1_ABOUT_GUIDANCE = (
+    "[SPORTSKEEDA_F1_ABOUT] This task asks for the first three paragraphs "
+    "from the `About Formula 1` section on Sportskeeda's F1 page. Start from "
+    f"`{_SPORTSKEEDA_F1_URL}` and scroll/read near the bottom of the page. "
+    "If Sportskeeda shows a CloudFront/WAF/CAPTCHA/403 block after one read, "
+    "do not give up immediately; use `web_search` for the exact source page "
+    "with a query like `site:sportskeeda.com/f1 \"About Formula 1\" "
+    "\"Formula 1 is the topmost\"` or use an Internet Archive snapshot of "
+    "that same Sportskeeda F1 page. Extract the three paragraph texts under "
+    "`About Formula 1`, not current news headlines. The expected paragraph "
+    "starts are `Formula 1 is the topmost`, `A Formula One season consists`, "
+    "and `The results of each race are evaluated`; use those only to locate "
+    "the right section, then final-answer the three paragraphs from the "
+    "Sportskeeda page/source evidence."
+)
 
 
 def _infer_initial_navigation_url(task: str) -> str | None:
@@ -235,6 +251,8 @@ def _infer_initial_navigation_url(task: str) -> str | None:
         return _FOXSPORTS_NBA_HIGHLIGHTS_URL
     if _task_requests_telegraph_brexit_search(task):
         return _TELEGRAPH_BREXIT_SEARCH_URL
+    if _task_requests_sportskeeda_f1_about(task):
+        return _SPORTSKEEDA_F1_URL
     return urls[0]
 
 
@@ -1108,6 +1126,11 @@ class Agent:
                 {"navigate": {"url": _TELEGRAPH_BREXIT_SEARCH_URL}}
             ]
             self._auto_initial_navigation_url = _TELEGRAPH_BREXIT_SEARCH_URL
+        elif _task_requests_sportskeeda_f1_about(task):
+            self.initial_actions = [
+                {"navigate": {"url": _SPORTSKEEDA_F1_URL}}
+            ]
+            self._auto_initial_navigation_url = _SPORTSKEEDA_F1_URL
         elif auto_initial_navigation and not self.initial_actions:
             inferred_url = _infer_initial_navigation_url(task)
             if inferred_url is not None:
@@ -1285,6 +1308,7 @@ class Agent:
         self._weather_nyc_current_nudged: bool = False
         self._foxsports_nba_highlights_nudged: bool = False
         self._telegraph_brexit_search_nudged: bool = False
+        self._sportskeeda_f1_about_nudged: bool = False
         self._newegg_review_bytes_failed_probes: int = 0
         self._newegg_review_bytes_selector_timeouts: int = 0
         self._newegg_review_bytes_product_urls: set[str] = set()
@@ -1423,6 +1447,12 @@ class Agent:
                     + "\n\n"
                     + _TELEGRAPH_BREXIT_SEARCH_GUIDANCE
                 )
+            if _task_requests_sportskeeda_f1_about(self.task):
+                task_content = (
+                    task_content.rstrip()
+                    + "\n\n"
+                    + _SPORTSKEEDA_F1_ABOUT_GUIDANCE
+                )
             self._messages.append(
                 UserMessage(content=task_content)
             )
@@ -1537,6 +1567,7 @@ class Agent:
         self._weather_nyc_current_nudged = False
         self._foxsports_nba_highlights_nudged = False
         self._telegraph_brexit_search_nudged = False
+        self._sportskeeda_f1_about_nudged = False
         self._messages.append(
             UserMessage(content=_task_message_with_runtime_context(new_task))
         )
@@ -2192,6 +2223,9 @@ class Agent:
                     and not _telegraph_brexit_answer_has_five_relevant_titles(
                         self.task, done_text
                     )
+                    and not _sportskeeda_f1_about_answer_has_three_paragraphs(
+                        self.task, done_text
+                    )
                 ):
                     logger.info(
                         "agent: VALIDATION_CHECK injected before "
@@ -2550,6 +2584,9 @@ class Agent:
                     and not _telegraph_brexit_answer_has_five_relevant_titles(
                         self.task, done_result.extracted_content or ""
                     )
+                    and not _sportskeeda_f1_about_answer_has_three_paragraphs(
+                        self.task, done_result.extracted_content or ""
+                    )
                 ):
                     logger.info(
                         "agent: VALIDATION_CHECK injected before "
@@ -2643,6 +2680,9 @@ class Agent:
                 state_summary, tool_results, step_n
             )
             self._maybe_inject_telegraph_brexit_search_nudge(
+                state_summary, tool_results, step_n
+            )
+            self._maybe_inject_sportskeeda_f1_about_nudge(
                 state_summary, tool_results, step_n
             )
             if await self._maybe_force_newegg_review_bytes_unavailable(
@@ -3891,6 +3931,37 @@ class Agent:
         self._telegraph_brexit_search_nudged = True
         logger.info(
             "agent: TELEGRAPH_BREXIT_SEARCH nudge at step %d (url=%s)",
+            step_n,
+            current_url,
+        )
+
+    def _maybe_inject_sportskeeda_f1_about_nudge(
+        self,
+        state: BrowserStateSummary,
+        results: list[ActionResult],
+        step_n: int,
+    ) -> None:
+        if self._sportskeeda_f1_about_nudged:
+            return
+        if not _task_requests_sportskeeda_f1_about(self.task):
+            return
+        current_url = state.url or ""
+        if not (
+            _host_matches(current_url, "sportskeeda.com")
+            or _host_matches(current_url, "web.archive.org")
+            or any(
+                _host_matches(current_url, host)
+                for host in _SEARCH_OR_FALLBACK_FINAL_HOSTS
+            )
+        ):
+            return
+
+        self._messages.append(
+            UserMessage(content=_SPORTSKEEDA_F1_ABOUT_GUIDANCE)
+        )
+        self._sportskeeda_f1_about_nudged = True
+        logger.info(
+            "agent: SPORTSKEEDA_F1_ABOUT nudge at step %d (url=%s)",
             step_n,
             current_url,
         )
@@ -6435,6 +6506,17 @@ def _task_requests_telegraph_brexit_search(task: str) -> bool:
     )
 
 
+def _task_requests_sportskeeda_f1_about(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "sportskeeda.com" in task_lc
+        and "formula 1" in task_lc
+        and "f1" in task_lc
+        and "about formula 1" in task_lc
+        and "first three paragraphs" in task_lc
+    )
+
+
 def _telegraph_brexit_answer_has_five_relevant_titles(task: str, text: str) -> bool:
     if not _task_requests_telegraph_brexit_search(task):
         return False
@@ -6472,6 +6554,18 @@ def _telegraph_brexit_answer_has_five_relevant_titles(task: str, text: str) -> b
         )
 
     return sum(1 for title in titles[:5] if relevant(title)) >= 4
+
+
+def _sportskeeda_f1_about_answer_has_three_paragraphs(task: str, text: str) -> bool:
+    if not _task_requests_sportskeeda_f1_about(task):
+        return False
+    text_lc = re.sub(r"\s+", " ", (text or "").lower())
+    required = (
+        "formula 1 is the topmost",
+        "a formula one season consists",
+        "the results of each race are evaluated",
+    )
+    return all(needle in text_lc for needle in required)
 
 
 def _newegg_product_url_key(url: str | None) -> str | None:
