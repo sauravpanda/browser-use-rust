@@ -688,3 +688,90 @@ Platform note:
   `2026-05-15T01:55:17Z` were not Rust runs; they used
   `--model custom` on `poweruserCloud_v2` and failed before task
   execution because `custom` is not a supported eval model name.
+
+## 2026-05-15T02:26:45Z Update: Targeted Retest And First-10 Slice
+
+Commit `3cedc6db00fb52c3a8830f44f8ed8ecd55ce09e7` was pushed with:
+
+- completed-download GUID/suggested-filename aliasing in `read_file`
+- the consent-overlay loop nudge
+- tests for both behaviors
+
+Targeted EPA retest:
+
+- Run: `kh759d7z7hfmksy28xqnjpryc986r917`
+- GitHub workflow: `25896256350`
+- Task: `432`
+- Result: success
+- Steps: 44
+- Duration: 150.397s
+- Cost: $0.140475
+- Important trace proof: `read_file` on the absolute reported download
+  GUID path succeeded and returned `ad_aqi_tracker_data.csv` content.
+- This fixed the earlier `af236dd` behavior where the same absolute
+  completed-download path returned `(no such file: ...)`.
+
+Targeted Bloomberg retest:
+
+- Run: `kh7fgpqpj9tpvg5xxeqmcfx2sx86rvrv`
+- GitHub workflow: `25896258700`
+- Task: `2397`
+- Result: success
+- Steps: 9
+- Duration: 34.904s
+- Cost: $0.029256
+- Trace behavior: navigated directly to
+  `https://www.bloomberg.com/opinion`, then used
+  `extract_structured_data` for the three Opinion article/title pairs.
+- The consent-loop nudge did not need to fire in this sampled run; this
+  retest proves the current prompt+patch combination can return to the
+  passing direct-navigation pattern and that the patch did not harm this
+  task.
+
+Dashboard anomaly:
+
+- The pre-created one-task runs show an extra stale/null CDC task row in
+  `getRunResults`, causing `completedTasks=2` and `progress=200`.
+- GitHub logs confirm only the intended task executed in each one-task
+  workflow.
+- For pre-created targeted runs, use GitHub task logs and rows with
+  non-null `steps` when interpreting results.
+
+First-10 slice:
+
+- Run: `kh7fv7y64tyy7tjpwm4ksr9b9586s3cq`
+- GitHub workflow: `25896560029`
+- Config matched the reference-style flags:
+  `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`, `max_steps=100`,
+  `max_actions_per_step=4`, `thinking=false`,
+  `thinking_level=minimal`, `flash_mode=true`, headed/xvfb,
+  `browser=local`, `images_per_step=1`, `use_vision=true`.
+- Canceled after 5 executed tasks because the slice was clearly not a
+  release candidate.
+- Dashboard finalization after cancellation marked 10 completed / 2
+  successful, but the unstarted tasks have null steps and should not be
+  interpreted as executed failures.
+
+Executed subset before cancellation:
+
+- `232` CDC flu prevention: success, 13 steps, 44.013s.
+- `1371` PlayStation Horizon Forbidden West: success, 9 steps, 33.964s.
+- `2370` BBC Good Food Paleo Pancakes: failed/Give Up, 14 steps,
+  40.990s, persistent consent overlay.
+- `432` EPA air quality: failed/Give Up, 26 steps, 93.419s; this run
+  drifted to AirNow evidence instead of the AQS CSV path used by the
+  targeted retest.
+- `2656` Southwest flight deals: failed/Incorrect Result, 42 steps,
+  170.996s; produced one-way flight offers when the task asked for
+  round-trip deals.
+
+Slice-level conclusion:
+
+- The isolated EPA and Bloomberg fixes are real, but the first-10 slice
+  is still not close to the newer Python reference.
+- The canceled partial slice had 2 successes across 5 executed tasks,
+  104 total steps, 383.382s, and $0.343630 before cancellation.
+- Do not launch a full 198-task release from `3cedc6d`.
+- The next highest-value work is targeted, not broad: prevent EPA from
+  drifting to AirNow when the task asks for AQS, and address Southwest's
+  one-way-vs-round-trip interpretation before another slice.
