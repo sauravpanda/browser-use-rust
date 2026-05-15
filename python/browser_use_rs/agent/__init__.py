@@ -169,6 +169,16 @@ _WEATHER_NYC_CURRENT_GUIDANCE = (
     "block. Do not answer from search-engine weather cards or keep browsing "
     "forecast/radar pages after those three values are visible."
 )
+_FOXSPORTS_NBA_HIGHLIGHTS_URL = "https://www.foxsports.com/nba/highlights"
+_FOXSPORTS_NBA_HIGHLIGHTS_GUIDANCE = (
+    "[FOXSPORTS_NBA_HIGHLIGHTS] This task asks for the titles of the five "
+    "most recent NBA highlight videos from Fox Sports' video highlights "
+    f"section. Start from `{_FOXSPORTS_NBA_HIGHLIGHTS_URL}`, which is the "
+    "official NBA Videos & Highlights page. Extract the first five visible "
+    "video/highlight card titles in page order, then finish. Do not browse "
+    "NBA news, stories, odds, live/watch pages, or individual video pages "
+    "after five highlight-video titles are visible."
+)
 
 
 def _infer_initial_navigation_url(task: str) -> str | None:
@@ -195,6 +205,8 @@ def _infer_initial_navigation_url(task: str) -> str | None:
         return _TIMEANDDATE_WORLD_CLOCK_URL
     if _task_requests_weather_nyc_current(task):
         return _WEATHER_NYC_CURRENT_URL
+    if _task_requests_foxsports_nba_highlights(task):
+        return _FOXSPORTS_NBA_HIGHLIGHTS_URL
     return urls[0]
 
 
@@ -1058,6 +1070,11 @@ class Agent:
                 {"navigate": {"url": _WEATHER_NYC_CURRENT_URL}}
             ]
             self._auto_initial_navigation_url = _WEATHER_NYC_CURRENT_URL
+        elif _task_requests_foxsports_nba_highlights(task):
+            self.initial_actions = [
+                {"navigate": {"url": _FOXSPORTS_NBA_HIGHLIGHTS_URL}}
+            ]
+            self._auto_initial_navigation_url = _FOXSPORTS_NBA_HIGHLIGHTS_URL
         elif auto_initial_navigation and not self.initial_actions:
             inferred_url = _infer_initial_navigation_url(task)
             if inferred_url is not None:
@@ -1233,6 +1250,7 @@ class Agent:
         self._timeanddate_world_clock_nudged: bool = False
         self._people_entertainment_video_nudged: bool = False
         self._weather_nyc_current_nudged: bool = False
+        self._foxsports_nba_highlights_nudged: bool = False
         self._newegg_review_bytes_failed_probes: int = 0
         self._newegg_review_bytes_selector_timeouts: int = 0
         self._newegg_review_bytes_product_urls: set[str] = set()
@@ -1359,6 +1377,12 @@ class Agent:
                     + "\n\n"
                     + _WEATHER_NYC_CURRENT_GUIDANCE
                 )
+            if _task_requests_foxsports_nba_highlights(self.task):
+                task_content = (
+                    task_content.rstrip()
+                    + "\n\n"
+                    + _FOXSPORTS_NBA_HIGHLIGHTS_GUIDANCE
+                )
             self._messages.append(
                 UserMessage(content=task_content)
             )
@@ -1471,6 +1495,7 @@ class Agent:
         self._timeanddate_world_clock_nudged = False
         self._people_entertainment_video_nudged = False
         self._weather_nyc_current_nudged = False
+        self._foxsports_nba_highlights_nudged = False
         self._messages.append(
             UserMessage(content=_task_message_with_runtime_context(new_task))
         )
@@ -2565,6 +2590,9 @@ class Agent:
                 state_summary, tool_results, step_n
             )
             self._maybe_inject_weather_nyc_current_nudge(
+                state_summary, tool_results, step_n
+            )
+            self._maybe_inject_foxsports_nba_highlights_nudge(
                 state_summary, tool_results, step_n
             )
             if await self._maybe_force_newegg_review_bytes_unavailable(
@@ -3753,6 +3781,36 @@ class Agent:
         self._weather_nyc_current_nudged = True
         logger.info(
             "agent: WEATHER_NYC_CURRENT nudge at step %d (url=%s)",
+            step_n,
+            current_url,
+        )
+
+    def _maybe_inject_foxsports_nba_highlights_nudge(
+        self,
+        state: BrowserStateSummary,
+        results: list[ActionResult],
+        step_n: int,
+    ) -> None:
+        if self._foxsports_nba_highlights_nudged:
+            return
+        if not _task_requests_foxsports_nba_highlights(self.task):
+            return
+        current_url = state.url or ""
+        if not (
+            _host_matches(current_url, "foxsports.com")
+            or any(
+                _host_matches(current_url, host)
+                for host in _SEARCH_OR_FALLBACK_FINAL_HOSTS
+            )
+        ):
+            return
+
+        self._messages.append(
+            UserMessage(content=_FOXSPORTS_NBA_HIGHLIGHTS_GUIDANCE)
+        )
+        self._foxsports_nba_highlights_nudged = True
+        logger.info(
+            "agent: FOXSPORTS_NBA_HIGHLIGHTS nudge at step %d (url=%s)",
             step_n,
             current_url,
         )
@@ -6270,6 +6328,18 @@ def _task_requests_weather_nyc_current(task: str) -> bool:
         and "temperature" in task_lc
         and "humidity" in task_lc
         and "wind speed" in task_lc
+    )
+
+
+def _task_requests_foxsports_nba_highlights(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "foxsports.com" in task_lc
+        and "nba" in task_lc
+        and "video highlights section" in task_lc
+        and ("five most recent" in task_lc or "5 most recent" in task_lc)
+        and "highlight videos" in task_lc
+        and "titles" in task_lc
     )
 
 

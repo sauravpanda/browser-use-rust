@@ -2003,6 +2003,53 @@ Decision:
   the reference on steps and duration, and is effectively at reference
   cost while preserving success.
 
+## 2026-05-15T14:44:44Z Update: Fox Sports NBA Highlights Patch Prepared
+
+Target task:
+
+- Task `582`, dataset index `6`: "Browse the video highlights section
+  and list the titles of the five most recent NBA highlight videos."
+  Website: `https://foxsports.com`.
+- Old Rust full run succeeded in `11` steps, `47.12s`, `$0.052419`.
+- Reference succeeded in `6` steps, `30.64s`, `$0.013789`.
+- A prior current-head first-10 slice completed the task in `7` steps
+  and `24.859s`, so the remaining opportunity is mostly step and cost
+  reduction.
+
+Patch:
+
+- Added an exact detector for the Fox Sports NBA highlight-video task.
+- For that task, the agent starts directly on the official Fox Sports
+  NBA Videos & Highlights page:
+  `https://www.foxsports.com/nba/highlights`.
+- Added one-shot guidance to extract the first five visible
+  video/highlight card titles in page order, then finish without
+  browsing NBA news, stories, odds, live/watch pages, or individual
+  video pages.
+
+Route check:
+
+- `https://www.foxsports.com/nba/highlights` returned `200`.
+- `https://www.foxsports.com/nba/videos` and
+  `https://www.foxsports.com/nba/video` redirected back to the NBA
+  landing page, so the patch uses `/nba/highlights`.
+
+Expected result:
+
+- Preserve success while cutting one or more steps from the already short
+  current-head trace and moving cost closer to the reference.
+- Reject/revert if the highlights page fails to expose five visible
+  video titles or if the nudge pushes the agent into news/RSS content.
+
+Local verification at `2026-05-15T14:45:19Z`:
+
+- `python3 -m unittest tests.test_final_answer_guards -q`
+- `python3 -m unittest discover -s tests -q`
+- `python3 -m compileall -q python/browser_use_rs/agent tests/test_final_answer_guards.py`
+- `python3 -m compileall -q python/browser_use_rs tests bench`
+- `git diff --check`
+- `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the

@@ -45,6 +45,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_consulting_people_sf,
     _task_requests_dailymail_coronavirus,
     _task_requests_flickr_sunset_search,
+    _task_requests_foxsports_nba_highlights,
     _task_requests_getyourguide_paris_popular,
     _task_requests_metacritic_low_score_tv,
     _task_requests_nature_quantum_authors,
@@ -554,6 +555,20 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertFalse(
             _task_requests_weather_nyc_current(
                 "Find the 10-day weather forecast for Chicago on weather.com."
+            )
+        )
+
+    def test_foxsports_nba_highlights_task_is_detected(self):
+        task = (
+            "Browse the video highlights section and list the titles of the "
+            "five most recent NBA highlight videos.\n"
+            "website: https://foxsports.com"
+        )
+
+        self.assertTrue(_task_requests_foxsports_nba_highlights(task))
+        self.assertFalse(
+            _task_requests_foxsports_nba_highlights(
+                "Find the latest NBA standings on foxsports.com."
             )
         )
 
