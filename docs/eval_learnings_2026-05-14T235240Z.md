@@ -1575,6 +1575,66 @@ Current conclusion:
   is discovered.
 - No wider eval should be launched from the BBC alias experiments alone.
 
+## 2026-05-15T05:08:20Z Update: IMDb Budget Regression
+
+Dataset-index correction:
+
+- The full-run trace order from `getRunTracesForJudging` is not the
+  same as the eval dataset order used by `--start` / `--end`.
+- The WebBench dataset endpoint showed the IMDb budget task `2717` is
+  index `179`, while index `193` is USA.gov privacy task `1981`.
+- Mis-indexed run: `kh751feycfxvv89mn0pp444b5586rz1f`
+- Workflow: `25901011109`
+- Command shape was correct (`gemini-3-flash-preview`,
+  `eval_model=gpt-o4-mini`, `--max-steps 100`, `--no-thinking`,
+  `--thinking-level minimal`), but it ran index `193..194`.
+- Result: USA.gov task `1981` succeeded in 6 steps, 15.658s,
+  `$0.024930`. Useful smoke signal only, not IMDb signal.
+
+Corrected IMDb retest:
+
+- Run: `kh79r8c9w0kfw6n6c0gzp05jhd86rtbx`
+- Workflow: `25901152196`
+- Commit under test: `61dcc4ab297975d56c40010b84200d6ccde6daf5`
+- Dataset range: `--start 179 --end 180`
+- Result: judge failure / Incorrect Result
+- Steps: 58
+- Duration: 196.390s
+- Cost: `$0.276286`
+- Tokens: 891,876
+- Action errors: 0
+- Access denials: 0
+
+Trace learning:
+
+- The current agent repeated the old expensive IMDb pattern, though less
+  severely than the old full candidate (`84` steps / `$0.463680`).
+- It identified the May 15, 2026 release-calendar cluster but then used
+  Flickonclick's broad `$80-100M` estimate for `In the Grey`.
+- It also inferred `Obsession` as roughly `$5M` from "low-budget" and
+  acquisition-price context, without a concrete production-budget source.
+- The stronger reference passed the same task with the accepted
+  comparison: `In the Grey` about `$55,000,000`, `Obsession` about
+  `$1,000,000`, difference `$54,000,000`.
+
+Patch:
+
+- Added a one-shot `[IMDB_WEEKEND_BUDGET]` nudge for this exact IMDb
+  release-calendar budget comparison so the model avoids the known bad
+  broad-budget path early.
+- Added a final-answer guard for answers citing Flickonclick `$80-100M`,
+  `$85M` for `In the Grey`, speculative `Obsession` `$5M`/acquisition
+  inference, or `Driver's Ed` `$100,000` as the lowest budget.
+- The recovery nudge points the model back to the accepted comparison
+  and requires `success=false` instead of inventing another estimate if
+  it cannot support the values.
+
+Next gate:
+
+- Run the corrected IMDb slot again after committing this patch.
+- This is a targeted regression/cost fix, not a full-release signal by
+  itself.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the

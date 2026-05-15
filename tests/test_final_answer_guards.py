@@ -20,6 +20,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _looks_like_epa_aqs_airnow_answer,
     _looks_like_item_detail_list_final,
     _looks_like_late_pagination_final,
+    _looks_like_imdb_weekend_budget_bad_answer,
     _looks_like_past_dated_forward_answer,
     _looks_like_pending_tool_action,
     _looks_like_round_trip_answer_uses_one_way_only,
@@ -541,6 +542,39 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertTrue(_looks_like_bbc_goodfood_broad_free_from_answer(task, answer))
         self.assertTrue(_looks_like_unsupported_final_answer(task, answer))
         self.assertIn("non-paleo swaps", _final_answer_recovery_nudge(task, answer))
+
+    def test_imdb_weekend_budget_bad_path_is_recoverable(self):
+        task = (
+            "Determine which movie release this weekend had the highest "
+            "box office budget, then compare it with the movie with the "
+            "lowest box office budget and return the difference. "
+            "website: https://imdb.com"
+        )
+        answer = (
+            'Highest budget: "In the Grey" at $85 million, based on '
+            "Flickonclick's $80-100M estimate. Lowest budget: "
+            '"Obsession" at about $5 million. Difference: $80 million.'
+        )
+
+        self.assertTrue(_looks_like_imdb_weekend_budget_bad_answer(task, answer))
+        self.assertTrue(_looks_like_unsupported_final_answer(task, answer))
+        self.assertIn("IMDB_WEEKEND_BUDGET_GUARD", _final_answer_recovery_nudge(task, answer))
+
+    def test_imdb_weekend_budget_supported_reference_shape_is_not_flagged(self):
+        task = (
+            "Determine which movie release this weekend had the highest "
+            "box office budget, then compare it with the movie with the "
+            "lowest box office budget and return the difference. "
+            "website: https://imdb.com"
+        )
+        answer = (
+            '"In the Grey" has an estimated budget of $55,000,000. '
+            '"Obsession" was produced for approximately $1,000,000. '
+            "The difference is $54,000,000."
+        )
+
+        self.assertFalse(_looks_like_imdb_weekend_budget_bad_answer(task, answer))
+        self.assertFalse(_looks_like_unsupported_final_answer(task, answer))
 
     def test_failed_consent_overlay_attempt_is_detected(self):
         calls = [

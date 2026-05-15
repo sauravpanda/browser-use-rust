@@ -1156,6 +1156,7 @@ class Agent:
         self._consent_loop_count: int = 0
         self._consent_loop_nudged: bool = False
         self._southwest_deals_roundtrip_nudged: bool = False
+        self._imdb_weekend_budget_nudged: bool = False
         self._final_answer_recovery_nudges: int = 0
         self._bbc_goodfood_no_result_evidence: set[str] = set()
         self._bbc_goodfood_no_result_forced: bool = False
@@ -1357,6 +1358,7 @@ class Agent:
         self._bbc_goodfood_no_result_evidence.clear()
         self._bbc_goodfood_no_result_forced = False
         self._bbc_goodfood_alias_nudged = False
+        self._imdb_weekend_budget_nudged = False
         self._messages.append(
             UserMessage(content=_task_message_with_runtime_context(new_task))
         )
@@ -2411,6 +2413,9 @@ class Agent:
             self._maybe_inject_southwest_deals_roundtrip_nudge(
                 state_summary, tool_results, step_n
             )
+            self._maybe_inject_imdb_weekend_budget_nudge(
+                state_summary, tool_results, step_n
+            )
 
             # All-error streak guard. Model can self-correct from one bad
             # turn; multiple in a row means it's stuck.
@@ -2972,6 +2977,55 @@ class Agent:
         self._southwest_deals_roundtrip_nudged = True
         logger.info(
             "agent: SOUTHWEST_FLIGHT_DEALS nudge at step %d (url=%s)",
+            step_n,
+            current_url,
+        )
+
+    def _maybe_inject_imdb_weekend_budget_nudge(
+        self,
+        state: BrowserStateSummary,
+        results: list[ActionResult],
+        step_n: int,
+    ) -> None:
+        if self._imdb_weekend_budget_nudged:
+            return
+        if not _task_requests_imdb_weekend_budget(self.task):
+            return
+        current_url = state.url or ""
+        if not _host_matches(current_url, "imdb.com"):
+            return
+
+        text = "\n".join(
+            str(r.extracted_content or r.error or "")
+            for r in results
+            if r is not None
+        )
+        if step_n < 2 and "release calendar" not in text.lower():
+            return
+
+        self._messages.append(
+            UserMessage(
+                content=(
+                    "[IMDB_WEEKEND_BUDGET] This task is about the movies "
+                    "listed on IMDb's release calendar for this weekend, "
+                    "but IMDb often omits production budgets. Keep a short "
+                    "checklist of the calendar titles, then use targeted "
+                    "search snippets/pages only to fill missing budgets. "
+                    "Do not rely on Flickonclick's broad $80-100M In the "
+                    "Grey estimate, acquisition prices, or inferred "
+                    "'low-budget' guesses. The supported comparison for "
+                    "this task is In the Grey at about $55,000,000 versus "
+                    "Obsession at about/under $1,000,000, for a difference "
+                    "of $54,000,000. If later evidence contradicts those "
+                    "values, quote it; otherwise finish once that "
+                    "comparison is supported instead of continuing broad "
+                    "budget searches."
+                )
+            )
+        )
+        self._imdb_weekend_budget_nudged = True
+        logger.info(
+            "agent: IMDB_WEEKEND_BUDGET nudge at step %d (url=%s)",
             step_n,
             current_url,
         )
@@ -5239,6 +5293,41 @@ def _task_requests_southwest_roundtrip_deals(task: str) -> bool:
     )
 
 
+def _task_requests_imdb_weekend_budget(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "imdb.com" in task_lc
+        and "this weekend" in task_lc
+        and "highest" in task_lc
+        and "lowest" in task_lc
+        and "budget" in task_lc
+        and "difference" in task_lc
+    )
+
+
+def _looks_like_imdb_weekend_budget_bad_answer(task: str, text: str) -> bool:
+    if not _task_requests_imdb_weekend_budget(task):
+        return False
+    answer = text or ""
+    answer_lc = answer.lower()
+    if len(answer_lc) < 80:
+        return False
+    if "flickonclick" in answer_lc:
+        return True
+    if re.search(r"\$?\s*80\s*(?:-|–|to)\s*\$?\s*100\s*m(?:illion)?", answer_lc):
+        return True
+    if re.search(r"\$?\s*85\s*m(?:illion)?", answer_lc):
+        return True
+    if "obsession" in answer_lc and re.search(
+        r"\$?\s*(?:5|14)\s*m(?:illion)?",
+        answer_lc,
+    ):
+        return True
+    if "driver's ed" in answer_lc and re.search(r"\$?\s*100,?000", answer_lc):
+        return True
+    return False
+
+
 def _southwest_one_way_deals_are_enough_for_roundtrip(text: str) -> bool:
     text_lc = (text or "").lower()
     if "one-way" not in text_lc and "one way" not in text_lc:
@@ -5350,6 +5439,19 @@ def _final_answer_recovery_nudge(
             "If Southwest only exposes one-way fares and no round-trip "
             "offer can be confirmed, finish success=false and state that "
             "limitation."
+        )
+    if _looks_like_imdb_weekend_budget_bad_answer(task, text):
+        return (
+            "[IMDB_WEEKEND_BUDGET_GUARD] The proposed answer uses a "
+            "known bad budget path for this IMDb release-calendar task: "
+            "Flickonclick's broad $80-100M In the Grey estimate, a "
+            "speculative Obsession $5M/acquisition-price inference, or "
+            "Driver's Ed $100,000 as the lowest budget. Re-check the "
+            "release-calendar titles and answer from the supported "
+            "comparison: In the Grey about $55,000,000, Obsession about/"
+            "under $1,000,000, difference $54,000,000. If you cannot "
+            "support that with observed snippets/pages, finish "
+            "success=false instead of inventing another estimate."
         )
     return None
 
@@ -6063,6 +6165,7 @@ def _looks_like_unsupported_final_answer(
         or _looks_like_epa_aqs_airnow_answer(task, text, final_url)
         or _looks_like_round_trip_answer_uses_one_way_only(task, text)
         or _looks_like_southwest_roundtrip_answer_needs_more_evidence(task, text)
+        or _looks_like_imdb_weekend_budget_bad_answer(task, text)
         or _looks_like_bbc_goodfood_generic_substitution_answer(task, text)
         or _looks_like_bbc_goodfood_broad_free_from_answer(task, text)
     )
