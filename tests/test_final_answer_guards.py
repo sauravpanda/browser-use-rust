@@ -47,7 +47,6 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_dailymail_coronavirus,
     _task_requests_eventbrite_online_event_guidelines,
     _task_requests_flickr_sunset_search,
-    _task_requests_foxnews_politics_2024_election,
     _task_requests_foxsports_nba_highlights,
     _task_requests_getyourguide_paris_popular,
     _task_requests_metacritic_low_score_tv,
@@ -552,21 +551,6 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertFalse(
             _task_requests_ulta_hair_featured_products(
                 "Search Ulta for fragrance sale coupons."
-            )
-        )
-
-    def test_foxnews_politics_2024_election_task_is_detected(self):
-        task = (
-            'Navigate to the "Politics" section and locate the latest '
-            "article about the 2024 Presidential Election; provide the "
-            "article's headline, publication date, and a brief summary of "
-            "its content.\nwebsite: https://foxnews.com"
-        )
-
-        self.assertTrue(_task_requests_foxnews_politics_2024_election(task))
-        self.assertFalse(
-            _task_requests_foxnews_politics_2024_election(
-                "Open Fox News sports and summarize the latest NFL article."
             )
         )
 

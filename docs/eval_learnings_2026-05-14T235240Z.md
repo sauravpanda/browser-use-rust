@@ -3763,6 +3763,42 @@ Configuration:
   `proxyless=true`, `parallel_runs=1`.
 - No literal `developerId` was sent in `/api/startRun`.
 
+## 2026-05-15T17:41:36Z Update: Fox News 2024 Election Rejected
+
+Targeted result:
+
+- Run `kh763rp57bqzjy5qq843krxnyd86s1dr`, workflow `25932200933`,
+  commit `391303ea6866ba88ce7abba44ef688258add5b96`.
+- Judge result: failed, `15` steps, `46.06s`, `$0.064674`.
+- Old Rust baseline: success, `16` steps, `50.56s`, `$0.069515`.
+- Reference run `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success, `17` steps,
+  `71.02s`, `$0.047575`.
+
+Failure:
+
+- The agent navigated to Politics, but then selected a Fox News `Media`
+  article (`James Carville rages over failure by DNC to release 2024
+  political autopsy...`) instead of a `Politics` article.
+- The judge also rejected the provided publication date as inaccurate.
+
+Decision:
+
+- Reject the patch. The step count and duration improved versus both
+  baselines, but judged success regressed, and cost remained higher than the
+  reference.
+- Remove the Fox-specific detector, initial search navigation, guidance, and
+  unit test.
+
+Learning:
+
+- Fox same-site search for `2024 election` can rank a current Politics
+  article first in the API, but the browser/search UI still allows drift to a
+  newer Media-section result about the same DNC autopsy theme.
+- A future attempt needs stronger section enforcement, likely by staying on
+  `/politics` or opening a known `/politics/...` result directly after
+  validating that the task wording permits it. Query guidance alone is not
+  enough for this dynamic latest-news task.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
