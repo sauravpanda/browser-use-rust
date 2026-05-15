@@ -3921,6 +3921,47 @@ Expected result:
 - Preserve judged success while removing the stale cookie-button retries,
   targeting the reference's four-step path and lower cost.
 
+## 2026-05-15T17:55:16Z Update: GetYourGuide Direct Paris Eval Completed
+
+Targeted run:
+
+- Run `kh77cv78r7rq7h6e752wbqt9hd86r7ff`, workflow `25932887565`,
+  commit `e8d645c4dd73d1aca328074075e6dcccd76b7331`.
+- Dataset range: `start_index=89`, `end_index=90`, task `645`.
+- User message: `bu-rust getyourguide-direct-paris targeted no-thinking
+  gpt-o4-mini`.
+
+Configuration:
+
+- `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking=false`,
+  `thinking_level=minimal`, headed local browser,
+  `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
+Result:
+
+- Judge/self-report: success / `success=true`.
+- Steps: `1` vs kept patch `8`, old Rust `16`, and reference `4`.
+- Duration: `6.38s` vs kept patch `25.58s`, old Rust `56.23s`, and
+  reference `14.20s`.
+- Cost: `$0.010632` vs kept patch `$0.028878`, old Rust `$0.059767`,
+  and reference `$0.007393`.
+
+Learning:
+
+- Direct homepage-plus-Paris initial actions removed the cookie-banner
+  retry loop and produced a one-step judged success.
+- Cost still did not beat the reference because Gemini's final response
+  listed all compared activity cards before the winner, producing `1423`
+  completion tokens.
+- Tighten the GetYourGuide guidance to keep comparison internal and make
+  the final answer one concise sentence with only the winner, rating/review
+  evidence, and starting price.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the

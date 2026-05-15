@@ -272,10 +272,12 @@ _GETYOURGUIDE_PARIS_GUIDANCE = (
     f"city page `{_GETYOURGUIDE_PARIS_URL}` rather than spending steps on "
     "stale cookie-banner indices or unrelated homepage city links. Wait "
     "briefly if activity cards are still skeleton-loading, then compare "
-    "visible activity cards by review count/user ratings. Report the "
-    "activity name, rating/review count as evidence, and starting price. "
-    "Once that evidence is extracted from the Paris page, finish; do not "
-    "retry cookie buttons or re-verify the same extracted data."
+    "visible activity cards by review count/user ratings internally. The "
+    "final answer should be one concise sentence with only the winning "
+    "activity name, rating/review count as evidence, and starting price; do "
+    "not list rejected alternatives. Once that evidence is extracted from "
+    "the Paris page, finish; do not retry cookie buttons or re-verify the "
+    "same extracted data."
 )
 _FOXSPORTS_NBA_HIGHLIGHTS_URL = "https://www.foxsports.com/nba/highlights"
 _FOXSPORTS_NBA_HIGHLIGHTS_GUIDANCE = (
