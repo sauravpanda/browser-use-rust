@@ -2156,6 +2156,42 @@ Decision:
 - The release objective is not achieved: success, cost, and time are
   all worse than the prior comparable slice.
 
+## 2026-05-15T08:10:54Z Update: Compact Alias Tool Descriptions
+
+Trace/tool-surface learning:
+
+- Default tool declarations currently include 62 tools and aliases.
+- Local prompt measurement showed total serialized tool payload around
+  32.1KB before this patch.
+- Alias tools duplicated the full canonical descriptions and schemas.
+  The schemas are needed so upstream-style tool names still work, but
+  the long descriptions are redundant.
+- Trace counts from the two recent 20-task slices show some aliases are
+  still used (`wait`, `press_keys`, `history_back`, `search_google`), so
+  removing aliases outright is riskier than compacting their
+  descriptions.
+
+Patch:
+
+- Changed `_alias()` so alias tools keep the same callable and input
+  schema as the canonical tool, but use a compact description:
+  `Alias of <canonical>. Prefer <canonical>; same arguments.`
+- Added a unit test proving alias descriptions are compact, mention the
+  canonical tool, keep the canonical input schema, and share the same
+  callable.
+- Local prompt measurement after the patch: tool payload about 28.2KB,
+  a reduction of roughly 3.9KB / 12%.
+
+Local verification:
+
+- `python3 -m unittest tests.test_tool_aliases tests.test_prompt_metrics tests.test_done_count_helpers -q`
+- `python3 -m unittest discover -s tests -q`
+- `python3 -m compileall -q python/browser_use_rs tests bench`
+- `cargo check -p bu-py`
+- `cargo test -p bu-browser`
+- `git diff --check`
+- `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`
+
 ## 2026-05-15T07:13:16Z Update: Validation Skip Helps, Zara Exposes URL Cycle Tail
 
 Canary evals on commit `ed9e4991f808be8b10bf4abbc156e1d8b05d400c`:
