@@ -3125,6 +3125,60 @@ Refinement:
   message before the first model turn, so the agent does not spend early
   steps retrying cookie/search-box stale indexes.
 
+## 2026-05-15T13:59:28Z Update: Timeanddate Refined Eval Launched
+
+Targeted run:
+
+- Run `kh73wnk1sdapg29f6q8k98x83186sy6w`, workflow `25921878078`,
+  commit `f1eb9e02f117a4bdf3cf3e945748558b1ca4ab25`.
+- Dataset range: `start_index=190`, `end_index=191`, task `1846`.
+- User message:
+  `bu-rust timeanddate-worldclock-preseed targeted no-thinking gpt-o4-mini`.
+
+Configuration:
+
+- Same minimal-thinking Gemini config as the first Timeanddate run:
+  `runtime=rs`, `gemini-3-flash-preview`, `eval_model=gpt-o4-mini`,
+  `max_steps=100`, `--no-thinking`, `thinking_level=minimal`, headed
+  local browser, `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
+## 2026-05-15T14:04:07Z Update: Timeanddate Refined Eval Result
+
+Result for task `1846` on commit `f1eb9e0`:
+
+- Judge/self-report: success / `success=true`.
+- Steps: `7` vs first Timeanddate patch `18`, old Rust `31`, and
+  reference `12`.
+- Duration: `22.84s` vs first patch `61.21s`, old Rust `85.85s`, and
+  reference `82.08s`.
+- Cost: `$0.029416` vs first patch `$0.067327`, old Rust `$0.103345`,
+  and reference `$0.046063`.
+- Action errors/access denied/tool failures: `0/0/0`.
+
+Trace proof:
+
+- The eval harness still logged initial navigation as `https://timeanddate.com`,
+  but the agent state at step `1` was `/worldclock/`, confirming the exact
+  task override worked inside the Rust agent.
+- Action history had only the intended five direct city navigations:
+  New York, London, Tokyo, Sydney, and Moscow.
+- No stale cookie or search-box retries remained.
+- Workflow command verified the same minimal-thinking Gemini config:
+  `gemini-3-flash-preview`, `gpt-o4-mini`, `max_steps=100`,
+  `--no-thinking`, `--thinking-level minimal`, `WebBench_READ_v5`,
+  `ComprehensiveV1`, headed local browser, `images_per_step=1`,
+  `use_vision=true`, and `agent_type=Agent`.
+
+Decision:
+
+- Keep the refined patch. It improves old Rust by `24` steps, `63.02s`,
+  and about `$0.073928`, beats the reference on steps, duration, and cost,
+  and removes the original stale-index retry pattern.
+
 ## 2026-05-15T13:38:33Z Update: CBS Featured Investigative Patch
 
 Target:
