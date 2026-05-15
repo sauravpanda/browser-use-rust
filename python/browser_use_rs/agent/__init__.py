@@ -263,19 +263,6 @@ _EBAY_USED_LAPTOPS_GUIDANCE = (
     "that it was added. Do not spend steps reopening the filter panel or "
     "manually editing the search box when the filtered result list is visible."
 )
-_CBS_NEWS_HOME_URL = "https://www.cbsnews.com/"
-_CBS_FEATURED_INVESTIGATIVE_GUIDANCE = (
-    "[CBS_FEATURED_INVESTIGATIVE] This task asks for the featured "
-    "investigative report on the CBS News homepage. On CBS, the top "
-    "homepage feature labeled `Exclusive` or presented as the main lead "
-    "story can be the featured investigative report; use that visible "
-    "homepage story first. Open it if needed, summarize its headline and "
-    "main argument in one brief sentence, then finish. Do not spend steps "
-    "running `find_text(\"Investigates\")`, scrolling for a separate `CBS "
-    "News Investigates` section, or navigating to `/investigations/` unless "
-    "the homepage does not show a clear featured investigative or Exclusive "
-    "lead story."
-)
 _GETYOURGUIDE_HOME_URL = "https://www.getyourguide.com/"
 _GETYOURGUIDE_PARIS_URL = "https://www.getyourguide.com/paris-l16/"
 _GETYOURGUIDE_PARIS_GUIDANCE = (
@@ -413,8 +400,6 @@ def _infer_initial_navigation_url(task: str) -> str | None:
         return _ULTA_HAIR_ALL_URL
     if _task_requests_ebay_used_laptops_buy_now(task):
         return _EBAY_USED_LAPTOPS_FILTERED_URL
-    if _task_requests_cbs_featured_investigative(task):
-        return _CBS_NEWS_HOME_URL
     if _task_requests_getyourguide_paris_popular(task):
         return _GETYOURGUIDE_PARIS_URL
     return urls[0]
@@ -1335,11 +1320,6 @@ class Agent:
                 {"navigate": {"url": _EBAY_USED_LAPTOPS_FILTERED_URL}}
             ]
             self._auto_initial_navigation_url = _EBAY_USED_LAPTOPS_FILTERED_URL
-        elif _task_requests_cbs_featured_investigative(task):
-            self.initial_actions = [
-                {"navigate": {"url": _CBS_NEWS_HOME_URL}}
-            ]
-            self._auto_initial_navigation_url = _CBS_NEWS_HOME_URL
         elif _task_requests_getyourguide_paris_popular(task):
             self.initial_actions = [
                 {"navigate": {"url": _GETYOURGUIDE_HOME_URL}},
@@ -1715,12 +1695,6 @@ class Agent:
                     task_content.rstrip()
                     + "\n\n"
                     + _EBAY_USED_LAPTOPS_GUIDANCE
-                )
-            if _task_requests_cbs_featured_investigative(self.task):
-                task_content = (
-                    task_content.rstrip()
-                    + "\n\n"
-                    + _CBS_FEATURED_INVESTIGATIVE_GUIDANCE
                 )
             if _task_requests_getyourguide_paris_popular(self.task):
                 task_content = (
@@ -3985,7 +3959,19 @@ class Agent:
 
         self._messages.append(
             UserMessage(
-                content=_CBS_FEATURED_INVESTIGATIVE_GUIDANCE
+                content=(
+                    "[CBS_FEATURED_INVESTIGATIVE] This task asks for the "
+                    "featured investigative report on the CBS News homepage. "
+                    "On CBS, the top homepage feature labeled `Exclusive` or "
+                    "presented as the main lead story can be the featured "
+                    "investigative report; use that visible homepage story "
+                    "first. Click/open it if needed, summarize its headline "
+                    "and main argument, then finish. Do not spend steps "
+                    "scrolling for a separate `CBS News Investigates` section "
+                    "or navigating to `/investigations/` unless the homepage "
+                    "does not show a clear featured investigative or "
+                    "Exclusive lead story."
+                )
             )
         )
         self._cbs_featured_investigative_nudged = True

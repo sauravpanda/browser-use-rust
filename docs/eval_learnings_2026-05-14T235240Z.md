@@ -4128,6 +4128,35 @@ Expected result:
 - Remove the first-step `find_text("Investigates")` waste and move the
   kept Rust path closer to the reference's three-step homepage-lead flow.
 
+## 2026-05-15T18:19:39Z Update: CBS Initial Guidance Eval Completed
+
+Targeted run:
+
+- Run `kh785p1ddrv37q8db7gcqw4mch86spnc`, workflow `25933901023`,
+  commit `fa48052246196561f2d0e96796d7f7dcf7ee4b33`.
+- Dataset range: `start_index=57`, `end_index=58`, task `225`.
+- User message: `bu-rust cbs-initial-guidance targeted no-thinking
+  gpt-o4-mini`.
+
+Result:
+
+- Judge/self-report: success / `success=true`.
+- Steps: `5` vs kept patch `5`, old Rust `13`, and reference `3`.
+- Duration: `15.76s` vs kept patch `16.90s`, old Rust `42.99s`, and
+  reference `10.26s`.
+- Cost: `$0.017956` vs kept patch `$0.017168`, old Rust `$0.055460`,
+  and reference `$0.004803`.
+
+Decision:
+
+- Reject the code patch. It preserved success and shaved about `1.14s`,
+  but it did not reduce steps and increased cost versus the already kept
+  CBS patch.
+- Restore the previous CBS nudge-only behavior and keep this result as a
+  learning: moving guidance into the initial task message is not sufficient
+  for CBS, likely because the homepage page-state payload dominates prompt
+  cost and the lead story still needs multiple browser actions.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
