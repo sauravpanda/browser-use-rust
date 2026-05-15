@@ -2292,3 +2292,52 @@ Decision:
 - Revert commit `6b048c1` and remove the alias-description test.
 - Keep the validation-skip-after-fresh-evidence patch for now; this run
   does not isolate a regression in that change.
+
+## 2026-05-15T09:33:36Z Update: Validation Skip Rejected On 20-Task Slice
+
+Run `kh7cd1pzbztebzbsh696smv5qs86sz4p`, workflow `25909436650`,
+tested commit `b7385df1343f3a706cd5904de11e35e61f586e43` after
+reverting compact alias descriptions. This was the validation-skip-only
+candidate, using the exact minimal-thinking Gemini config:
+
+- `gemini-3-flash-preview`, `gpt-o4-mini` judge.
+- `--no-thinking`, `--thinking-level minimal`, `--max-steps 100`.
+- `start=10`, `end=30`, `WebBench_READ_v5`,
+  `ComprehensiveV1`, `max_actions_per_step=4`,
+  `judge_repeat_count=1`, headed local browser, vision on,
+  `images_per_step=1`.
+- Workflow log confirmed the emitted command.
+
+Platform caveat:
+
+- The dashboard aggregate reported `completedTasks=30` and
+  `progress=150` because the pre-created run carried 10 null/stale
+  result rows. For comparison, use only rows with non-null `steps`;
+  `format=only_judge` returned 20 real rows.
+
+Real 20-row result vs prior exact-config slice
+`kh7e6asf9bjg77sj0gxhqwxze986rs40`:
+
+- Success: `13/20` vs `16/20` (`-15pp`).
+- Total cost: `$0.781935` vs `$0.934796` (`16.35%` lower), but success
+  regressed too much for release.
+- Steps: `231` vs `262`.
+- Duration: `955.24s` vs `1023.99s`.
+- Access denied: `4` vs `3`.
+- Tool/action failures: `0`.
+
+Failed real rows:
+
+- Old-failed again: `895`, `1494`, `2027`, `2657`.
+- New failures versus the prior exact-config slice: `1383`, `1510`,
+  `2423`.
+- `1383` had previously looked like a validation-skip canary win, but
+  this exact 20-task slice judge-failed it at 7 steps. Treat the canary
+  as insufficient evidence.
+
+Decision:
+
+- Reject validation-skip-after-fresh-evidence for release.
+- Revert commit `ed9e499` and its focused test.
+- Return `main` to the last known better 20-task behavior before
+  validation-skip, URL-cycle, and compact-alias experiments.

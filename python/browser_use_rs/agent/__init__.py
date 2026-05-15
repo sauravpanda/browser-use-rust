@@ -603,17 +603,6 @@ _PAGE_STATE_SUPERSEDED = (
     f"{_PAGE_STATE_TAG} (superseded — see latest page state below)"
 )
 
-_FINAL_EVIDENCE_TOOLS: frozenset[str] = frozenset({
-    "extract_structured_data",
-    "extract_result_cards",
-    "page_text",
-    "get_text",
-    "get_links",
-    "find_elements",
-    "search_page",
-    "read_file",
-})
-
 # Validation prompts injected once per task right before the agent's
 # final answer. Forces the LLM to re-check it against the original task
 # and the latest page snapshot. Closes the observed self-report ↔
@@ -2022,7 +2011,6 @@ class Agent:
                     and not proposed_failure_answer
                     and step_n < max_steps  # don't validate on the very last step
                     and step_n >= self.self_validate_min_steps  # skip on short tasks
-                    and not self._has_recent_final_evidence()
                 ):
                     logger.info(
                         "agent: VALIDATION_CHECK injected before "
@@ -2378,7 +2366,6 @@ class Agent:
                     and bool(done_result.success)
                     and step_n < max_steps
                     and step_n >= self.self_validate_min_steps
-                    and not self._has_recent_final_evidence()
                 ):
                     logger.info(
                         "agent: VALIDATION_CHECK injected before "
@@ -2754,25 +2741,6 @@ class Agent:
                     len(domains),
                 )
                 self._loop_nudge_cooldown = COOLDOWN_STEPS
-
-    def _has_recent_final_evidence(self, max_tool_results: int = 6) -> bool:
-        """Return true when recent tool results already include evidence."""
-        seen_tool_results = 0
-        for msg in reversed(self._messages):
-            if not isinstance(msg, ToolResultMessage):
-                continue
-            seen_tool_results += 1
-            if seen_tool_results > max_tool_results:
-                return False
-            if msg.is_error or msg.name not in _FINAL_EVIDENCE_TOOLS:
-                continue
-            text = _content_text(msg.content).strip()
-            if not text:
-                continue
-            if text.lower() in {"not found", "no results", "no matches"}:
-                continue
-            return True
-        return False
 
     def _maybe_inject_single_action_hint(
         self,

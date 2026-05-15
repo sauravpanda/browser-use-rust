@@ -58,36 +58,6 @@ class DoneToolListLLM(BaseChatModel):
         )
 
 
-class ExtractThenDoneLLM(BaseChatModel):
-    name = "extract-then-done"
-    model = "extract-then-done"
-
-    def __init__(self):
-        self.calls = 0
-
-    async def ainvoke(self, messages, tools, *, system=None):
-        self.calls += 1
-        if self.calls == 1:
-            return ChatInvokeCompletion(
-                tool_calls=[
-                    ToolCall(
-                        id="extract-1",
-                        name="extract_structured_data",
-                        args={},
-                    )
-                ]
-            )
-        return ChatInvokeCompletion(
-            tool_calls=[
-                ToolCall(
-                    id=f"done-{self.calls}",
-                    name="done",
-                    args={},
-                )
-            ]
-        )
-
-
 class Snapshot:
     elements = []
 
@@ -223,46 +193,6 @@ class DoneCountHelperTests(unittest.TestCase):
         self.assertFalse(history.history[0].result[0].is_done)
         self.assertIn("Gamma Article", history.final_result())
         self.assertTrue(agent._done_count_check_fired)
-
-    def test_done_marker_skips_validation_after_fresh_extract(self):
-        llm = ExtractThenDoneLLM()
-
-        async def extract_tool(session):
-            return "1. Alpha Article\n2. Beta Article\n3. Gamma Article"
-
-        async def done_tool(session):
-            return "__DONE__:1:1. Alpha Article\n2. Beta Article\n3. Gamma Article"
-
-        agent = Agent(
-            "List the top 3 headlines. website: https://example.com",
-            llm,
-            tools=[
-                Tool(
-                    name="extract_structured_data",
-                    description="",
-                    input_schema={"type": "object", "properties": {}},
-                    func=extract_tool,
-                ),
-                Tool(
-                    name="done",
-                    description="",
-                    input_schema={"type": "object", "properties": {}},
-                    func=done_tool,
-                ),
-            ],
-            browser_session=Session(),
-            max_steps=4,
-            self_validate=True,
-            self_validate_min_steps=1,
-            auto_initial_navigation=False,
-        )
-
-        history = asyncio.run(agent.run())
-
-        self.assertEqual(llm.calls, 2)
-        self.assertTrue(history.is_done())
-        self.assertIn("Gamma Article", history.final_result())
-        self.assertFalse(agent._validation_step_used)
 
 
 if __name__ == "__main__":
