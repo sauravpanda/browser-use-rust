@@ -1072,27 +1072,35 @@ def make_extra_tools(agent: Any) -> list:
             rows = await session.list_downloads()
         except Exception:
             rows = []
-        for _guid, name, _url, state, _recv, _total, dpath in rows or []:
-            if state != "completed" or not dpath:
-                continue
-            candidates = {
-                str(dpath),
-                os.path.basename(str(dpath)),
-            }
-            if name:
-                candidates.add(str(name))
-            if raw in candidates or basename in candidates:
-                try:
-                    if os.path.isfile(dpath):
-                        return str(dpath)
-                except Exception:
-                    return None
-        if not os.path.isabs(raw):
-            return None
         try:
             download_dir = await session.download_dir()
         except Exception:
             download_dir = ""
+        for _guid, name, _url, state, _recv, _total, dpath in rows or []:
+            if state != "completed" or not dpath:
+                continue
+            dpath_s = str(dpath)
+            candidates = {
+                dpath_s,
+                os.path.basename(dpath_s),
+            }
+            file_candidates = [dpath_s]
+            if name:
+                name_s = str(name)
+                candidates.add(name_s)
+                file_candidates.append(os.path.join(os.path.dirname(dpath_s), name_s))
+                if download_dir:
+                    file_candidates.append(os.path.join(str(download_dir), name_s))
+            if raw in candidates or basename in candidates:
+                for candidate in dict.fromkeys(file_candidates):
+                    try:
+                        if os.path.isfile(candidate):
+                            return str(candidate)
+                    except Exception:
+                        continue
+                return None
+        if not os.path.isabs(raw):
+            return None
         if not download_dir:
             return None
         real_raw = os.path.realpath(raw)

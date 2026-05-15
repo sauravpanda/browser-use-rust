@@ -70,6 +70,18 @@ class DownloadReadFileTests(unittest.TestCase):
 
             self.assertEqual(out, "downloaded content")
 
+    def test_read_file_maps_reported_guid_path_to_suggested_filename(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reported_path = Path(tmp) / "guid-download"
+            actual_path = Path(tmp) / "ad_aqi_tracker_data.csv"
+            actual_path.write_text("date,aqi\n2026-05-14,50\n", encoding="utf-8")
+            session = DummySession(tmp, str(reported_path))
+            read_file = self._read_file_tool()
+
+            out = asyncio.run(read_file.func(session, str(reported_path)))
+
+            self.assertIn("2026-05-14,50", out)
+
     def test_read_file_rejects_unrelated_absolute_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             download_path = Path(tmp) / "guid-download"

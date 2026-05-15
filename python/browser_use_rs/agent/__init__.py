@@ -1137,6 +1137,14 @@ class Agent:
         # search/filter/list page remains inaccessible.
         self._recent_search_fallback_hosts: list[str] = []
         self._search_fallback_nudged_at_count: int = 0
+        # Consent overlay loop detector. Some sites render privacy text
+        # in a way Gemini can see visually but CDP/DOM queries cannot
+        # find. After repeated failed "accept cookies" JS attempts,
+        # nudge toward a same-site direct section URL instead of burning
+        # the budget on the invisible button.
+        self._consent_loop_url: str = ""
+        self._consent_loop_count: int = 0
+        self._consent_loop_nudged: bool = False
         # Running collapsed history of older steps. Each entry: a
         # one-line "<step N> <action> → <result-summary>" string.
         # Sourced from self._history items marked collapsed=True
@@ -2235,6 +2243,9 @@ class Agent:
             self._maybe_inject_single_action_hint(
                 completion.tool_calls, tool_results
             )
+            self._maybe_inject_consent_overlay_loop_nudge(
+                state_summary, completion.tool_calls, tool_results, step_n
+            )
 
             # All-error streak guard. Model can self-correct from one bad
             # turn; multiple in a row means it's stuck.
@@ -2612,6 +2623,55 @@ class Agent:
         logger.info(
             "agent: BATCH_FAILED hint fired (errors=%d/%d, batch=%s)",
             error_count, len(tool_calls), [tc.name for tc in tool_calls],
+        )
+
+    def _maybe_inject_consent_overlay_loop_nudge(
+        self,
+        state: BrowserStateSummary,
+        tool_calls: list[ToolCall],
+        results: list[ActionResult],
+        step_n: int,
+    ) -> None:
+        if not _looks_like_failed_consent_overlay_attempt(tool_calls, results):
+            return
+
+        current_url = state.url or ""
+        if current_url != self._consent_loop_url:
+            self._consent_loop_url = current_url
+            self._consent_loop_count = 0
+            self._consent_loop_nudged = False
+
+        self._consent_loop_count += 1
+        if self._consent_loop_count < 3 or self._consent_loop_nudged:
+            return
+
+        direct_url = _direct_section_url_for_consent_recovery(
+            self.task,
+            current_url,
+        )
+        task_body = _task_body_without_website(self.task)
+        nudge = (
+            "[CONSENT_OVERLAY_LOOP] Repeated cookie/privacy consent "
+            "button attempts returned not-found results without moving "
+            "the page. Stop trying to click consent controls. Use the "
+            "fresh page state, navigate directly to the requested "
+            "same-site section/page, or extract the content behind the "
+            "overlay."
+        )
+        if direct_url:
+            nudge += (
+                f' Suggested next move: navigate(url="{direct_url}"), '
+                f'then extract_structured_data(query="{task_body}").'
+            )
+        self._messages.append(UserMessage(content=nudge))
+        self._consent_loop_nudged = True
+        logger.info(
+            "agent: CONSENT_OVERLAY_LOOP nudge at step %d "
+            "(count=%d, url=%s, suggested=%s)",
+            step_n,
+            self._consent_loop_count,
+            current_url,
+            direct_url or "",
         )
 
     def _format_action_line(
@@ -4732,6 +4792,96 @@ def _target_host_from_task(task: str) -> str:
     if not match:
         return ""
     return _host_from_url_or_host(match.group(1))
+
+
+def _task_body_without_website(task: str) -> str:
+    body = re.sub(r"\s*website:\s*https?://\S+.*$", "", task or "", flags=re.I | re.S)
+    return re.sub(r"\s+", " ", body).strip() or "Extract the requested page content"
+
+
+_CONSENT_TOOL_TEXT_RE = re.compile(
+    r"(?i)\b(cookie|consent|privacy|accept|agree|yes,\s*i\s*accept)\b"
+)
+_CONSENT_NOT_FOUND_RE = re.compile(
+    r"(?i)\b(?:button|element|target)?\s*(?:still\s+)?not\s+found\b|"
+    r"\bnot\s+found\s+(?:in|via)\b|"
+    r"\bno\s+(?:matching\s+)?(?:button|element)\b"
+)
+_DIRECT_SECTION_SLUGS: tuple[tuple[str, str], ...] = (
+    ("opinion", "opinion"),
+    ("politics", "politics"),
+    ("business", "business"),
+    ("technology", "technology"),
+    ("tech", "technology"),
+    ("sports", "sports"),
+    ("entertainment", "entertainment"),
+    ("health", "health"),
+    ("science", "science"),
+    ("travel", "travel"),
+    ("reviews", "reviews"),
+    ("review", "reviews"),
+    ("about", "about"),
+)
+
+
+def _looks_like_failed_consent_overlay_attempt(
+    tool_calls: list[ToolCall],
+    results: list[ActionResult],
+) -> bool:
+    if not tool_calls or not results:
+        return False
+
+    tool_text = " ".join(
+        f"{getattr(tc, 'name', '')} {json.dumps(getattr(tc, 'args', {}) or {}, default=str)}"
+        for tc in tool_calls
+    )
+    if not _CONSENT_TOOL_TEXT_RE.search(tool_text):
+        return False
+
+    result_text = " ".join(
+        str(r.extracted_content or r.error or "")
+        for r in results
+        if r is not None
+    )
+    return bool(_CONSENT_NOT_FOUND_RE.search(result_text))
+
+
+def _direct_section_url_for_consent_recovery(
+    task: str,
+    current_url: str | None,
+) -> str | None:
+    task_lc = (task or "").lower()
+    slug = ""
+    for label, candidate in _DIRECT_SECTION_SLUGS:
+        label_re = re.escape(label)
+        if re.search(rf"\b{label_re}\b.{{0,40}}\bsection\b", task_lc) or re.search(
+            rf"\bsection\b.{{0,40}}\b{label_re}\b",
+            task_lc,
+        ):
+            slug = candidate
+            break
+    if not slug:
+        return None
+
+    source_url = ""
+    match = re.search(r"website:\s*(https?://\S+)", task or "", re.IGNORECASE)
+    if match:
+        source_url = match.group(1).rstrip(_URL_TRAILING_PUNCT)
+    elif current_url:
+        source_url = current_url.rstrip(_URL_TRAILING_PUNCT)
+    if not source_url:
+        return None
+
+    try:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(source_url)
+        if not parsed.hostname:
+            return None
+        scheme = parsed.scheme or "https"
+        return f"{scheme}://{parsed.hostname}/{slug}"
+    except Exception:
+        return None
 
 
 def _host_matches(host: str, target: str) -> bool:

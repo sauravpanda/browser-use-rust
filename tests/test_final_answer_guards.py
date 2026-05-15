@@ -8,7 +8,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python"))
 
 from browser_use_rs.agent import (  # noqa: E402
+    _direct_section_url_for_consent_recovery,
     _looks_like_fabricated_blocked_answer,
+    _looks_like_failed_consent_overlay_attempt,
     _looks_like_item_detail_list_final,
     _looks_like_late_pagination_final,
     _looks_like_past_dated_forward_answer,
@@ -22,6 +24,8 @@ from browser_use_rs.agent import (  # noqa: E402
     _looks_like_unsupported_final_answer,
     _looks_like_wrong_host_final,
 )
+from browser_use_rs.llm.base import ToolCall  # noqa: E402
+from browser_use_rs.views import ActionResult  # noqa: E402
 
 
 class FinalAnswerGuardTests(unittest.TestCase):
@@ -288,6 +292,50 @@ class FinalAnswerGuardTests(unittest.TestCase):
         )
 
         self.assertTrue(_looks_like_unsupported_final_answer(task, answer))
+
+    def test_failed_consent_overlay_attempt_is_detected(self):
+        calls = [
+            ToolCall(
+                id="1",
+                name="evaluate_js",
+                args={
+                    "expression": (
+                        "document.querySelectorAll('button')"
+                        ".find(b => b.textContent.includes('Yes, I Accept'))"
+                    )
+                },
+            )
+        ]
+        results = [ActionResult(extracted_content="Button not found in DOM")]
+
+        self.assertTrue(_looks_like_failed_consent_overlay_attempt(calls, results))
+
+    def test_non_consent_not_found_is_not_consent_overlay_attempt(self):
+        calls = [
+            ToolCall(
+                id="1",
+                name="evaluate_js",
+                args={"expression": "document.querySelector('#search').click()"},
+            )
+        ]
+        results = [ActionResult(extracted_content="Button not found in DOM")]
+
+        self.assertFalse(_looks_like_failed_consent_overlay_attempt(calls, results))
+
+    def test_consent_recovery_suggests_requested_section_url(self):
+        task = (
+            "Browse the Opinion section and list three article titles "
+            "together with their respective authors. "
+            "website: https://www.bloomberg.com/"
+        )
+
+        self.assertEqual(
+            _direct_section_url_for_consent_recovery(
+                task,
+                "https://www.bloomberg.com/europe",
+            ),
+            "https://www.bloomberg.com/opinion",
+        )
 
     def test_valid_negative_site_search_is_not_blocked_fabrication(self):
         answer = (

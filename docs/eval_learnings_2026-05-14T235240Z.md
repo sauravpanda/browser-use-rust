@@ -612,3 +612,79 @@ Smoke result:
 
 This smoke proves install/config health only. It does not prove the
 20% improvement target against the full `kh7b4...` reference.
+
+## 2026-05-15T02:01:38Z Update: EPA Slot And New Fixes
+
+Run `kh7f4fkdnc4k6tbt1c8h4q8vys86safm` targeted the EPA slot
+(`start_index=3`, `end_index=4`) at commit
+`af236dd59ca23323bf8c7f5a400910eb8d48c429`.
+
+Worker command was reference-aligned for this targeted run:
+
+- `model=gemini-3-flash-preview`
+- `eval_model=gpt-o4-mini`
+- `max_steps=100`
+- `thinking=false`
+- `thinking_level=minimal`
+- `flash_mode=true`
+- headed/xvfb local browser
+- `images_per_step=1`
+- `use_vision=true`
+
+Result:
+
+- Task `432` judged successful.
+- 48 steps.
+- 160.277s task duration.
+- $0.168670 total task cost.
+- 0 action errors.
+- 0 access denials.
+
+Important correction:
+
+- This did **not** prove the completed-download `read_file` fix worked.
+- The trace still showed `read_file` failing on the absolute path
+  returned by `list_downloads`:
+  `/tmp/.../downloads/<download-guid>`.
+- The judge passed because the agent inferred the final AQI value from
+  chart evidence after the file-read attempt failed.
+
+Root cause:
+
+- Chrome can report downloads as `download_dir/<guid>` while the actual
+  file lands under the suggested filename, such as
+  `download_dir/ad_aqi_tracker_data.csv`.
+- `read_file` previously trusted the reported GUID path and did not map
+  it to the suggested filename path.
+
+Patch:
+
+- `read_file` now treats a completed download's reported GUID path,
+  GUID basename, and suggested filename as aliases.
+- When a completed download is requested, it checks both the reported
+  path and `download_dir/<suggested filename>`.
+- Added a regression test where `list_downloads` reports a GUID path but
+  the actual file exists only as `ad_aqi_tracker_data.csv`.
+
+Additional trace-driven patch:
+
+- Bloomberg task `2397` regressed because Gemini repeatedly tried JS
+  consent-button clicks for `"Yes, I Accept"` even though every attempt
+  returned `Button not found`.
+- Passing traces navigated directly to
+  `https://www.bloomberg.com/opinion` and then used extraction behind
+  the overlay.
+- Added a consent-overlay loop nudge: after repeated failed
+  cookie/privacy button attempts, tell the agent to stop clicking
+  consent controls and navigate directly to the requested same-site
+  section/page.
+- Added tests for detecting failed consent-button attempts and
+  suggesting `https://www.bloomberg.com/opinion` for an Opinion-section
+  Bloomberg task.
+
+Platform note:
+
+- The failed GitHub eval workflows created around
+  `2026-05-15T01:55:17Z` were not Rust runs; they used
+  `--model custom` on `poweruserCloud_v2` and failed before task
+  execution because `custom` is not a supported eval model name.
