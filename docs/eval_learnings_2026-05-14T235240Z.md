@@ -2614,6 +2614,28 @@ Expected result:
   hallucination path and targeting fewer than `7` steps and lower than
   `$0.021328` cost if Trustpilot's browser challenge clears.
 
+## 2026-05-15T15:47:40Z Update: Trustpilot Amazon UK Eval Launched
+
+Targeted run:
+
+- Run `kh768k7ad835tkn9dtxdbpqrk986rvec`, workflow `25927135383`,
+  commit `a09ef4393ca99eac7e23bcb824aab9abade9d673`.
+- Dataset range: `start_index=175`, `end_index=176`, task `1898`.
+- User message:
+  `bu-rust trustpilot-amazon-uk-recent targeted no-thinking gpt-o4-mini`.
+
+Configuration:
+
+- Same corrected object-shaped dispatch and minimal-thinking Gemini
+  config: `runtime=rs`, `gemini-3-flash-preview`,
+  `eval_model=gpt-o4-mini`, `max_steps=100`, `--no-thinking`,
+  `thinking_level=minimal`, headed local browser,
+  `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
