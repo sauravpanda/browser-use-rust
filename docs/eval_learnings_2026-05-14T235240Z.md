@@ -3493,6 +3493,37 @@ Configuration:
   `proxyless=true`, `parallel_runs=1`.
 - No literal `developerId` was sent in `/api/startRun`.
 
+## 2026-05-15T17:13:31Z Update: Rochester Targeted Eval Completed
+
+Targeted run:
+
+- Run `kh72az90xk3yhsms8engam6xzn86s7rr`, workflow `25930992840`,
+  commit `6deaadf8dfbde19e12f8f984b0a6749905abd68a`.
+- Task `1480` produced judge success and self-report success.
+- Steps: `2` vs old Rust `7` and reference `6`.
+- Duration: `9.08s` vs old Rust `25.78s` and reference `32.15s`.
+- Cost: `$0.009371` vs old Rust `$0.022303` and reference `$0.011504`.
+- Tokens: platform `tokensUsed=24403`; usage total `26307`.
+
+Trace/result proof:
+
+- The final answer summarized Brain and Cognitive Sciences with study
+  areas, BA/BS options, interdisciplinary framing, MindSpace VR Lab, and
+  undergraduate research/skills.
+- The judge accepted the answer as complete and specifically cited those
+  components.
+- The workflow log confirmed the intended command:
+  `--start 7 --end 8 --max-steps 100 --no-thinking --thinking-level minimal`.
+
+Decision:
+
+- Keep the patch. It preserves judged success and beats both old Rust and
+  the reference on steps, duration, and cost.
+- Learning: for stable university program tasks, starting on the exact
+  official department undergraduate overview can be accepted when the
+  reference trace selected that program from the university programs page
+  and the final answer clearly summarizes the program evidence.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
