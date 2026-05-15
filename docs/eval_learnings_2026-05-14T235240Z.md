@@ -3011,6 +3011,27 @@ Expected result:
 - Preserve judged success while cutting the old Rust path from the
   homepage/menu flow toward a two-step direct page read.
 
+## 2026-05-15T16:34:25Z Update: WebMD Targeted Eval Launched
+
+Targeted run:
+
+- Run `kh7fr0bx8aq9nabz0twjybnpw586s1e2`, workflow `25929329055`,
+  commit `412c6d0d819a4ef8b0bf92f7a52d13fe1b5bd9fb`.
+- Dataset range: `start_index=167`, `end_index=168`, task `2083`.
+- User message: `bu-rust webmd-health-news targeted no-thinking gpt-o4-mini`.
+
+Configuration:
+
+- Same corrected object-shaped dispatch and minimal-thinking Gemini
+  config: `runtime=rs`, `gemini-3-flash-preview`,
+  `eval_model=gpt-o4-mini`, `max_steps=100`, `--no-thinking`,
+  `thinking_level=minimal`, headed local browser,
+  `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
