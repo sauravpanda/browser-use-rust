@@ -174,10 +174,14 @@ _FOXSPORTS_NBA_HIGHLIGHTS_GUIDANCE = (
     "[FOXSPORTS_NBA_HIGHLIGHTS] This task asks for the titles of the five "
     "most recent NBA highlight videos from Fox Sports' video highlights "
     f"section. Start from `{_FOXSPORTS_NBA_HIGHLIGHTS_URL}`, which is the "
-    "official NBA Videos & Highlights page. Extract the first five visible "
-    "video/highlight card titles in page order, then finish. Do not browse "
-    "NBA news, stories, odds, live/watch pages, or individual video pages "
-    "after five highlight-video titles are visible."
+    "official NBA Videos & Highlights page. Prefer the cheaper "
+    "`extract_result_cards(limit=5, query=\"NBA highlight video\")` tool "
+    "first, then list the first five visible video/highlight card titles in "
+    "page order. Use `extract_structured_data` only if the result-card tool "
+    "misses the visible titles. Final answer should be exactly the five "
+    "titles; do not add an evidence summary. Do not browse NBA news, "
+    "stories, odds, live/watch pages, or individual video pages after five "
+    "highlight-video titles are visible."
 )
 
 

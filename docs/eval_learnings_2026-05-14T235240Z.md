@@ -2072,6 +2072,34 @@ Configuration:
   shape so the workflow should take the Rust path.
 - No literal `developerId` was sent in `/api/startRun`.
 
+## 2026-05-15T14:51:52Z Update: Fox Sports Cost Refinement Prepared
+
+First Fox Sports result observation:
+
+- Run `kh70xtbxghrdz4agm1hykc3d1h86srr5`, workflow `25924161050`,
+  succeeded in `2` steps, `10.51s`, and `$0.017386`.
+- This beats old Rust and the reference on steps and duration, but cost
+  is above the reference `$0.013789`.
+- The trace used `extract_structured_data` on the official
+  `/nba/highlights` page, and the usage breakdown showed high completion
+  cost for such a small list extraction.
+
+Refinement:
+
+- Keep the same direct `/nba/highlights` starting page.
+- Adjust the exact-task guidance to prefer the cheaper non-LLM
+  `extract_result_cards(limit=5, query="NBA highlight video")` tool
+  before falling back to `extract_structured_data`.
+- Also ask the final answer to contain exactly the five titles without an
+  evidence summary.
+
+Expected result:
+
+- Preserve the `2`-step success while reducing cost below the first Fox
+  Sports run and ideally below the reference.
+- Reject/revert the refinement if `extract_result_cards` misses the card
+  titles and causes more steps or a judge failure.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
