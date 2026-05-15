@@ -274,12 +274,12 @@ _GETYOURGUIDE_PARIS_GUIDANCE = (
     "first page state after initial navigation already shows Paris activity "
     "cards with review counts and prices, compare them internally and answer "
     "immediately without waiting or rechecking. Wait briefly only if activity "
-    "cards are still skeleton-loading or absent. The final answer should be "
-    "one concise sentence under 35 words with only the winning activity name, "
-    "rating/review count as evidence, and starting price; do not list "
-    "rejected alternatives. Once that evidence is extracted from the Paris "
-    "page, finish; do not retry cookie buttons or re-verify the same "
-    "extracted data."
+    "cards are still skeleton-loading or absent. The final answer must be "
+    "exactly one line in this terse format: `<activity name> - <rating> "
+    "(<review count> reviews), starts at <price>.` Do not include a preamble, "
+    "methodology, activity list, rejected alternatives, or any text after the "
+    "price. Once that evidence is extracted from the Paris page, finish; do "
+    "not retry cookie buttons or re-verify the same extracted data."
 )
 _FOXSPORTS_NBA_HIGHLIGHTS_URL = "https://www.foxsports.com/nba/highlights"
 _FOXSPORTS_NBA_HIGHLIGHTS_GUIDANCE = (

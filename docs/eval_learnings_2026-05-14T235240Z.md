@@ -3993,6 +3993,33 @@ Learning:
   contains visible cards with review counts and prices, answer immediately
   without waiting or rechecking. Keep the final answer under `35` words.
 
+## 2026-05-15T18:03:14Z Update: GetYourGuide No-Recheck Retest Completed
+
+Targeted run:
+
+- Run `kh7apgak13z4nq0vkdg8nywmn986sthd`, workflow `25933260217`,
+  commit `024b5e52c7fcf29e3b652785807eadec42bd0b48`.
+- Dataset range: `start_index=89`, `end_index=90`, task `645`.
+- User message: `bu-rust getyourguide-no-recheck targeted no-thinking
+  gpt-o4-mini`.
+
+Result:
+
+- Judge/self-report: success / `success=true`.
+- Steps: `1` vs reference `4`.
+- Duration: `4.56s` vs reference `14.20s`.
+- Cost: `$0.006681` vs reference `$0.007393`.
+
+Learning:
+
+- The no-recheck wording restored the one-step path and beat the reference
+  on steps, duration, and cost.
+- Cost improved by about `9.6%` versus the reference, not `20%`; the final
+  answer still listed all compared activity cards before the winner.
+- Make the final-answer format exact and one-line only, with no preamble,
+  methodology, list, rejected alternatives, or text after the price, to see
+  if completion tokens can fall below the `20%` cost-improvement target.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
