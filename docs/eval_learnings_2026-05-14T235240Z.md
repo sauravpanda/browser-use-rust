@@ -3834,6 +3834,28 @@ Expected result:
 - Preserve judged success while reducing filter-panel interaction and
   repeated product search overhead.
 
+## 2026-05-15T17:44:39Z Update: eBay Targeted Eval Launched
+
+Targeted run:
+
+- Run `kh7cfz3pn2vt67k1r1m7c7jc4h86s32t`, workflow `25932550654`,
+  commit `458e434c36d06fd2b56299f3755fddfec0c49a7e`.
+- Dataset lookup confirmed task `402` is index `118`; range is
+  `start_index=118`, `end_index=119`.
+- User message: `bu-rust ebay-used-laptops targeted no-thinking gpt-o4-mini`.
+
+Configuration:
+
+- Same corrected object-shaped dispatch and minimal-thinking Gemini
+  config: `runtime=rs`, `gemini-3-flash-preview`,
+  `eval_model=gpt-o4-mini`, `max_steps=100`, `--no-thinking`,
+  `thinking_level=minimal`, headed local browser,
+  `max_actions_per_step=4`, `judge_repeat_count=1`,
+  `WebBench_READ_v5`, `ComprehensiveV1`, `flash_mode=true`,
+  `images_per_step=1`, `use_vision=true`, `agent_type=Agent`,
+  `proxyless=true`, `parallel_runs=1`.
+- No literal `developerId` was sent in `/api/startRun`.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
