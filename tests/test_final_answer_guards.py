@@ -51,6 +51,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_newegg_review_bytes,
     _task_requests_people_entertainment_video_description,
     _task_requests_timeanddate_world_clock,
+    _task_requests_weather_nyc_current,
     _task_requests_xbox_minecraft_accessibility,
 )
 from browser_use_rs.llm.base import ToolCall  # noqa: E402
@@ -539,6 +540,20 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertFalse(
             _task_requests_people_entertainment_video_description(
                 "On People.com, find the latest celebrity wedding article."
+            )
+        )
+
+    def test_weather_nyc_current_task_is_detected(self):
+        task = (
+            "Check the current weather conditions in New York City, NY--record "
+            "the temperature, humidity, and wind speed.\n"
+            "website: https://weather.com"
+        )
+
+        self.assertTrue(_task_requests_weather_nyc_current(task))
+        self.assertFalse(
+            _task_requests_weather_nyc_current(
+                "Find the 10-day weather forecast for Chicago on weather.com."
             )
         )
 

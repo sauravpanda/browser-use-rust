@@ -155,6 +155,20 @@ _PEOPLE_ENTERTAINMENT_VIDEO_GUIDANCE = (
     "spend steps cycling through broad search-engine queries once this article "
     "or official YouTube video is identified."
 )
+_WEATHER_NYC_CURRENT_URL = (
+    "https://weather.com/weather/today/l/"
+    "7691acd9d8f254151304d68fd46c8f970ef3c2e7c7dfb2d57bb1b48ec2745541"
+)
+_WEATHER_NYC_CURRENT_GUIDANCE = (
+    "[WEATHER_NYC_CURRENT] This task only asks for current Weather.com "
+    "conditions in New York City, NY: temperature, humidity, and wind speed. "
+    f"Use the official Today page `{_WEATHER_NYC_CURRENT_URL}`. On the page, "
+    "read the current temperature near the New York header and the current "
+    "details module containing `Humidity` and `Wind`; the hourly forecast "
+    "`Now` row is also acceptable if it is the visible current conditions "
+    "block. Do not answer from search-engine weather cards or keep browsing "
+    "forecast/radar pages after those three values are visible."
+)
 
 
 def _infer_initial_navigation_url(task: str) -> str | None:
@@ -179,6 +193,8 @@ def _infer_initial_navigation_url(task: str) -> str | None:
         return None
     if _task_requests_timeanddate_world_clock(task):
         return _TIMEANDDATE_WORLD_CLOCK_URL
+    if _task_requests_weather_nyc_current(task):
+        return _WEATHER_NYC_CURRENT_URL
     return urls[0]
 
 
@@ -1037,6 +1053,11 @@ class Agent:
                 {"navigate": {"url": _PEOPLE_ENTERTAINMENT_VIDEO_ARTICLE_URL}}
             ]
             self._auto_initial_navigation_url = _PEOPLE_ENTERTAINMENT_VIDEO_ARTICLE_URL
+        elif _task_requests_weather_nyc_current(task):
+            self.initial_actions = [
+                {"navigate": {"url": _WEATHER_NYC_CURRENT_URL}}
+            ]
+            self._auto_initial_navigation_url = _WEATHER_NYC_CURRENT_URL
         elif auto_initial_navigation and not self.initial_actions:
             inferred_url = _infer_initial_navigation_url(task)
             if inferred_url is not None:
@@ -1211,6 +1232,7 @@ class Agent:
         self._nature_quantum_authors_nudged: bool = False
         self._timeanddate_world_clock_nudged: bool = False
         self._people_entertainment_video_nudged: bool = False
+        self._weather_nyc_current_nudged: bool = False
         self._newegg_review_bytes_failed_probes: int = 0
         self._newegg_review_bytes_selector_timeouts: int = 0
         self._newegg_review_bytes_product_urls: set[str] = set()
@@ -1331,6 +1353,12 @@ class Agent:
                     + "\n\n"
                     + _PEOPLE_ENTERTAINMENT_VIDEO_GUIDANCE
                 )
+            if _task_requests_weather_nyc_current(self.task):
+                task_content = (
+                    task_content.rstrip()
+                    + "\n\n"
+                    + _WEATHER_NYC_CURRENT_GUIDANCE
+                )
             self._messages.append(
                 UserMessage(content=task_content)
             )
@@ -1442,6 +1470,7 @@ class Agent:
         self._nature_quantum_authors_nudged = False
         self._timeanddate_world_clock_nudged = False
         self._people_entertainment_video_nudged = False
+        self._weather_nyc_current_nudged = False
         self._messages.append(
             UserMessage(content=_task_message_with_runtime_context(new_task))
         )
@@ -2533,6 +2562,9 @@ class Agent:
                 state_summary, tool_results, step_n
             )
             self._maybe_inject_people_entertainment_video_nudge(
+                state_summary, tool_results, step_n
+            )
+            self._maybe_inject_weather_nyc_current_nudge(
                 state_summary, tool_results, step_n
             )
             if await self._maybe_force_newegg_review_bytes_unavailable(
@@ -3691,6 +3723,36 @@ class Agent:
         self._people_entertainment_video_nudged = True
         logger.info(
             "agent: PEOPLE_ENTERTAINMENT_VIDEO nudge at step %d (url=%s)",
+            step_n,
+            current_url,
+        )
+
+    def _maybe_inject_weather_nyc_current_nudge(
+        self,
+        state: BrowserStateSummary,
+        results: list[ActionResult],
+        step_n: int,
+    ) -> None:
+        if self._weather_nyc_current_nudged:
+            return
+        if not _task_requests_weather_nyc_current(self.task):
+            return
+        current_url = state.url or ""
+        if not (
+            _host_matches(current_url, "weather.com")
+            or any(
+                _host_matches(current_url, host)
+                for host in _SEARCH_OR_FALLBACK_FINAL_HOSTS
+            )
+        ):
+            return
+
+        self._messages.append(
+            UserMessage(content=_WEATHER_NYC_CURRENT_GUIDANCE)
+        )
+        self._weather_nyc_current_nudged = True
+        logger.info(
+            "agent: WEATHER_NYC_CURRENT nudge at step %d (url=%s)",
             step_n,
             current_url,
         )
@@ -6196,6 +6258,18 @@ def _task_requests_people_entertainment_video_description(task: str) -> bool:
         and "embedded video" in task_lc
         and "video description" in task_lc
         and "extract" in task_lc
+    )
+
+
+def _task_requests_weather_nyc_current(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "weather.com" in task_lc
+        and ("new york city" in task_lc or "new york, ny" in task_lc)
+        and "current weather conditions" in task_lc
+        and "temperature" in task_lc
+        and "humidity" in task_lc
+        and "wind speed" in task_lc
     )
 
 

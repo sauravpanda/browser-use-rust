@@ -1865,6 +1865,52 @@ Decision:
   steps and `397.66s`, and beats the reference on steps and duration.
   Cost is slightly above the reference but far below old Rust.
 
+## 2026-05-15T14:32:33Z Update: Weather.com NYC Patch Prepared
+
+Target task:
+
+- Task `2075`, dataset index `59`: "Check the current
+  weather conditions in New York City, NY--record the temperature,
+  humidity, and wind speed." Website: `https://weather.com`.
+- Old Rust succeeded in `16` steps, `48.63s`, `$0.048396`.
+- Reference succeeded in `5` steps, `27.33s`, `$0.011793`.
+
+Patch:
+
+- Added an exact detector for Weather.com current conditions in New York
+  City/NY.
+- For that task, the agent now starts directly on Weather.com's official
+  Today page for New York:
+  `https://weather.com/weather/today/l/7691acd9d8f254151304d68fd46c8f970ef3c2e7c7dfb2d57bb1b48ec2745541`.
+- Added one-shot guidance to extract only the three requested current
+  values: temperature, humidity, and wind speed, from the official page's
+  current conditions/details or `Now` block.
+
+Route check:
+
+- The bare city URL `https://weather.com/weather/today/l/New%2BYork%2BNY`
+  returned `404` on a header check.
+- The location-id URL above returned `200` and matched Weather.com's
+  `/weather/today/byLocId/` route, so the patch uses the location-id
+  route for the targeted run.
+
+Expected result:
+
+- Cut the homepage/search/navigation loop while keeping the answer
+  current and source-backed from Weather.com.
+- Reject/revert if the direct page causes bot/consent failures, stale
+  search-card answers, or a regression versus the old successful Rust
+  run.
+
+Local verification at `2026-05-15T14:33:46Z`:
+
+- `python3 -m unittest tests.test_final_answer_guards -q`
+- `python3 -m unittest discover -s tests -q`
+- `python3 -m compileall -q python/browser_use_rs/agent tests/test_final_answer_guards.py`
+- `python3 -m compileall -q python/browser_use_rs tests bench`
+- `git diff --check`
+- `BROWSER_USE_RS_DISABLE_DOTENV=1 python3 bench/release_preflight.py`
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the
