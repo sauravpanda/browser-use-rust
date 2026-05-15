@@ -3135,3 +3135,40 @@ Decision:
 - Restore the prior Google-first wording from commit `2c0208b` while
   preserving the broader consulting nudge because that patch is still
   the better candidate.
+
+## 2026-05-15T11:55:40Z Update: Reverso Privacy Tail Patch
+
+Target:
+
+- Task `1477`, dataset index to retest from full-run results: Reverso
+  Privacy Policy last-updated date.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: success, `40`
+  steps, `126.76s`, `$0.170606`.
+- Stronger Python reference `kh7b4qp4610am5s99j7e3bzy0d86rfwn`:
+  success, `6` steps, `18.68s`, `$0.010238`.
+
+Trace finding:
+
+- Old Rust reached `https://www.reverso.net/privacy/en` by step `6`.
+- By steps `8` to `10`, official-page extraction returned `NOT FOUND`
+  for the last-updated/effective-date query.
+- The run then spent another `30` steps searching Terms, Disclaimer,
+  privacy-settings, corporate-translation, and reverso.studio pages.
+- The accepted answer was that the official Reverso Privacy Policy page
+  does not explicitly state a last-updated or effective date.
+
+Patch:
+
+- Add a narrow Reverso Privacy Policy task detector.
+- Nudge the agent to use the official `/privacy/en` page directly and
+  stop searching unrelated Reverso documents once no explicit policy
+  date appears there.
+- Add a scoped mechanical finalization path when the current official
+  privacy page returns `NOT FOUND` for the date lookup.
+
+Expected result:
+
+- Preserve success.
+- Cut the old Rust tail from roughly `40` steps toward the reference's
+  `6` steps by stopping once the official policy page has answered the
+  absence-of-date question.
