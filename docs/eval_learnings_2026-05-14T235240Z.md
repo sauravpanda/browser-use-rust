@@ -579,3 +579,36 @@ Local verification:
 - `python3 -m unittest discover -s tests -q`
 - `python3 -m compileall -q python/browser_use_rs tests bench`
 - `git diff --check`
+
+## 2026-05-15T01:50:01Z Update: Current-Head Smoke
+
+Run `kh7d5jvzc69n1jtk8ahc7ewryh86r4hp` verified current head
+`1119d3df39397223bc60e2ef23e88180ae009abf` installs and runs on the
+eval worker.
+
+Worker command was reference-aligned for the tested knobs:
+
+- headed/xvfb browser
+- `model=gemini-3-flash-preview`
+- `eval_model=gpt-o4-mini`
+- `max_steps=100`
+- `max_actions_per_step=4`
+- `judge_repeat_count=1`
+- `judge_type=ComprehensiveV1`
+- `thinking=false`
+- `thinking_level=minimal`
+- `flash_mode=true`
+- `browser=local`
+- `images_per_step=1`
+- `use_vision=true`
+
+Smoke result:
+
+- 1/1 task successful.
+- 9 steps.
+- 26.077s task duration.
+- 0 action errors.
+- 0 access denials.
+
+This smoke proves install/config health only. It does not prove the
+20% improvement target against the full `kh7b4...` reference.
