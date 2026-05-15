@@ -3611,6 +3611,42 @@ Decision:
   successful traces already converge on that listing and the final answer
   uses live visible product-card details.
 
+## 2026-05-15T17:23:12Z Update: Virginia COVID Search Patch Prepared
+
+Target:
+
+- Task `2042`: Use Virginia.gov's site search bar to find COVID-19 public
+  health advisories and list the main recommendations.
+- Old Rust run `kh774z293rn9qpnzgbvd7bfctn86p4a1`: success, `8` steps,
+  `25.97s`, `$0.032542`.
+- Reference run `kh7b4qp4610am5s99j7e3bzy0d86rfwn`: success, `5` steps,
+  `25.81s`, `$0.010342`.
+
+Trace finding:
+
+- Both successful traces used the Virginia.gov homepage search bar with
+  query `COVID-19 public health advisories`, opened the official
+  `Coronavirus guidelines on Public Health & Safety` result, and extracted
+  guidance for gatherings/movement, public health, diagnostic testing, and
+  transportation.
+- Old Rust lost extra turns by separating search input and submit, drafting
+  an answer before final, then re-reading the page for validation.
+- A direct advisory URL would risk the Texas.gov failure pattern because
+  the task explicitly requires the site search bar.
+
+Patch:
+
+- Add a narrow Virginia COVID public-health search detector.
+- Do not add direct advisory navigation. Preserve homepage search-bar use.
+- Add guidance to combine search input/submit, open the known official
+  search result, extract or read the four recommendation groups, and finish
+  without extra validation once evidence is collected.
+
+Expected result:
+
+- Preserve judged success while reducing old Rust's search and validation
+  overhead, aiming for a four-step path that also lowers cost.
+
 ## 2026-05-15T04:05:20Z Update: `30b4742` Targeted Retests
 
 Commit `30b474203e17b8cdab0c250ad6280dc6a93f32e0` was tested with the

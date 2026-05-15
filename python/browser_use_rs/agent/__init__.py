@@ -179,6 +179,18 @@ _WEBMD_HEALTH_NEWS_GUIDANCE = (
     "browse symptom, drug, slideshow, or general top-stories pages once the "
     "Health News page headline is visible."
 )
+_VIRGINIA_COVID_SEARCH_GUIDANCE = (
+    "[VIRGINIA_COVID_SEARCH] This task explicitly requires using "
+    "Virginia.gov's site search bar. Start on the Virginia.gov homepage, "
+    "type `COVID-19 public health advisories` into the site search field, "
+    "submit it, then open the official result titled `Coronavirus guidelines "
+    "on Public Health & Safety`. On that page, capture the main "
+    "recommendations for gatherings/movement, public health guidance, "
+    "diagnostic testing, and transportation. Finish once those sections are "
+    "visible or after one focused extraction; do not bypass the search bar "
+    "with a direct advisory URL or keep validating after the recommendations "
+    "are collected."
+)
 _SOFTONIC_ARTICLES_URL = "https://en.softonic.com/articles"
 _SOFTONIC_ARTICLES_GUIDANCE = (
     "[SOFTONIC_ARTICLES] This task asks for the three most recent Softonic "
@@ -1602,6 +1614,12 @@ class Agent:
                     task_content.rstrip()
                     + "\n\n"
                     + _WEBMD_HEALTH_NEWS_GUIDANCE
+                )
+            if _task_requests_virginia_covid_public_health_search(self.task):
+                task_content = (
+                    task_content.rstrip()
+                    + "\n\n"
+                    + _VIRGINIA_COVID_SEARCH_GUIDANCE
                 )
             if _task_requests_softonic_latest_articles(self.task):
                 task_content = (
@@ -6594,6 +6612,16 @@ def _task_requests_webmd_health_news_top_story(task: str) -> bool:
         "webmd.com" in task_lc
         and "health news homepage" in task_lc
         and ("primary headline" in task_lc or "top story" in task_lc)
+    )
+
+
+def _task_requests_virginia_covid_public_health_search(task: str) -> bool:
+    task_lc = (task or "").lower()
+    return (
+        "virginia.gov" in task_lc
+        and "site's search bar" in task_lc
+        and "covid-19 public health advisories" in task_lc
+        and "main recommendations" in task_lc
     )
 
 

@@ -59,6 +59,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _task_requests_telegraph_brexit_search,
     _task_requests_timeanddate_world_clock,
     _task_requests_ulta_hair_featured_products,
+    _task_requests_virginia_covid_public_health_search,
     _task_requests_webmd_health_news_top_story,
     _task_requests_weather_nyc_current,
     _task_requests_worldatlas_asia_rivers,
@@ -551,6 +552,20 @@ class FinalAnswerGuardTests(unittest.TestCase):
         self.assertFalse(
             _task_requests_ulta_hair_featured_products(
                 "Search Ulta for fragrance sale coupons."
+            )
+        )
+
+    def test_virginia_covid_public_health_search_task_is_detected(self):
+        task = (
+            "Use the site's search bar to find COVID-19 public health "
+            "advisories on virginia.gov and list the main recommendations "
+            "provided.\nwebsite: https://virginia.gov"
+        )
+
+        self.assertTrue(_task_requests_virginia_covid_public_health_search(task))
+        self.assertFalse(
+            _task_requests_virginia_covid_public_health_search(
+                "Open Virginia.gov agency listings for public schools."
             )
         )
 
