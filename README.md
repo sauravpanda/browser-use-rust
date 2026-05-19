@@ -132,10 +132,13 @@ Anchor/Browserbase/Daytona/BrightData, `BrowserProfile(headless=,
 window_size=, ...)`, `Controller()` with
 `@controller.registry.action(description, param_model=PydanticModel)`.
 
-Compat-only kwargs (`use_thinking`, `flash_mode`, `images_per_step`,
+Compatibility kwargs such as `use_thinking`, `flash_mode`,
+`max_actions_per_step`, `images_per_step`, `vision_detail_level`,
 `use_judge`, `judge_llm`, `ground_truth`, `calculate_cost`, `stealth`,
-`highlight_elements`, `keep_alive`, `allowed_domains`, ...) are accepted
-silently — they don't change behavior yet, but importing code doesn't break.
+`highlight_elements`, `keep_alive`, and `allowed_domains` are accepted.
+The agent honors the cost-sensitive browser-use flags that affect prompt
+shape: `images_per_step=0` suppresses screenshot parts in LLM calls, and
+`vision_detail_level` maps to Gemini media-resolution when supported.
 
 ## Architecture
 
@@ -154,7 +157,8 @@ python/browser_use_rs/
   controller.py      Controller + @registry.action decorator
   llm/base.py        BaseChatModel + ChatInvokeCompletion/Usage + Message types
   llm/anthropic.py   ChatAnthropic (tool_use, adaptive thinking, prompt caching)
-  llm/google.py      ChatGoogle (function_call, thought_signature replay)
+  llm/google.py      ChatGoogle (function_call, low media-resolution default,
+                     thought_signature replay)
   llm/openai.py      ChatOpenAI (function tool calling)
   llm/azure.py       ChatAzureOpenAI (Azure deployment routing)
   llm/groq.py        ChatGroq (OpenAI-compat over Groq endpoint)

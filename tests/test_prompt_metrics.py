@@ -27,6 +27,7 @@ class PromptMetricsTests(unittest.TestCase):
     def _agent_for_state_injection(self, *, use_vision: bool = True):
         agent = Agent.__new__(Agent)
         agent.use_vision = use_vision
+        agent.images_per_step = 1
         agent._messages = [UserMessage("task")]
         agent._read_state_for_next_turn = []
         agent._previous_evaluation = ""
@@ -67,6 +68,23 @@ class PromptMetricsTests(unittest.TestCase):
         self.assertIsInstance(content, list)
         image = next(part for part in content if isinstance(part, ImagePart))
         self.assertEqual(image.media_type, "image/png")
+
+    def test_images_per_step_zero_suppresses_llm_screenshot_attachment(self):
+        agent = self._agent_for_state_injection()
+        agent.images_per_step = 0
+
+        agent._inject_page_state(
+            BrowserStateSummary(
+                url="https://example.com",
+                screenshot="abc123",
+                screenshot_media_type="image/jpeg",
+                elements_text="[1]<button>Continue",
+            )
+        )
+
+        content = agent._messages[-1].content
+        self.assertIsInstance(content, str)
+        self.assertIn("[1]<button>Continue", content)
 
     def test_compute_call_metrics_splits_history_and_read_state_bytes(self):
         agent = Agent.__new__(Agent)

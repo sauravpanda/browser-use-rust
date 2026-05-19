@@ -23,6 +23,8 @@ class ChatInvokeUsage:
     output: int = 0
     cache_read: int = 0
     cache_creation: int = 0
+    input_details: dict[str, int] = field(default_factory=dict)
+    output_details: dict[str, int] = field(default_factory=dict)
     # Set by Agent at construction so model_dump() can attach cost fields.
     # The eval-platform aggregator at temporaryUpload.ts reads
     # `usage.total_cost` to roll up `totalCost` / `avgPrice`; without these
@@ -38,15 +40,21 @@ class ChatInvokeUsage:
             output=self.output + other.output,
             cache_read=self.cache_read + other.cache_read,
             cache_creation=self.cache_creation + other.cache_creation,
+            input_details=_merge_token_details(
+                self.input_details, other.input_details
+            ),
+            output_details=_merge_token_details(
+                self.output_details, other.output_details
+            ),
             model=self.model or other.model,
         )
 
-    def model_dump(self) -> dict[str, float]:
+    def model_dump(self) -> dict[str, Any]:
         from browser_use_rs.pricing import cost_for
 
         # Names mirror browser_use's ChatInvokeUsage so consumer code that
         # reads total_prompt_tokens / total_completion_tokens still works.
-        out: dict[str, float] = {
+        out: dict[str, Any] = {
             "input": self.input,
             "output": self.output,
             "cache_read": self.cache_read,
@@ -58,8 +66,27 @@ class ChatInvokeUsage:
         }
         if self.model:
             out["model"] = self.model
+        if self.input_details:
+            out["input_token_details"] = dict(self.input_details)
+            for modality, count in self.input_details.items():
+                out[f"input_{modality}_tokens"] = count
+        if self.output_details:
+            out["output_token_details"] = dict(self.output_details)
+            for modality, count in self.output_details.items():
+                out[f"output_{modality}_tokens"] = count
         out.update(cost_for(self.model, self))
         return out
+
+
+def _merge_token_details(
+    left: dict[str, int] | None,
+    right: dict[str, int] | None,
+) -> dict[str, int]:
+    merged: dict[str, int] = {}
+    for details in (left or {}, right or {}):
+        for key, value in details.items():
+            merged[key] = merged.get(key, 0) + int(value or 0)
+    return merged
 
 
 @dataclass

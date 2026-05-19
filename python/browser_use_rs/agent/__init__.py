@@ -1123,15 +1123,27 @@ class Agent:
         # Without these we'd silently run with WRONG settings vs upstream.
         # See evaluations-internal/eval/service.py:343 — Agent is built
         # with use_vision, max_actions_per_step, use_thinking, flash_mode,
-        # images_per_step. We don't have prompt-template variants for
-        # use_thinking/flash_mode (those map to upstream's
-        # system_prompt_flash.md vs system_prompt.md), so they remain
-        # noted-but-unused — but max_actions_per_step is enforceable
-        # right now and we should respect it.
+        # images_per_step, and vision_detail_level. max_actions_per_step
+        # is enforced directly; flash_mode/use_thinking select the terse
+        # prompt; images_per_step controls whether screenshots are sent
+        # to the LLM; vision_detail_level maps to provider media token
+        # resolution when the LLM supports it.
         self.max_actions_per_step: int | None = _compat_kwargs.pop(
             "max_actions_per_step", None,
         )
-        self.images_per_step: int = int(_compat_kwargs.pop("images_per_step", 1))
+        self.images_per_step: int = max(
+            0,
+            int(_compat_kwargs.pop("images_per_step", 1)),
+        )
+        self.vision_detail_level: Any = _compat_kwargs.pop(
+            "vision_detail_level", None
+        )
+        if self.vision_detail_level is not None:
+            set_media_resolution = getattr(self.llm, "set_media_resolution", None)
+            if callable(set_media_resolution):
+                set_media_resolution(self.vision_detail_level)
+            elif hasattr(self.llm, "media_resolution"):
+                setattr(self.llm, "media_resolution", self.vision_detail_level)
         # flash_mode/use_thinking=False swap the system prompt to a
         # terser, eval-style variant matching upstream's fast/no-thinking
         # behavior closely enough for the eval worker flags.
@@ -5012,7 +5024,7 @@ class Agent:
                     f"{state_block}{dom_text}"
                 )
 
-        if self.use_vision and state.screenshot:
+        if self.use_vision and self.images_per_step > 0 and state.screenshot:
             self._messages.append(
                 UserMessage(
                     content=[
@@ -5937,6 +5949,8 @@ class Agent:
             "output": usage.output,
             "cache_read": usage.cache_read,
             "cache_creation": usage.cache_creation,
+            "input_details": dict(getattr(usage, "input_details", {}) or {}),
+            "output_details": dict(getattr(usage, "output_details", {}) or {}),
             **metrics,
         }
         self.usage_log.append(entry)
