@@ -16,6 +16,12 @@ class DummyLLM(BaseChatModel):
     name = "dummy"
     model = "dummy"
 
+    def __init__(self):
+        self.media_resolution = None
+
+    def set_media_resolution(self, value):
+        self.media_resolution = value
+
     async def ainvoke(self, messages, tools, *, system=None):
         return ChatInvokeCompletion(text="done")
 
@@ -67,6 +73,36 @@ class AgentCompatTests(unittest.TestCase):
         self.assertEqual([], ignored_warnings)
         self.assertIs(agent.controller, controller)
         self.assertIn("controller_tool", agent.tools_by_name)
+
+    def test_vision_detail_level_is_honored_without_ignored_kwarg_warning(self):
+        llm = DummyLLM()
+        logger = logging.getLogger("browser_use_rs.agent")
+        handler = ListHandler()
+        old_level = logger.level
+        logger.addHandler(handler)
+        logger.setLevel(logging.WARNING)
+        try:
+            agent = Agent(
+                "check vision compat",
+                llm,
+                vision_detail_level="high",
+                images_per_step=0,
+                browser_session=object(),
+                auto_initial_navigation=False,
+            )
+        finally:
+            logger.removeHandler(handler)
+            logger.setLevel(old_level)
+
+        ignored_warnings = [
+            record.getMessage()
+            for record in handler.records
+            if "ignored kwargs" in record.getMessage()
+        ]
+        self.assertEqual([], ignored_warnings)
+        self.assertEqual("high", llm.media_resolution)
+        self.assertEqual("high", agent.vision_detail_level)
+        self.assertEqual(0, agent.images_per_step)
 
 
 if __name__ == "__main__":

@@ -34,6 +34,80 @@ from browser_use_rs.llm.base import (
 from browser_use_rs.tools import Tool
 
 
+_MEDIA_RESOLUTION_ALIASES: dict[str, str | None] = {
+    "": None,
+    "auto": None,
+    "default": None,
+    "none": None,
+    "off": None,
+    "unspecified": "MEDIA_RESOLUTION_UNSPECIFIED",
+    "low": "MEDIA_RESOLUTION_LOW",
+    "medium": "MEDIA_RESOLUTION_MEDIUM",
+    "high": "MEDIA_RESOLUTION_HIGH",
+    "ultra": "MEDIA_RESOLUTION_ULTRA_HIGH",
+    "ultra_high": "MEDIA_RESOLUTION_ULTRA_HIGH",
+    "ultrahigh": "MEDIA_RESOLUTION_ULTRA_HIGH",
+    "media_resolution_unspecified": "MEDIA_RESOLUTION_UNSPECIFIED",
+    "media_resolution_low": "MEDIA_RESOLUTION_LOW",
+    "media_resolution_medium": "MEDIA_RESOLUTION_MEDIUM",
+    "media_resolution_high": "MEDIA_RESOLUTION_HIGH",
+    "media_resolution_ultra_high": "MEDIA_RESOLUTION_ULTRA_HIGH",
+}
+
+
+def _normalize_media_resolution(value: Any) -> Any:
+    """Return a google-genai MediaResolution enum/string or None.
+
+    Gemini's default image handling can spend far more media tokens than
+    browser automation needs because the DOM snapshot is the primary state.
+    We default ChatGoogle to LOW and let callers opt back up with
+    media_resolution="medium"/"high" or Agent(vision_detail_level=...).
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return value
+
+    key = value.strip().lower().replace("-", "_")
+    enum_name = _MEDIA_RESOLUTION_ALIASES.get(key)
+    if enum_name is None:
+        return None
+
+    enum_cls = getattr(gtypes, "MediaResolution", None)
+    if enum_cls is not None:
+        enum_value = getattr(enum_cls, enum_name, None)
+        if enum_value is not None:
+            return enum_value
+    return enum_name
+
+
+def _modality_key(value: Any) -> str:
+    raw = getattr(value, "name", None) or getattr(value, "value", None) or str(value)
+    raw = raw.split(".")[-1].lower()
+    raw = raw.removeprefix("media_modality_").removeprefix("modality_")
+    out = []
+    for ch in raw:
+        out.append(ch if ch.isalnum() else "_")
+    normalized = "".join(out).strip("_")
+    return normalized or "unknown"
+
+
+def _token_details(items: Any) -> dict[str, int]:
+    details: dict[str, int] = {}
+    for item in items or []:
+        if isinstance(item, dict):
+            modality = item.get("modality")
+            count = item.get("token_count") or item.get("tokenCount") or 0
+        else:
+            modality = getattr(item, "modality", None)
+            count = getattr(item, "token_count", None)
+            if count is None:
+                count = getattr(item, "tokenCount", 0)
+        key = _modality_key(modality)
+        details[key] = details.get(key, 0) + int(count or 0)
+    return details
+
+
 def _clean_schema(schema: Any, parent_key: str | None = None) -> Any:
     """Strip JSON Schema fields Gemini rejects and pad empty object types.
 
@@ -165,6 +239,7 @@ class ChatGoogle(BaseChatModel):
         max_output_tokens: int | None = None,
         thinking_level: str | None = None,
         thinking_budget: int | None = None,
+        media_resolution: Any = "low",
         client: genai.Client | None = None,
         **_compat_kwargs: Any,
     ):
@@ -185,11 +260,15 @@ class ChatGoogle(BaseChatModel):
         self.max_output_tokens = max_output_tokens
         self.thinking_level = thinking_level
         self.thinking_budget = thinking_budget
+        self.media_resolution = _normalize_media_resolution(media_resolution)
         self.client = client or genai.Client(
             api_key=api_key
             or os.getenv("GEMINI_API_KEY")
             or os.getenv("GOOGLE_API_KEY"),
         )
+
+    def set_media_resolution(self, value: Any) -> None:
+        self.media_resolution = _normalize_media_resolution(value)
 
     async def ainvoke(
         self,
@@ -215,6 +294,8 @@ class ChatGoogle(BaseChatModel):
             config_kwargs["temperature"] = self.temperature
         if self.max_output_tokens is not None:
             config_kwargs["max_output_tokens"] = self.max_output_tokens
+        if self.media_resolution is not None:
+            config_kwargs["media_resolution"] = self.media_resolution
         if self.thinking_level is not None or self.thinking_budget is not None:
             tc_kwargs: dict[str, Any] = {}
             if self.thinking_level is not None:
@@ -241,7 +322,25 @@ class ChatGoogle(BaseChatModel):
             if self.thinking_budget is not None:
                 tc_kwargs["thinking_budget"] = self.thinking_budget
             config_kwargs["thinking_config"] = gtypes.ThinkingConfig(**tc_kwargs)
-        config = gtypes.GenerateContentConfig(**config_kwargs)
+        fields = getattr(gtypes.GenerateContentConfig, "model_fields", None)
+        if (
+            isinstance(fields, dict)
+            and "media_resolution" in config_kwargs
+            and "media_resolution" not in fields
+        ):
+            config_kwargs.pop("media_resolution", None)
+        try:
+            config = gtypes.GenerateContentConfig(**config_kwargs)
+        except Exception as exc:
+            # Older google-genai releases did not expose media_resolution.
+            # Keep compatibility instead of failing the whole LLM call.
+            if (
+                "media_resolution" not in config_kwargs
+                or "media_resolution" not in str(exc).lower()
+            ):
+                raise
+            config_kwargs.pop("media_resolution", None)
+            config = gtypes.GenerateContentConfig(**config_kwargs)
 
         contents = _to_contents(messages)
         # Wrap in transient-error retry. Gemini in particular hits
@@ -296,6 +395,12 @@ class ChatGoogle(BaseChatModel):
             input=getattr(usage_meta, "prompt_token_count", 0) or 0,
             output=candidate_tokens + thoughts_tokens,
             cache_read=getattr(usage_meta, "cached_content_token_count", 0) or 0,
+            input_details=_token_details(
+                getattr(usage_meta, "prompt_tokens_details", None)
+            ),
+            output_details=_token_details(
+                getattr(usage_meta, "candidates_tokens_details", None)
+            ),
         )
         return ChatInvokeCompletion(
             text=text, tool_calls=tool_calls, usage=usage, raw=response
