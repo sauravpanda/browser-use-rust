@@ -58,6 +58,16 @@ class StepMetadata:
     dom_el_size_p50: int = 0
     dom_el_size_p90: int = 0
     dom_el_size_max: int = 0
+    # v0.12.9 DOM prompt budget instrumentation. dom_total_bytes remains
+    # the bytes actually injected into the LLM. These fields preserve the
+    # uncapped snapshot size and truncation shape for release analysis.
+    dom_full_total_bytes: int = 0
+    dom_llm_bytes: int = 0
+    dom_max_bytes: int = 0
+    dom_truncated: bool = False
+    dom_omitted_bytes: int = 0
+    dom_shown_interactive_count: int = 0
+    dom_omitted_interactive_count: int = 0
     # v0.12.3 prompt-section instrumentation. Same surfacing pattern as
     # v0.12.2 dom_*: scalars on metadata, populated from the LAST
     # _compute_call_metrics entry in usage_log for this step (we take

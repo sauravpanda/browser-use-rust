@@ -123,6 +123,12 @@ EPHEMERAL_RESULT_TOOLS: frozenset[str] = frozenset({
     "extract_structured_data",
 })
 
+DEFAULT_DOM_MAX_BYTES = 64 * 1024
+DOM_MAX_BYTES_ENV_VARS = (
+    "BROWSER_USE_RS_DOM_MAX_BYTES",
+    "BU_RS_DOM_MAX_BYTES",
+)
+
 _URL_RE = re.compile(r"https?://[^\s<>{}\\|^`\"']+")
 _URL_TRAILING_PUNCT = ".,;:!?)]}"
 _TIMEANDDATE_WORLD_CLOCK_URL = "https://www.timeanddate.com/worldclock/"
@@ -553,6 +559,186 @@ def _content_to_dict(content: Any) -> Any:
                 out.append(repr(part))
         return out
     return str(content)
+
+
+def _utf8_len(text: str) -> int:
+    return len(text.encode("utf-8", errors="replace"))
+
+
+def _utf8_prefix(text: str, max_bytes: int) -> str:
+    if max_bytes <= 0:
+        return ""
+    data = text.encode("utf-8", errors="replace")
+    if len(data) <= max_bytes:
+        return text
+    return data[:max_bytes].decode("utf-8", errors="ignore")
+
+
+def _resolve_dom_max_bytes(value: Any = None) -> int:
+    """Return the LLM-facing DOM byte budget.
+
+    A value <= 0 disables capping. The env vars intentionally win only
+    when the caller did not pass an explicit value.
+    """
+    raw = value
+    if raw is None:
+        for name in DOM_MAX_BYTES_ENV_VARS:
+            env_value = os.environ.get(name)
+            if env_value not in (None, ""):
+                raw = env_value
+                break
+    if raw is None:
+        return DEFAULT_DOM_MAX_BYTES
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "agent: invalid DOM byte budget %r; using default %d",
+            raw,
+            DEFAULT_DOM_MAX_BYTES,
+        )
+        return DEFAULT_DOM_MAX_BYTES
+
+
+def _dom_line_index(line: str) -> int | None:
+    stripped = line.lstrip("\t ")
+    changed = True
+    while changed:
+        changed = False
+        if stripped.startswith("|scroll|"):
+            stripped = stripped[len("|scroll|") :]
+            changed = True
+        if stripped.startswith("*"):
+            stripped = stripped[1:]
+            changed = True
+    if not stripped.startswith("["):
+        return None
+    try:
+        raw = stripped[1:].split("]", 1)[0]
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _dom_truncation_notice(
+    *,
+    kept_lines: int,
+    total_lines: int,
+    kept_indices: int,
+    total_indices: int,
+    max_bytes: int,
+    full_bytes: int,
+) -> str:
+    return (
+        "[DOM_TRUNCATED] Showing "
+        f"{kept_lines}/{total_lines} DOM lines and "
+        f"{kept_indices}/{total_indices} interactive indices within "
+        f"{max_bytes} bytes (full snapshot was {full_bytes} bytes). "
+        "Use scroll, find_elements, page_text, or extract_result_cards "
+        "if the needed item is not listed below."
+    )
+
+
+def _cap_dom_for_llm(
+    dom_text: str,
+    index_to_selector: dict[int, str],
+    max_bytes: int,
+    metrics: dict[str, Any] | None = None,
+) -> tuple[str, dict[int, str], dict[str, Any] | None]:
+    """Cap the rendered DOM at line boundaries and keep indices in sync.
+
+    The browser still captures the full structured snapshot for actions
+    and observability, but the LLM only receives the capped text. Any
+    omitted indices are removed from `_valid_indices` so the model cannot
+    click numbers it did not see.
+    """
+    full_bytes = _utf8_len(dom_text)
+    if max_bytes <= 0 or full_bytes <= max_bytes:
+        if metrics is not None:
+            metrics = dict(metrics)
+            metrics.setdefault("full_total_bytes", full_bytes)
+            metrics.setdefault("llm_bytes", full_bytes)
+            metrics.setdefault("max_bytes", max_bytes)
+            metrics.setdefault("truncated", False)
+            metrics.setdefault("omitted_interactive_count", 0)
+        return dom_text, index_to_selector, metrics
+
+    lines = dom_text.splitlines()
+    try:
+        elements_pos = lines.index("ELEMENTS:")
+        head_lines = lines[: elements_pos + 1]
+        body_lines = lines[elements_pos + 1 :]
+    except ValueError:
+        head_lines = []
+        body_lines = lines
+
+    total_indices = {
+        idx for idx in (_dom_line_index(line) for line in body_lines)
+        if idx is not None and idx != 0
+    }
+
+    kept_lines: list[str] = []
+    kept_indices: set[int] = set()
+
+    def _render_with_notice() -> str:
+        notice = _dom_truncation_notice(
+            kept_lines=len(kept_lines),
+            total_lines=len(body_lines),
+            kept_indices=len(kept_indices),
+            total_indices=len(total_indices) or len(index_to_selector),
+            max_bytes=max_bytes,
+            full_bytes=full_bytes,
+        )
+        return "\n".join([*head_lines, notice, *kept_lines])
+
+    # Reserve the header + truncation notice first, then fill the rest
+    # with original-order DOM rows that fit the byte budget.
+    for line in body_lines:
+        kept_lines.append(line)
+        idx = _dom_line_index(line)
+        if idx is not None and idx != 0:
+            kept_indices.add(idx)
+        if _utf8_len(_render_with_notice()) > max_bytes:
+            kept_lines.pop()
+            if idx is not None and idx != 0:
+                kept_indices.discard(idx)
+
+    capped_text = _render_with_notice()
+    # The final notice may have grown by a few digits after selection.
+    while _utf8_len(capped_text) > max_bytes and kept_lines:
+        removed = kept_lines.pop()
+        idx = _dom_line_index(removed)
+        if idx is not None:
+            kept_indices = {
+                n for n in (_dom_line_index(line) for line in kept_lines)
+                if n is not None and n != 0
+            }
+        capped_text = _render_with_notice()
+    if _utf8_len(capped_text) > max_bytes:
+        capped_text = _utf8_prefix(capped_text, max_bytes)
+
+    shown_index_to_selector = {
+        idx: selector
+        for idx, selector in index_to_selector.items()
+        if idx in kept_indices
+    }
+
+    if metrics is not None:
+        metrics = dict(metrics)
+        llm_bytes = _utf8_len(capped_text)
+        metrics["full_total_bytes"] = full_bytes
+        metrics["total_bytes"] = llm_bytes
+        metrics["llm_bytes"] = llm_bytes
+        metrics["max_bytes"] = max_bytes
+        metrics["truncated"] = True
+        metrics["omitted_bytes"] = max(0, full_bytes - llm_bytes)
+        metrics["shown_interactive_count"] = len(shown_index_to_selector)
+        metrics["omitted_interactive_count"] = max(
+            0,
+            len(index_to_selector) - len(shown_index_to_selector),
+        )
+
+    return capped_text, shown_index_to_selector, metrics
 
 
 def _compute_dom_metrics(snap: Any, dom_text: str) -> dict[str, Any]:
@@ -1032,6 +1218,12 @@ class Agent:
         scratchpad_enabled: bool = True,
         scratchpad_max_bytes: int = 32 * 1024,
         scratchpad_max_lines: int = 1000,
+        # Maximum UTF-8 bytes of rendered DOM text injected into each
+        # LLM turn. Set to 0 to disable, or override with
+        # BROWSER_USE_RS_DOM_MAX_BYTES / BU_RS_DOM_MAX_BYTES. The full
+        # structured snapshot is still captured; this only caps the
+        # LLM-facing page-state text.
+        dom_max_bytes: int | None = None,
         # Sliding-window agent history (v0.5.0). When the live message
         # list grows past `history_window_steps` of native tool-call/
         # tool-result pairs, the oldest pairs get collapsed into a
@@ -1214,6 +1406,7 @@ class Agent:
         self.scratchpad_enabled = scratchpad_enabled
         self.scratchpad_max_bytes = scratchpad_max_bytes
         self.scratchpad_max_lines = scratchpad_max_lines
+        self.dom_max_bytes = _resolve_dom_max_bytes(dom_max_bytes)
         self.history_window_steps = history_window_steps
         # Per-agent UUID stamped on scratchpad files so simultaneous
         # eval runs don't clobber each other.
@@ -4612,6 +4805,12 @@ class Agent:
                 except Exception:
                     logger.exception("agent: dom_metrics computation failed (non-fatal)")
                     metrics = None
+                dom_text, idx_to_sel, metrics = _cap_dom_for_llm(
+                    dom_text,
+                    idx_to_sel,
+                    self.dom_max_bytes,
+                    metrics,
+                )
                 return dom_text, idx_to_sel, metrics
             except Exception:
                 # No active page yet (very first step before
@@ -4630,14 +4829,18 @@ class Agent:
             # visible in CI / dashboard logs. AgentHistory.state also
             # carries it (see return below) for completeHistory access.
             logger.info(
-                "dom_metrics step=%d url=%s total_bytes=%d el=%d "
+                "dom_metrics step=%d url=%s llm_bytes=%d full_bytes=%d "
+                "cap=%d truncated=%s el=%d "
                 "(interactive=%d static=%d) "
                 "text=(interactive=%d static=%d) "
-                "attrs=(bytes=%d count=%d per_el=%.1f) "
+                "attrs=(bytes=%d count=%d per_el=%.1f omitted_interactive=%d) "
                 "el_sizes=(p50=%d p90=%d max=%d)",
                 self.state.n_steps,
                 url[:80],
                 dom_metrics["total_bytes"],
+                dom_metrics.get("full_total_bytes", dom_metrics["total_bytes"]),
+                dom_metrics.get("max_bytes", 0),
+                bool(dom_metrics.get("truncated")),
                 dom_metrics["total_elements"],
                 dom_metrics["interactive_count"],
                 dom_metrics["static_text_count"],
@@ -4646,6 +4849,7 @@ class Agent:
                 dom_metrics["interactive_attrs_bytes"],
                 dom_metrics["interactive_attrs_count"],
                 dom_metrics["interactive_attrs_per_el_avg"],
+                dom_metrics.get("omitted_interactive_count", 0),
                 dom_metrics["el_size_p50"],
                 dom_metrics["el_size_p90"],
                 dom_metrics["el_size_max"],
@@ -5772,6 +5976,19 @@ class Agent:
             dom_el_size_p50=int(dm.get("el_size_p50") or 0),
             dom_el_size_p90=int(dm.get("el_size_p90") or 0),
             dom_el_size_max=int(dm.get("el_size_max") or 0),
+            dom_full_total_bytes=int(dm.get("full_total_bytes") or 0),
+            dom_llm_bytes=int(dm.get("llm_bytes") or dm.get("total_bytes") or 0),
+            dom_max_bytes=int(dm.get("max_bytes") or 0),
+            dom_truncated=bool(dm.get("truncated") or False),
+            dom_omitted_bytes=int(dm.get("omitted_bytes") or 0),
+            dom_shown_interactive_count=int(
+                dm["shown_interactive_count"]
+                if "shown_interactive_count" in dm
+                else (dm.get("interactive_count") or 0)
+            ),
+            dom_omitted_interactive_count=int(
+                dm.get("omitted_interactive_count") or 0
+            ),
             prompt_system_bytes=int(last_call.get("system_bytes") or 0),
             prompt_tools_bytes=int(last_call.get("tools_bytes") or 0),
             prompt_state_msg_bytes=int(last_call.get("state_msg_bytes") or 0),

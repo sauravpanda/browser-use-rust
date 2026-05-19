@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python"))
 
-from browser_use_rs.agent import Agent, HistoryItem  # noqa: E402
+from browser_use_rs.agent import Agent, HistoryItem, _cap_dom_for_llm  # noqa: E402
 from browser_use_rs.llm.base import (  # noqa: E402
     AssistantMessage,
     ImagePart,
@@ -160,6 +160,55 @@ class PromptMetricsTests(unittest.TestCase):
         self.assertEqual(metadata.prompt_read_state_entries, 2)
         self.assertEqual(metadata.prompt_history_items, 5)
         self.assertEqual(metadata.prompt_history_collapsed_items, 3)
+
+    def test_cap_dom_for_llm_filters_omitted_indices(self):
+        dom_text = (
+            "URL: https://example.com\n"
+            "TITLE: Example\n"
+            "VIEWPORT: 1280x720\n"
+            "PAGE_INFO: 0.0 pages above, 1.0 pages below - scroll down to reveal more\n"
+            "\n"
+            "ELEMENTS:\n"
+            "[1]<button>Alpha\n"
+            f"[2]<a href=\"{'x' * 1000}\">Oversized\n"
+            "[3]<button>Gamma\n"
+        )
+        index_to_selector = {
+            1: 'button "Alpha"',
+            2: 'a "Oversized"',
+            3: 'button "Gamma"',
+        }
+
+        capped, shown, metrics = _cap_dom_for_llm(
+            dom_text,
+            index_to_selector,
+            512,
+            {"total_bytes": len(dom_text)},
+        )
+
+        self.assertLessEqual(len(capped.encode("utf-8")), 512)
+        self.assertIn("[DOM_TRUNCATED]", capped)
+        self.assertIn("[1]<button>Alpha", capped)
+        self.assertNotIn("[2]<a", capped)
+        self.assertEqual(set(shown), {1, 3})
+        self.assertTrue(metrics["truncated"])
+        self.assertEqual(metrics["shown_interactive_count"], 2)
+        self.assertEqual(metrics["omitted_interactive_count"], 1)
+
+    def test_cap_dom_for_llm_can_be_disabled(self):
+        dom_text = "URL: https://example.com\nELEMENTS:\n[1]<button>Alpha\n"
+        index_to_selector = {1: 'button "Alpha"'}
+
+        capped, shown, metrics = _cap_dom_for_llm(
+            dom_text,
+            index_to_selector,
+            0,
+            {"total_bytes": len(dom_text)},
+        )
+
+        self.assertEqual(capped, dom_text)
+        self.assertEqual(shown, index_to_selector)
+        self.assertFalse(metrics["truncated"])
 
 
 if __name__ == "__main__":
