@@ -7,7 +7,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python"))
 
-from browser_use_rs.agent import Agent, HistoryItem, _cap_dom_for_llm  # noqa: E402
+from browser_use_rs.agent import (  # noqa: E402
+    Agent,
+    HistoryItem,
+    _cap_dom_for_llm,
+    _is_page_state_message,
+)
 from browser_use_rs.llm.base import (  # noqa: E402
     AssistantMessage,
     ImagePart,
@@ -34,6 +39,16 @@ class PromptMetricsTests(unittest.TestCase):
         agent._memory = ""
         agent._next_goal = ""
         agent._valid_indices = set()
+        agent.system_prompt = "system"
+        agent.tools = []
+        agent._history = []
+        agent.state_cache_max_reuse_steps = 3
+        agent._cached_page_state_fp = None
+        agent._cached_page_state_step = 0
+        agent._state_cache_reuse_count = 0
+        agent._last_page_state_reused = False
+        agent._last_page_state_had_read_state = False
+        agent.state = type("State", (), {"n_steps": 1})()
         return agent
 
     def test_inject_page_state_uses_screenshot_media_type(self):
@@ -85,6 +100,82 @@ class PromptMetricsTests(unittest.TestCase):
         content = agent._messages[-1].content
         self.assertIsInstance(content, str)
         self.assertIn("[1]<button>Continue", content)
+
+    def test_unchanged_page_state_reuses_previous_full_state(self):
+        agent = self._agent_for_state_injection()
+        agent._valid_indices = {1}
+        state = BrowserStateSummary(
+            url="https://example.com",
+            screenshot="abc123",
+            screenshot_media_type="image/jpeg",
+            elements_text="[1]<button>Continue",
+        )
+
+        agent._inject_page_state(state)
+        full_state = agent._messages[-1]
+        agent.state.n_steps = 2
+        agent._inject_page_state(state)
+
+        self.assertIs(agent._messages[-2], full_state)
+        marker = agent._messages[-1]
+        self.assertIsInstance(marker.content, str)
+        self.assertTrue(marker.content.startswith("[PAGE_STATE_UNCHANGED]"))
+        self.assertIn("retained PAGE_STATE from step 1", marker.content)
+        self.assertTrue(agent._last_page_state_reused)
+        self.assertEqual(agent._state_cache_reuse_count, 1)
+
+        metrics = agent._compute_call_metrics()
+        self.assertEqual(metrics["page_state_reuse_markers"], 1)
+        self.assertTrue(metrics["state_reused"])
+        self.assertEqual(metrics["state_reuse_count"], 1)
+
+    def test_cleaned_dom_fingerprint_reuses_across_screenshot_churn(self):
+        agent = self._agent_for_state_injection()
+        state1 = BrowserStateSummary(
+            url="https://example.com",
+            screenshot="abc123",
+            screenshot_media_type="image/jpeg",
+            elements_text="[1]<button>Continue",
+        )
+        state2 = BrowserStateSummary(
+            url="https://example.com",
+            screenshot="def456",
+            screenshot_media_type="image/jpeg",
+            elements_text="[1]<button>Continue",
+        )
+
+        agent._inject_page_state(state1)
+        agent.state.n_steps = 2
+        agent._inject_page_state(state2)
+
+        self.assertTrue(agent._last_page_state_reused)
+        self.assertEqual(agent._state_cache_reuse_count, 1)
+
+    def test_changed_cleaned_dom_replaces_cached_full_state(self):
+        agent = self._agent_for_state_injection()
+        state1 = BrowserStateSummary(
+            url="https://example.com",
+            screenshot="abc123",
+            screenshot_media_type="image/jpeg",
+            elements_text="[1]<button>Continue",
+        )
+        state2 = BrowserStateSummary(
+            url="https://example.com",
+            screenshot="abc123",
+            screenshot_media_type="image/jpeg",
+            elements_text="[1]<button>Different",
+        )
+
+        agent._inject_page_state(state1)
+        agent.state.n_steps = 2
+        agent._inject_page_state(state1)
+        agent.state.n_steps = 3
+        agent._inject_page_state(state2)
+
+        page_states = [m for m in agent._messages if _is_page_state_message(m)]
+        self.assertEqual(len(page_states), 1)
+        self.assertFalse(agent._last_page_state_reused)
+        self.assertEqual(agent._state_cache_reuse_count, 0)
 
     def test_compute_call_metrics_splits_history_and_read_state_bytes(self):
         agent = Agent.__new__(Agent)

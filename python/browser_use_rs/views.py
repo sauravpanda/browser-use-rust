@@ -101,6 +101,14 @@ class StepMetadata:
     prompt_read_state_entries: int = 0
     prompt_history_items: int = 0
     prompt_history_collapsed_items: int = 0
+    # v0.12.10 state-reuse instrumentation. The latest state message can
+    # be a tiny PAGE_STATE_UNCHANGED marker while an older full PAGE_STATE
+    # remains in the prompt for provider cache reuse.
+    prompt_page_state_bytes: int = 0
+    prompt_page_state_image_bytes: int = 0
+    prompt_state_reuse_markers: int = 0
+    prompt_state_reused: bool = False
+    prompt_state_reuse_count: int = 0
 
     @property
     def duration_seconds(self) -> float:
