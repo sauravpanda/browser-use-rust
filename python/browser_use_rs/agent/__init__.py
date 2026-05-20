@@ -128,6 +128,11 @@ DOM_MAX_BYTES_ENV_VARS = (
     "BROWSER_USE_RS_DOM_MAX_BYTES",
     "BU_RS_DOM_MAX_BYTES",
 )
+DEFAULT_STATE_CACHE_MAX_REUSE_STEPS = 3
+STATE_CACHE_MAX_REUSE_ENV_VARS = (
+    "BROWSER_USE_RS_STATE_CACHE_MAX_REUSE_STEPS",
+    "BU_RS_STATE_CACHE_MAX_REUSE_STEPS",
+)
 
 _URL_RE = re.compile(r"https?://[^\s<>{}\\|^`\"']+")
 _URL_TRAILING_PUNCT = ".,;:!?)]}"
@@ -600,6 +605,32 @@ def _resolve_dom_max_bytes(value: Any = None) -> int:
         return DEFAULT_DOM_MAX_BYTES
 
 
+def _resolve_state_cache_max_reuse_steps(value: Any = None) -> int:
+    """Return how many unchanged states can reuse the prior full state.
+
+    A value <= 0 disables state reuse. Env vars are only consulted when
+    no explicit value was passed.
+    """
+    raw = value
+    if raw is None:
+        for name in STATE_CACHE_MAX_REUSE_ENV_VARS:
+            env_value = os.environ.get(name)
+            if env_value not in (None, ""):
+                raw = env_value
+                break
+    if raw is None:
+        return DEFAULT_STATE_CACHE_MAX_REUSE_STEPS
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "agent: invalid state-cache reuse budget %r; using default %d",
+            raw,
+            DEFAULT_STATE_CACHE_MAX_REUSE_STEPS,
+        )
+        return DEFAULT_STATE_CACHE_MAX_REUSE_STEPS
+
+
 def _dom_line_index(line: str) -> int | None:
     stripped = line.lstrip("\t ")
     changed = True
@@ -1040,9 +1071,34 @@ read_file your notes one last time to make sure nothing was lost.
 # We use it to find and supersede the previous step's snapshot so the
 # conversation doesn't accumulate stale DOMs across long runs.
 _PAGE_STATE_TAG = "[PAGE_STATE]"
+_PAGE_STATE_UNCHANGED_TAG = "[PAGE_STATE_UNCHANGED]"
 _PAGE_STATE_SUPERSEDED = (
     f"{_PAGE_STATE_TAG} (superseded — see latest page state below)"
 )
+
+
+def _page_state_text(msg: Message) -> str | None:
+    if not isinstance(msg, UserMessage):
+        return None
+    if isinstance(msg.content, str):
+        text = msg.content
+    elif isinstance(msg.content, list):
+        first = msg.content[0] if msg.content else None
+        text = first.text if isinstance(first, TextPart) else ""
+    else:
+        text = ""
+    if text.startswith(_PAGE_STATE_TAG) or text.startswith(_PAGE_STATE_UNCHANGED_TAG):
+        return text
+    return None
+
+
+def _is_page_state_message(msg: Message) -> bool:
+    return _page_state_text(msg) is not None
+
+
+def _is_page_state_reuse_marker(msg: Message) -> bool:
+    text = _page_state_text(msg)
+    return bool(text and text.startswith(_PAGE_STATE_UNCHANGED_TAG))
 
 # Validation prompts injected once per task right before the agent's
 # final answer. Forces the LLM to re-check it against the original task
@@ -1224,6 +1280,13 @@ class Agent:
         # structured snapshot is still captured; this only caps the
         # LLM-facing page-state text.
         dom_max_bytes: int | None = None,
+        # Reuse the previous full page-state prompt when the URL and
+        # cleaned LLM-facing DOM are byte-identical. Unchanged turns get
+        # a small marker instead of another screenshot/DOM blob. Set to
+        # 0 to disable, or override with
+        # BROWSER_USE_RS_STATE_CACHE_MAX_REUSE_STEPS /
+        # BU_RS_STATE_CACHE_MAX_REUSE_STEPS.
+        state_cache_max_reuse_steps: int | None = None,
         # Sliding-window agent history (v0.5.0). When the live message
         # list grows past `history_window_steps` of native tool-call/
         # tool-result pairs, the oldest pairs get collapsed into a
@@ -1407,6 +1470,9 @@ class Agent:
         self.scratchpad_max_bytes = scratchpad_max_bytes
         self.scratchpad_max_lines = scratchpad_max_lines
         self.dom_max_bytes = _resolve_dom_max_bytes(dom_max_bytes)
+        self.state_cache_max_reuse_steps = _resolve_state_cache_max_reuse_steps(
+            state_cache_max_reuse_steps
+        )
         self.history_window_steps = history_window_steps
         # Per-agent UUID stamped on scratchpad files so simultaneous
         # eval runs don't clobber each other.
@@ -1592,6 +1658,16 @@ class Agent:
         # Conversation messages live across run() calls so add_new_task()
         # can append a continuation without losing browser/page context.
         self._messages: list[Message] = []
+        # Page-state reuse cache. When successive cleaned LLM DOM states
+        # are byte-identical, keep the previous full browser-state
+        # message in-place so provider prompt caching can reuse the
+        # screenshot / DOM prefix, and append only a tiny current-state
+        # marker.
+        self._cached_page_state_fp: str | None = None
+        self._cached_page_state_step: int = 0
+        self._state_cache_reuse_count: int = 0
+        self._last_page_state_reused: bool = False
+        self._last_page_state_had_read_state: bool = False
         self._consecutive_error_turns = 0
         # Loop-detection state: rolling windows of recent activity
         # + cooldown so a single nudge doesn't fire on consecutive steps.
@@ -1999,6 +2075,11 @@ class Agent:
 
     async def add_new_task(self, new_task: str) -> None:
         """Append a follow-up user instruction. Next run() picks it up."""
+        self._cached_page_state_fp = None
+        self._cached_page_state_step = 0
+        self._state_cache_reuse_count = 0
+        self._last_page_state_reused = False
+        self._last_page_state_had_read_state = False
         self._pending_action_final_nudges = 0
         self._empty_output_nudges = 0
         self._final_answer_recovery_nudges = 0
@@ -5101,6 +5182,79 @@ class Agent:
                 if val:
                     setattr(self, attr, val)
 
+    def _page_state_fingerprint(self, state: BrowserStateSummary) -> str:
+        """Hash the cleaned browser state the LLM uses for actions.
+
+        Deliberately uses URL + rendered LLM DOM, not raw DOM and not
+        exact screenshot bytes. Raw DOM is too noisy; screenshot bytes
+        churn on animations/ads even when the actionable page state is
+        unchanged. We still force a full refresh after a few reuses.
+        """
+        h = hashlib.sha256()
+        h.update((state.url or "").encode("utf-8", errors="replace"))
+        h.update(b"\0")
+        h.update((state.elements_text or "").encode("utf-8", errors="replace"))
+        return h.hexdigest()[:16]
+
+    def _valid_index_hint(self) -> str:
+        if not self._valid_indices:
+            return ""
+        lo = min(self._valid_indices)
+        hi = max(self._valid_indices)
+        count = len(self._valid_indices)
+        return (
+            f"Valid [N] indices on this page: {count} elements "
+            f"in range [{lo}..{hi}]. Use ONLY indices listed "
+            f"in the retained PAGE_STATE; do not invent numbers."
+        )
+
+    def _compose_page_state_body(
+        self,
+        state: BrowserStateSummary,
+        *,
+        read_state_block: str,
+        state_block: str,
+    ) -> str:
+        dom_text = state.elements_text or ""
+        if not dom_text:
+            return (
+                f"{_PAGE_STATE_TAG}\n{read_state_block}{state_block}URL: {state.url}\n"
+                "(no DOM snapshot available — page not ready)"
+            )
+        hint = self._valid_index_hint()
+        if hint:
+            return (
+                f"{_PAGE_STATE_TAG}\n{read_state_block}"
+                f"{state_block}{hint}\n\n{dom_text}"
+            )
+        return f"{_PAGE_STATE_TAG}\n{read_state_block}{state_block}{dom_text}"
+
+    def _compose_unchanged_page_state_body(
+        self,
+        state: BrowserStateSummary,
+        *,
+        read_state_block: str,
+        state_block: str,
+    ) -> str:
+        hint = self._valid_index_hint()
+        parts = [
+            _PAGE_STATE_UNCHANGED_TAG,
+            (
+                "[STATE_UNCHANGED] Cleaned browser state is byte-identical to "
+                f"the retained PAGE_STATE from step {self._cached_page_state_step}. "
+                "Reuse that screenshot, DOM, and listed [N] indices. "
+                "The current agent/read state below supersedes any older "
+                "agent/read blocks in the retained PAGE_STATE."
+            ),
+            f"URL: {state.url}",
+        ]
+        if hint:
+            parts.append(hint)
+        body = "\n".join(parts) + "\n"
+        if read_state_block or state_block:
+            body += "\n" + read_state_block + state_block
+        return body.rstrip()
+
     def _inject_page_state(self, state: BrowserStateSummary) -> None:
         """Append a UserMessage with the current page state so the LLM sees
         the DOM without spending a turn on `dom_snapshot`. Older auto-injected
@@ -5111,33 +5265,38 @@ class Agent:
         ImagePart alongside the DOM text — same one-message shape upstream
         browser_use uses for state messages.
         """
-        # v0.8.20: drop prior page-state messages entirely instead of
-        # replacing their content with the SUPERSEDED placeholder. The
-        # placeholder still cost ~10 tokens per message and one
-        # accumulated per step → ~500 tokens of pure dead weight by
-        # step 50. Latest snapshot fully replaces them anyway, so
-        # there's no information loss. Mirrors upstream's
-        # message_manager pattern (single replaceable state slot vs
-        # appending placeholders).
-        def _is_old_page_state(msg: Message) -> bool:
-            if not isinstance(msg, UserMessage):
-                return False
-            if isinstance(msg.content, str):
-                return (
-                    msg.content.startswith(_PAGE_STATE_TAG)
-                    or msg.content == _PAGE_STATE_SUPERSEDED
+        # v0.12.10: when the cleaned LLM-facing browser state is
+        # byte-identical to the previous full state, keep that full
+        # PAGE_STATE message in the prompt and append only a small
+        # PAGE_STATE_UNCHANGED marker.
+        # This lets provider prompt caching reuse the screenshot/DOM
+        # prefix instead of paying full price for another identical
+        # page-state UserMessage. When the page changes, or after a few
+        # unchanged reuses, drop all old page-state messages and append
+        # a fresh full state.
+        fp = self._page_state_fingerprint(state)
+        can_reuse_state = (
+            self.state_cache_max_reuse_steps > 0
+            and bool(state.elements_text)
+            and self._cached_page_state_fp == fp
+            and self._cached_page_state_step > 0
+            and not self._last_page_state_had_read_state
+            and self._state_cache_reuse_count < self.state_cache_max_reuse_steps
+        )
+        if can_reuse_state:
+            self._messages = [
+                msg for msg in self._messages
+                if not _is_page_state_reuse_marker(msg)
+            ]
+        else:
+            self._messages = [
+                msg for msg in self._messages
+                if not _is_page_state_message(msg)
+                and not (
+                    isinstance(msg, UserMessage)
+                    and msg.content == _PAGE_STATE_SUPERSEDED
                 )
-            if isinstance(msg.content, list):
-                first = msg.content[0] if msg.content else None
-                return (
-                    isinstance(first, TextPart)
-                    and first.text.startswith(_PAGE_STATE_TAG)
-                )
-            return False
-
-        self._messages = [
-            msg for msg in self._messages if not _is_old_page_state(msg)
-        ]
+            ]
 
         # v0.11.2 read-state ephemeral lifecycle: drain pending entries
         # from large read tools into a transient <read_state> block.
@@ -5191,43 +5350,32 @@ class Agent:
                 parts.append(f"PRIOR_NEXT_GOAL: {self._next_goal}")
             state_block = "<agent_state>\n" + "\n".join(parts) + "\n</agent_state>\n\n"
 
-        dom_text = state.elements_text or ""
-        if not dom_text:
-            body = (
-                f"{_PAGE_STATE_TAG}\n{read_state_block}{state_block}URL: {state.url}\n"
-                "(no DOM snapshot available — page not ready)"
+        if can_reuse_state:
+            body = self._compose_unchanged_page_state_body(
+                state,
+                read_state_block=read_state_block,
+                state_block=state_block,
             )
-        else:
-            # Prepend an explicit valid-index hint so the LLM has the
-            # range to bound its index choices. Pre-empts hallucinated
-            # numbers like `click(42)` when the snapshot only shows
-            # [0..30]. v0.4.18.
-            #
-            # NOTE: v0.5.4 added a page-stats hint here ("page may be
-            # loading, try scroll/wait") and v0.5.4 also attached the
-            # previous screenshot alongside the current. Both regressed:
-            # judge dropped 53% -> 44%, max_steps_exceeded jumped 32 ->
-            # 51, cost rose 43%. Reverted in v0.5.6 — keep the simple
-            # valid-index hint, single screenshot.
-            if self._valid_indices:
-                lo = min(self._valid_indices)
-                hi = max(self._valid_indices)
-                count = len(self._valid_indices)
-                hint = (
-                    f"Valid [N] indices on this page: {count} elements "
-                    f"in range [{lo}..{hi}]. Use ONLY indices listed "
-                    f"below; do not invent numbers."
-                )
-                body = (
-                    f"{_PAGE_STATE_TAG}\n{read_state_block}"
-                    f"{state_block}{hint}\n\n{dom_text}"
-                )
-            else:
-                body = (
-                    f"{_PAGE_STATE_TAG}\n{read_state_block}"
-                    f"{state_block}{dom_text}"
-                )
+            self._messages.append(UserMessage(content=body))
+            self._state_cache_reuse_count += 1
+            self._last_page_state_reused = True
+            self._last_page_state_had_read_state = False
+            logger.info(
+                "agent: reused unchanged PAGE_STATE at step %d "
+                "(source_step=%d reuse_count=%d fp=%s)",
+                self.state.n_steps,
+                self._cached_page_state_step,
+                self._state_cache_reuse_count,
+                fp,
+            )
+            return
 
+        body = self._compose_page_state_body(
+            state,
+            read_state_block=read_state_block,
+            state_block=state_block,
+        )
+        had_read_state = bool(read_state_block)
         if self.use_vision and self.images_per_step > 0 and state.screenshot:
             self._messages.append(
                 UserMessage(
@@ -5242,6 +5390,11 @@ class Agent:
             )
         else:
             self._messages.append(UserMessage(content=body))
+        self._cached_page_state_fp = fp
+        self._cached_page_state_step = self.state.n_steps
+        self._state_cache_reuse_count = 0
+        self._last_page_state_reused = False
+        self._last_page_state_had_read_state = had_read_state
 
     # Tools that read state without changing the page — safe to keep
     # running even after a mutating action in the same batch since they
@@ -6005,6 +6158,17 @@ class Agent:
             prompt_history_collapsed_items=int(
                 last_call.get("history_collapsed_items") or 0
             ),
+            prompt_page_state_bytes=int(last_call.get("page_state_bytes") or 0),
+            prompt_page_state_image_bytes=int(
+                last_call.get("page_state_image_bytes") or 0
+            ),
+            prompt_state_reuse_markers=int(
+                last_call.get("page_state_reuse_markers") or 0
+            ),
+            prompt_state_reused=bool(last_call.get("state_reused") or False),
+            prompt_state_reuse_count=int(
+                last_call.get("state_reuse_count") or 0
+            ),
         )
         self.state.history.history.append(
             AgentHistory(state=state, output=output, result=results, metadata=metadata)
@@ -6205,6 +6369,9 @@ class Agent:
         agent_history_lines = 0
         read_state_bytes = 0
         read_state_entries = 0
+        page_state_bytes = 0
+        page_state_image_bytes = 0
+        page_state_reuse_markers = 0
         n_user = n_assistant = n_tool_result = 0
         last_user_idx = -1
         for i, msg in enumerate(self._messages):
@@ -6218,6 +6385,12 @@ class Agent:
                 if i == last_user_idx:
                     state_msg_bytes = blen
                 text = _content_text(msg.content)
+                if text.startswith(_PAGE_STATE_TAG) or text.startswith(
+                    _PAGE_STATE_UNCHANGED_TAG
+                ):
+                    page_state_bytes += blen
+                    if text.startswith(_PAGE_STATE_UNCHANGED_TAG):
+                        page_state_reuse_markers += 1
                 if text.startswith("[AGENT_HISTORY]"):
                     agent_history_bytes = len(text.encode("utf-8"))
                     agent_history_lines = max(0, len(text.splitlines()) - 1)
@@ -6241,7 +6414,10 @@ class Agent:
             if isinstance(content, list):
                 for part in content:
                     if isinstance(part, ImagePart) and part.data:
-                        image_bytes += len(part.data)
+                        part_bytes = len(part.data)
+                        image_bytes += part_bytes
+                        if _is_page_state_message(msg):
+                            page_state_image_bytes += part_bytes
         return {
             "prompt_hash": prompt_hash,
             "tools_hash": tools_hash,
@@ -6260,6 +6436,13 @@ class Agent:
             "agent_history_lines": agent_history_lines,
             "read_state_bytes": read_state_bytes,
             "read_state_entries": read_state_entries,
+            "page_state_bytes": page_state_bytes,
+            "page_state_image_bytes": page_state_image_bytes,
+            "page_state_reuse_markers": page_state_reuse_markers,
+            "state_reused": bool(getattr(self, "_last_page_state_reused", False)),
+            "state_reuse_count": int(
+                getattr(self, "_state_cache_reuse_count", 0) or 0
+            ),
             "history_items": len(getattr(self, "_history", []) or []),
             "history_collapsed_items": sum(
                 1 for h in (getattr(self, "_history", []) or [])
