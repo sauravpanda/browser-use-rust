@@ -10,7 +10,13 @@ sys.path.insert(0, str(ROOT / "python"))
 
 import browser_use_rs._extra_tools as extra_tools  # noqa: E402
 from browser_use_rs._extra_tools import _SEARCH_CHALLENGE_CACHE, web_search  # noqa: E402
-from browser_use_rs.agent import Agent, BrowserStateSummary  # noqa: E402
+from browser_use_rs.agent import (  # noqa: E402
+    Agent,
+    BLOCKED_SITE_POLICY,
+    DEFAULT_SYSTEM_PROMPT,
+    FLASH_SYSTEM_PROMPT,
+    BrowserStateSummary,
+)
 
 
 class BlockedSearchGuardTests(unittest.TestCase):
@@ -69,7 +75,23 @@ class BlockedSearchGuardTests(unittest.TestCase):
         )
 
         self.assertIn("bot/CAPTCHA block", out)
-        self.assertIn("Do not retry the same search engine repeatedly", out)
+        self.assertIn("consumes the search fallback budget", out)
+        self.assertIn("Do not retry the same search engine", out)
+
+    def test_blocked_site_policy_is_shared_and_budgeted(self):
+        self.assertIn("at most three recovery moves", BLOCKED_SITE_POLICY)
+        self.assertIn(
+            "snippets\nalone cannot justify `success=true`",
+            BLOCKED_SITE_POLICY,
+        )
+        self.assertEqual(
+            DEFAULT_SYSTEM_PROMPT.count("at most three recovery moves"),
+            1,
+        )
+        self.assertEqual(
+            FLASH_SYSTEM_PROMPT.count("at most three recovery moves"),
+            1,
+        )
 
     def test_web_search_skips_engine_after_prior_challenge(self):
         class Session:
