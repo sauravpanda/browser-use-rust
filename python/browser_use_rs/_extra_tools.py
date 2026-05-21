@@ -183,8 +183,9 @@ def _search_challenge_message(
     )
     return (
         f"{prefix}. This consumes the search fallback budget. Do not retry "
-        "the same search engine; try one same-site endpoint or finish with "
-        "success=false if the required site data remains inaccessible."
+        "the same search engine; try one same-site endpoint, or finish from "
+        "visible public-result evidence only when it directly answers a "
+        "non-live fact. Otherwise use success=false."
     )
 
 
@@ -774,8 +775,11 @@ async def web_search(session, query: str, engine: str = "duckduckgo") -> str:
     """Open a search-engine results page for `query`. Use once as a
     targeted fallback when the requested information is not on a known
     page or the target site is blocked. For site-required tasks, search
-    results are for discovering same-site URLs or corroborating details;
-    snippets alone do not complete the task.
+    results usually discover same-site URLs or corroborate details; when
+    the target site is blocked, visible result titles/snippets may answer
+    public, non-live facts. Do not use snippets for live/current data,
+    availability, bookings, account-gated pages, locators, or site
+    actions.
 
     Mirrors upstream browser_use's web_search action (v0.6.5).
 

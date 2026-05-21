@@ -100,6 +100,46 @@ class FinalAnswerGuardTests(unittest.TestCase):
 
         self.assertTrue(_looks_like_site_required_external_answer(task, answer))
 
+    def test_bounded_external_result_final_can_pass_static_public_task(self):
+        task = (
+            "Find the return policy page and summarize the key points, "
+            "including the return timeframe and required item condition. "
+            "website: https://dickssportinggoods.com"
+        )
+        answer = (
+            "Visible Google search result evidence for Dick's Sporting "
+            "Goods return policy shows: returns are accepted within 90 "
+            "days for most items, and returned items must be clean and "
+            "resalable."
+        )
+
+        self.assertFalse(
+            _looks_like_unsupported_final_answer(
+                task,
+                answer,
+                "https://www.google.com/search?q=dickssportinggoods+return+policy",
+            )
+        )
+
+    def test_bounded_external_result_final_still_rejects_live_task(self):
+        task = (
+            "Search for flights from Doha to Paris departing in the upcoming "
+            "week; then record available fare classes and prices. website: "
+            "https://qatarairways.com"
+        )
+        answer = (
+            "Visible Google search result snippets show Economy at $612 "
+            "and Business at $2,430 for the route."
+        )
+
+        self.assertTrue(
+            _looks_like_unsupported_final_answer(
+                task,
+                answer,
+                "https://www.google.com/search?q=qatar+airways+doha+paris+fares",
+            )
+        )
+
     def test_generic_target_site_search_results_are_not_flagged(self):
         task = (
             "Use the advanced search to filter movies released in 2022 "
