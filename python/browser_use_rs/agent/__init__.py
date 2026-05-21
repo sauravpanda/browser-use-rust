@@ -133,6 +133,15 @@ STATE_CACHE_MAX_REUSE_ENV_VARS = (
     "BROWSER_USE_RS_STATE_CACHE_MAX_REUSE_STEPS",
     "BU_RS_STATE_CACHE_MAX_REUSE_STEPS",
 )
+BLOCKED_STATE_WINDOW = 6
+BLOCKED_STATE_NUDGE_COUNT = 3
+BLOCKED_STATE_FORCE_COUNT = 4
+BLOCKED_STATE_FORCE_MIN_STEP = 12
+SEARCH_FALLBACK_WINDOW = 6
+SEARCH_FALLBACK_NUDGE_COUNT = 3
+SEARCH_FALLBACK_NUDGE_MIN_STEP = 8
+SEARCH_FALLBACK_FORCE_COUNT = 5
+SEARCH_FALLBACK_FORCE_MIN_STEP = 15
 
 _URL_RE = re.compile(r"https?://[^\s<>{}\\|^`\"']+")
 _URL_TRAILING_PUNCT = ".,;:!?)]}"
@@ -832,11 +841,31 @@ def _compute_dom_metrics(snap: Any, dom_text: str) -> dict[str, Any]:
     }
 
 
+# v0.12.11: shared blocked-site policy. Previous prompt variants repeated
+# this guidance with slightly different wording: one place pushed
+# web_search, another warned snippets were insufficient, and validation
+# could force a fresh web_search while finalizing. Keep the policy short
+# and budgeted so blocked tasks stop burning search-loop steps.
+BLOCKED_SITE_POLICY = """\
+If the target page returns 403, access denied, Cloudflare/Turnstile, CAPTCHA,
+login wall, paywall, or a browser error page, do not retry the same blocked
+URL or search engine. One wait is allowed for a CAPTCHA; if it remains, treat
+the page as blocked.
+
+Use at most three recovery moves total: one targeted `web_search(query=...)`,
+one same-site fallback URL (mobile, AMP, RSS, sitemap, or a direct same-site
+section/page), and one read/extract from any reachable same-site evidence.
+For tasks that explicitly require the target site's own search, filter, list,
+locator, or page, external search is only discovery/corroboration; snippets
+alone cannot justify `success=true`. If same-site evidence remains inaccessible
+after the budget, call `done(..., success=false)` and state the blocker."""
+
+
 # Flash-mode prompt — terse variant matching upstream's
 # system_prompt_flash.md. Used when flash_mode=True is passed to the
 # Agent (eval framework default for many setups). Mirrors upstream's
 # convention of swapping prompt templates based on mode. v0.7.1.
-FLASH_SYSTEM_PROMPT = """\
+FLASH_SYSTEM_PROMPT = f"""\
 You are an AI agent designed to operate in an iterative loop to automate browser tasks. Your ultimate goal is accomplishing the task provided in <user_request>.
 
 <browser_state>Elements: [N]<tag attrs>text. Only [indexed] elements are interactive. Lines starting with <tag> "..." are static text content (not clickable). Indented lines are children of the element above.</browser_state>
@@ -867,7 +896,7 @@ Finalize via `done(text="<your answer>", success=true|false)`. Set success=true 
 </action_rules>
 
 <blocked_sites>
-If the target site returns 403 / Cloudflare bot-detection / Turnstile / login wall / paywall, do NOT retry the same URL and do NOT invent content. Required fallbacks in order: (1) `web_search(query=...)` — search engine snippets often contain the answer; (2) try alternative endpoints (mobile.* / m.* / /amp/ / sitemap / RSS); (3) if still blocked after 2-3 attempts, set `success=False` and state what blocked you. When the task explicitly requires the target site's own search/filter/list/page, external search is only a way to discover same-site URLs or corroborate details; it does NOT satisfy the task by itself. Do not set `success=True` from search-engine snippets alone for those site-required tasks. Confidently-wrong fabricated answers fail the judge harder than honest "I was blocked" answers. CAPTCHAs auto-resolve — wait one turn before treating one as a hard block.
+{BLOCKED_SITE_POLICY}
 </blocked_sites>
 
 <state_emission>
@@ -889,7 +918,7 @@ DATA GROUNDING: Only report data observed in browser state or tool outputs. Do N
 </output>
 """
 
-DEFAULT_SYSTEM_PROMPT = """\
+DEFAULT_SYSTEM_PROMPT = f"""\
 You are a browser-use agent. You control a real Chromium browser through a
 small set of tools and complete the user's task by calling them.
 
@@ -984,31 +1013,8 @@ JavaScript cannot reach a visible cookie/privacy button, call
 attachable iframe targets. Do NOT conclude "task impossible" on your
 first turn — the real content is almost always one click away.
 
-Blocked sites — alternative approaches REQUIRED:
-If the target site returns 403 / "access denied" / Cloudflare bot-
-detection / Turnstile / persistent login wall / paywall, do NOT
-repeatedly retry the same URL and do NOT invent content.
-
-  1. Try `web_search(query="<specific information needed>")` — search
-     engine snippets and cached results often contain the answer the
-     blocked page would have shown. This is the single most useful
-     fallback — use it whenever a target site blocks you. If the task
-     explicitly requires the target site's own search, filters, locator,
-     list, or page, use external search only to find same-site URLs or
-     corroborate details; snippets alone do not complete that task.
-  2. Try alternative endpoints on the same site: mobile.* subdomain,
-     m.* subdomain, /amp/ variants, RSS feeds, sitemap.xml.
-  3. CAPTCHAs auto-resolve — wait ONE turn after a CAPTCHA appears
-     before treating it as a hard block.
-  4. If after 2-3 alternative attempts you still cannot retrieve the
-     information, finish HONESTLY: set `success=False` on done (or
-     for plain-text answers, state explicitly that you could not
-     access the data and what blocked you). Do NOT paraphrase or
-     fabricate content as if you had retrieved it from the live site
-     — the judge will reject confidently-wrong answers harder than
-     honest "I was blocked" answers. Do NOT set `success=True` when
-     your only evidence for a site-required task is an external search
-     result page.
+Blocked sites — bounded recovery:
+{BLOCKED_SITE_POLICY}
 
 When calling tools: never invent values for required arguments. If the
 snapshot doesn't show what you need (no [N] for the element, no text
@@ -1156,12 +1162,15 @@ _VALIDATION_CHECKLIST = (
     "'I was unable to', 'blocked', '403', 'forbidden', 'CAPTCHA', "
     "'login required', 'sign-in required', 'Cloudflare', or 'unable to "
     "retrieve' for the target site AND you did NOT successfully retrieve "
-    "the answer via web_search or alternative pages, you MUST set "
-    "success=False on done. Do NOT paraphrase typical/likely content as "
+    "the answer via observed same-site evidence, you MUST set "
+    "success=False on done. Search snippets may help discover same-site "
+    "pages, but snippets alone are not enough for site-required tasks. "
+    "Do NOT paraphrase typical/likely content as "
     "if you had retrieved it from the live site — the judge rejects "
     "confidently-wrong fabricated answers harder than honest \"I was "
-    "blocked\" answers. If you have NOT yet tried `web_search(query=...)` "
-    "as a fallback, do that NOW before finalizing.\n"
+    "blocked\" answers. Do not start a fresh external search only because "
+    "you are finalizing; use one remaining budgeted fallback only if it "
+    "can still produce same-site evidence.\n"
 )
 
 _VALIDATION_PROMPT_TEXT = (
@@ -2244,14 +2253,14 @@ class Agent:
                 block_reason = self._blocked_state_reason(state_summary)
                 self._recent_blocked_state_reasons.append(block_reason or "")
                 self._recent_blocked_state_reasons = (
-                    self._recent_blocked_state_reasons[-8:]
+                    self._recent_blocked_state_reasons[-BLOCKED_STATE_WINDOW:]
                 )
                 blocked_recent = [
                     r for r in self._recent_blocked_state_reasons if r
                 ]
                 blocked_count = len(blocked_recent)
                 if (
-                    blocked_count >= 3
+                    blocked_count >= BLOCKED_STATE_NUDGE_COUNT
                     and blocked_count > self._blocked_state_nudged_at_count
                 ):
                     self._blocked_state_nudged_at_count = blocked_count
@@ -2259,9 +2268,10 @@ class Agent:
                     nudge = (
                         f"[BOT_BLOCKED] {blocked_count}/"
                         f"{len(self._recent_blocked_state_reasons)} recent "
-                        f"states show bot/CAPTCHA/error/challenge pages "
-                        f"({examples}). Stop retrying blocked pages; try "
-                        f"one same-site fallback or finish success=false."
+                        f"states are bot/CAPTCHA/error/challenge pages "
+                        f"({examples}). The fallback budget is nearly used; "
+                        f"try one same-site evidence path or finish "
+                        f"success=false."
                     )
                     self._messages.append(UserMessage(content=nudge))
                     logger.info(
@@ -2272,7 +2282,10 @@ class Agent:
                         len(self._recent_blocked_state_reasons),
                         examples,
                     )
-                if blocked_count >= 5 and step_n >= 15:
+                if (
+                    blocked_count >= BLOCKED_STATE_FORCE_COUNT
+                    and step_n >= BLOCKED_STATE_FORCE_MIN_STEP
+                ):
                     logger.info(
                         "agent: BOT_BLOCKED force-final at step %d "
                         "(blocked_recent=%d/%d)",
@@ -2337,14 +2350,14 @@ class Agent:
                 )
                 self._recent_search_fallback_hosts.append(fallback_host or "")
                 self._recent_search_fallback_hosts = (
-                    self._recent_search_fallback_hosts[-8:]
+                    self._recent_search_fallback_hosts[-SEARCH_FALLBACK_WINDOW:]
                 )
                 fallback_count = sum(
                     1 for h in self._recent_search_fallback_hosts if h
                 )
                 if (
-                    fallback_count >= 4
-                    and step_n >= 10
+                    fallback_count >= SEARCH_FALLBACK_NUDGE_COUNT
+                    and step_n >= SEARCH_FALLBACK_NUDGE_MIN_STEP
                     and fallback_count > self._search_fallback_nudged_at_count
                 ):
                     self._search_fallback_nudged_at_count = fallback_count
@@ -2355,12 +2368,12 @@ class Agent:
                         UserMessage(
                             content=(
                                 "[SEARCH_FALLBACK_LOOP] This task requires "
-                                "the target site, but the browser stayed on "
+                                "the target site, but the browser is still on "
                                 f"search engines {fallback_count}/"
                                 f"{len(self._recent_search_fallback_hosts)} "
-                                f"recent states ({examples}). Try one "
-                                "same-site fallback; do not finish "
-                                "success=true from snippets."
+                                f"recent states ({examples}). Use one "
+                                "same-site evidence path now; snippets alone "
+                                "cannot be success=true."
                             )
                         )
                     )
@@ -2372,7 +2385,10 @@ class Agent:
                         len(self._recent_search_fallback_hosts),
                         examples,
                     )
-                if fallback_count >= 6 and step_n >= 20:
+                if (
+                    fallback_count >= SEARCH_FALLBACK_FORCE_COUNT
+                    and step_n >= SEARCH_FALLBACK_FORCE_MIN_STEP
+                ):
                     logger.info(
                         "agent: SEARCH_FALLBACK_LOOP force-final at step %d "
                         "(fallback_recent=%d/%d)",

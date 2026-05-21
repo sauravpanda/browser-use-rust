@@ -182,8 +182,8 @@ def _search_challenge_message(
         )
     )
     return (
-        f"{prefix}. Do not retry the same search engine repeatedly; try "
-        "one alternative engine or a same-site endpoint, then finish with "
+        f"{prefix}. This consumes the search fallback budget. Do not retry "
+        "the same search engine; try one same-site endpoint or finish with "
         "success=false if the required site data remains inaccessible."
     )
 
@@ -771,10 +771,11 @@ async def go_back(session) -> str:
 
 @tool
 async def web_search(session, query: str, engine: str = "duckduckgo") -> str:
-    """Open a search-engine results page for `query`. Use when the
-    requested information isn't on a known site and you need to find
-    it. Subsequent click/scroll/extract calls operate on the results
-    page.
+    """Open a search-engine results page for `query`. Use once as a
+    targeted fallback when the requested information is not on a known
+    page or the target site is blocked. For site-required tasks, search
+    results are for discovering same-site URLs or corroborating details;
+    snippets alone do not complete the task.
 
     Mirrors upstream browser_use's web_search action (v0.6.5).
 
