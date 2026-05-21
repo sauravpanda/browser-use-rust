@@ -133,15 +133,15 @@ STATE_CACHE_MAX_REUSE_ENV_VARS = (
     "BROWSER_USE_RS_STATE_CACHE_MAX_REUSE_STEPS",
     "BU_RS_STATE_CACHE_MAX_REUSE_STEPS",
 )
-BLOCKED_STATE_WINDOW = 6
+BLOCKED_STATE_WINDOW = 8
 BLOCKED_STATE_NUDGE_COUNT = 3
-BLOCKED_STATE_FORCE_COUNT = 4
-BLOCKED_STATE_FORCE_MIN_STEP = 12
-SEARCH_FALLBACK_WINDOW = 6
-SEARCH_FALLBACK_NUDGE_COUNT = 3
-SEARCH_FALLBACK_NUDGE_MIN_STEP = 8
-SEARCH_FALLBACK_FORCE_COUNT = 5
-SEARCH_FALLBACK_FORCE_MIN_STEP = 15
+BLOCKED_STATE_FORCE_COUNT = 5
+BLOCKED_STATE_FORCE_MIN_STEP = 15
+SEARCH_FALLBACK_WINDOW = 8
+SEARCH_FALLBACK_NUDGE_COUNT = 4
+SEARCH_FALLBACK_NUDGE_MIN_STEP = 10
+SEARCH_FALLBACK_FORCE_COUNT = 6
+SEARCH_FALLBACK_FORCE_MIN_STEP = 20
 
 _URL_RE = re.compile(r"https?://[^\s<>{}\\|^`\"']+")
 _URL_TRAILING_PUNCT = ".,;:!?)]}"
@@ -841,11 +841,11 @@ def _compute_dom_metrics(snap: Any, dom_text: str) -> dict[str, Any]:
     }
 
 
-# v0.12.11: shared blocked-site policy. Previous prompt variants repeated
-# this guidance with slightly different wording: one place pushed
-# web_search, another warned snippets were insufficient, and validation
-# could force a fresh web_search while finalizing. Keep the policy short
-# and budgeted so blocked tasks stop burning search-loop steps.
+# v0.12.11: shared blocked-site policy. v0.12.12 keeps the budget but
+# restores the useful eval behavior from earlier prompts: public,
+# non-live facts may be answered from visible search-result evidence
+# when the target site is blocked. Live/current/transactional data still
+# needs target-site evidence.
 BLOCKED_SITE_POLICY = """\
 If the target page returns 403, access denied, Cloudflare/Turnstile, CAPTCHA,
 login wall, paywall, or a browser error page, do not retry the same blocked
@@ -855,10 +855,12 @@ the page as blocked.
 Use at most three recovery moves total: one targeted `web_search(query=...)`,
 one same-site fallback URL (mobile, AMP, RSS, sitemap, or a direct same-site
 section/page), and one read/extract from any reachable same-site evidence.
-For tasks that explicitly require the target site's own search, filter, list,
-locator, or page, external search is only discovery/corroboration; snippets
-alone cannot justify `success=true`. If same-site evidence remains inaccessible
-after the budget, call `done(..., success=false)` and state the blocker."""
+Prefer same-site evidence. If all target-site variants are blocked, a single
+visible search-results page may be enough for public, non-live facts when the
+result title/snippet/URL directly shows the requested answer. For live/current
+data, prices, availability, bookings, account-gated pages, locators, or actions
+that must be performed on the site, snippets are too stale or indirect; call
+`done(..., success=false)` if same-site evidence remains inaccessible."""
 
 
 # Flash-mode prompt — terse variant matching upstream's
@@ -1162,15 +1164,17 @@ _VALIDATION_CHECKLIST = (
     "'I was unable to', 'blocked', '403', 'forbidden', 'CAPTCHA', "
     "'login required', 'sign-in required', 'Cloudflare', or 'unable to "
     "retrieve' for the target site AND you did NOT successfully retrieve "
-    "the answer via observed same-site evidence, you MUST set "
-    "success=False on done. Search snippets may help discover same-site "
-    "pages, but snippets alone are not enough for site-required tasks. "
+    "the answer via observed same-site evidence or exact visible "
+    "search-result evidence for a public non-live fact, you MUST set "
+    "success=False on done. Snippets are not enough for live/current "
+    "data, prices, availability, bookings, account-gated pages, locators, "
+    "or site actions. "
     "Do NOT paraphrase typical/likely content as "
     "if you had retrieved it from the live site — the judge rejects "
     "confidently-wrong fabricated answers harder than honest \"I was "
     "blocked\" answers. Do not start a fresh external search only because "
     "you are finalizing; use one remaining budgeted fallback only if it "
-    "can still produce same-site evidence.\n"
+    "can still produce same-site evidence or exact public-result evidence.\n"
 )
 
 _VALIDATION_PROMPT_TEXT = (
@@ -2270,8 +2274,10 @@ class Agent:
                         f"{len(self._recent_blocked_state_reasons)} recent "
                         f"states are bot/CAPTCHA/error/challenge pages "
                         f"({examples}). The fallback budget is nearly used; "
-                        f"try one same-site evidence path or finish "
-                        f"success=false."
+                        f"try one same-site evidence path. If the exact "
+                        f"answer is visible in public search results and "
+                        f"the task is not live/current/transactional, finish "
+                        f"from that evidence; otherwise finish success=false."
                     )
                     self._messages.append(UserMessage(content=nudge))
                     logger.info(
@@ -2372,8 +2378,9 @@ class Agent:
                                 f"search engines {fallback_count}/"
                                 f"{len(self._recent_search_fallback_hosts)} "
                                 f"recent states ({examples}). Use one "
-                                "same-site evidence path now; snippets alone "
-                                "cannot be success=true."
+                                "same-site evidence path now, or finish from "
+                                "visible search-result evidence only when it "
+                                "directly answers a public non-live fact."
                             )
                         )
                     )
@@ -6758,6 +6765,53 @@ _EXPLICIT_EXTERNAL_EVIDENCE_PHRASES = (
     "mass511",
     "local traffic reports",
 )
+_BOUNDED_EXTERNAL_RESULT_PHRASES = (
+    "visible search result",
+    "visible search results",
+    "search result",
+    "search results",
+    "result snippet",
+    "result snippets",
+    "search snippet",
+    "search snippets",
+    "duckduckgo",
+    "google",
+    "bing",
+)
+_UNSAFE_EXTERNAL_RESULT_TASK_PHRASES = (
+    "account",
+    "availability",
+    "available",
+    "book ",
+    "booking",
+    "buy ",
+    "cart",
+    "checkout",
+    "current ",
+    "currently ",
+    "departing",
+    "fare",
+    "flight",
+    "in stock",
+    "latest",
+    "live ",
+    "locator",
+    "login",
+    "most recent",
+    "nearest",
+    "newest",
+    "next ",
+    "pickup",
+    "price",
+    "prices",
+    "schedule",
+    "sign in",
+    "store locator",
+    "today",
+    "tomorrow",
+    "trending",
+    "upcoming",
+)
 _SEARCH_OR_FALLBACK_FINAL_HOSTS = (
     "duckduckgo.com",
     "google.com",
@@ -6848,6 +6902,69 @@ def _looks_like_site_required_external_answer(task: str, text: str) -> bool:
             r"(?:blocked|restricted|inaccessible|unavailable|failed|denied)",
             s,
         )
+    )
+
+
+def _looks_like_bounded_external_result_answer(
+    task: str,
+    text: str,
+    final_url: str | None = None,
+) -> bool:
+    """Allow blocked-site fallback answers from exact public result cards.
+
+    This is intentionally narrower than `_looks_like_site_required_external_answer`.
+    It only suppresses the unsupported-answer downgrade when the task is a
+    static public lookup and the answer is visibly grounded in one bounded
+    search-results page. Current/live/transactional tasks still require
+    same-site evidence because snippets are stale or indirect there.
+    """
+    if not task or not text or len(text) < 40:
+        return False
+    task_lc = task.lower()
+    if "website:" not in task_lc:
+        return False
+    if not any(phrase in task_lc for phrase in _WRONG_HOST_TASK_PHRASES):
+        return False
+    if any(phrase in task_lc for phrase in _UNSAFE_EXTERNAL_RESULT_TASK_PHRASES):
+        return False
+
+    s = text.lower()
+    if re.search(
+        r"\b(?:unable to complete|cannot complete|could not complete|"
+        r"no usable findings|no source-backed|could not retrieve any)\b",
+        s[:260],
+    ):
+        return False
+
+    host = _host_from_url_or_host(final_url or "")
+    on_search_host = any(
+        host == known or host.endswith("." + known)
+        for known in _SEARCH_OR_FALLBACK_FINAL_HOSTS
+    )
+    if (
+        host
+        and not on_search_host
+        and not _host_matches(host, _target_host_from_task(task))
+    ):
+        return False
+    mentions_result_evidence = any(
+        phrase in s for phrase in _BOUNDED_EXTERNAL_RESULT_PHRASES
+    )
+    if not on_search_host and not mentions_result_evidence:
+        return False
+
+    # Require at least some concrete payload rather than a generic "try
+    # searching" answer. This keeps explicit blocked/failure finals in
+    # the honest failure bucket.
+    if _answer_result_lines(text):
+        return True
+    return bool(
+        re.search(r"['\"][^'\"]{6,}['\"]", text)
+        or re.search(
+            r"\b\d{1,4}(?:[.,]\d+)?(?:%|\s?(?:stars?|days?|hours?))?\b",
+            s,
+        )
+        or re.search(r"\b(?:title|author|date|rating|score|policy|section):", s)
     )
 
 
@@ -8355,13 +8472,27 @@ def _looks_like_unsupported_final_answer(
     text: str,
     final_url: str | None = None,
 ) -> bool:
+    bounded_external_result = _looks_like_bounded_external_result_answer(
+        task,
+        text,
+        final_url,
+    )
     return (
         _looks_like_fabricated_blocked_answer(text)
-        or _looks_like_site_required_external_answer(task, text)
+        or (
+            not bounded_external_result
+            and _looks_like_site_required_external_answer(task, text)
+        )
         or _looks_like_unmet_requested_data_answer(task, text)
         or _looks_like_search_result_query_mismatch_answer(task, text)
-        or _looks_like_wrong_host_final(task, final_url)
-        or _looks_like_search_host_final(task, final_url)
+        or (
+            not bounded_external_result
+            and _looks_like_wrong_host_final(task, final_url)
+        )
+        or (
+            not bounded_external_result
+            and _looks_like_search_host_final(task, final_url)
+        )
         or _looks_like_late_pagination_final(task, final_url)
         or _looks_like_item_detail_list_final(task, final_url)
         or _looks_like_epa_aqs_airnow_answer(task, text, final_url)

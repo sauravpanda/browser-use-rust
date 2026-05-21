@@ -13,8 +13,14 @@ from browser_use_rs._extra_tools import _SEARCH_CHALLENGE_CACHE, web_search  # n
 from browser_use_rs.agent import (  # noqa: E402
     Agent,
     BLOCKED_SITE_POLICY,
+    BLOCKED_STATE_FORCE_COUNT,
+    BLOCKED_STATE_FORCE_MIN_STEP,
+    BLOCKED_STATE_WINDOW,
     DEFAULT_SYSTEM_PROMPT,
     FLASH_SYSTEM_PROMPT,
+    SEARCH_FALLBACK_FORCE_COUNT,
+    SEARCH_FALLBACK_FORCE_MIN_STEP,
+    SEARCH_FALLBACK_WINDOW,
     BrowserStateSummary,
 )
 
@@ -81,9 +87,10 @@ class BlockedSearchGuardTests(unittest.TestCase):
     def test_blocked_site_policy_is_shared_and_budgeted(self):
         self.assertIn("at most three recovery moves", BLOCKED_SITE_POLICY)
         self.assertIn(
-            "snippets\nalone cannot justify `success=true`",
+            "public, non-live facts",
             BLOCKED_SITE_POLICY,
         )
+        self.assertIn("live/current", BLOCKED_SITE_POLICY)
         self.assertEqual(
             DEFAULT_SYSTEM_PROMPT.count("at most three recovery moves"),
             1,
@@ -92,6 +99,14 @@ class BlockedSearchGuardTests(unittest.TestCase):
             FLASH_SYSTEM_PROMPT.count("at most three recovery moves"),
             1,
         )
+
+    def test_blocked_loop_thresholds_match_softened_eval_budget(self):
+        self.assertEqual(BLOCKED_STATE_WINDOW, 8)
+        self.assertEqual(BLOCKED_STATE_FORCE_COUNT, 5)
+        self.assertEqual(BLOCKED_STATE_FORCE_MIN_STEP, 15)
+        self.assertEqual(SEARCH_FALLBACK_WINDOW, 8)
+        self.assertEqual(SEARCH_FALLBACK_FORCE_COUNT, 6)
+        self.assertEqual(SEARCH_FALLBACK_FORCE_MIN_STEP, 20)
 
     def test_web_search_skips_engine_after_prior_challenge(self):
         class Session:
