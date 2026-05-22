@@ -1121,60 +1121,17 @@ def _is_page_state_reuse_marker(msg: Message) -> bool:
 # finishing mechanism on the validated turn.
 
 _VALIDATION_CHECKLIST = (
-    "Before committing, you MUST verify your answer against the ORIGINAL "
-    "TASK and the LATEST PAGE SNAPSHOT shown above. This is not optional.\n"
-    "\n"
-    "STEP 1 — Evidence quoting (mandatory).\n"
-    "For EACH fact in your answer (numbers, dates, names, titles, counts, "
-    "ratings, statuses, etc.), find the literal text on the latest page "
-    "snapshot that supports it. State the quote in your reasoning, like:\n"
-    "  - claim \"Walmart Inc rated B\" ← quote: \"Walmart Inc | Rating: B\"\n"
-    "  - claim \"3 featured playlists: Bubble, ASMR, Queer culture\" ← "
-    "quotes: \"Bubble\", \"ASMR\", \"Queer culture\" each appear under "
-    "Featured Playlists.\n"
-    "If you cannot find a literal quote for ANY claim, you do NOT have "
-    "evidence — you must either:\n"
-    "  (a) call extract_structured_data / page_text / get_text NOW to "
-    "fetch fresh evidence from the right page, OR\n"
-    "  (b) remove or hedge the unsupported claim from your answer.\n"
-    "Do NOT proceed to STEP 2 until every claim has a quote or a fix.\n"
-    "\n"
-    "STEP 2 — Completeness and exactness.\n"
-    "  • Did you answer EVERY part of the task? (title AND date AND price "
-    "means all three.)\n"
-    "  • Are quantities and orderings correct? (first 3 vs latest 3 vs "
-    "most popular 3 are different things — re-read the task wording.)\n"
-    "  • Are names, numbers, dates formatted EXACTLY as they appear in "
-    "your quotes? Don't paraphrase, don't round, don't translate.\n"
-    "\n"
-    "STEP 3 — Right-page check.\n"
-    "The URL/section in your evidence MUST match what the task asks for. "
-    "If the task asks about product X but your quotes come from product "
-    "Y's page, your answer is wrong even if it's well-formed. Common "
-    "trap: clicking the first search result without verifying it's the "
-    "right entity. If the task required the target site's own search, "
-    "filters, locator, list, or page, search-engine snippets alone are "
-    "not right-page evidence; use them only to reach same-site evidence "
-    "or finish with success=False. Before calling done(), verify the "
-    "current URL is still on the requested website or a same-site "
-    "subdomain; an unrelated host is not target-site evidence.\n"
-    "\n"
-    "STEP 4 — Honest success flag (CRITICAL).\n"
-    "If your reasoning or answer mentions ANY of: 'I cannot access', "
-    "'I was unable to', 'blocked', '403', 'forbidden', 'CAPTCHA', "
-    "'login required', 'sign-in required', 'Cloudflare', or 'unable to "
-    "retrieve' for the target site AND you did NOT successfully retrieve "
-    "the answer via observed same-site evidence or exact visible "
-    "search-result evidence for a public non-live fact, you MUST set "
-    "success=False on done. Snippets are not enough for live/current "
-    "data, prices, availability, bookings, account-gated pages, locators, "
-    "or site actions. "
-    "Do NOT paraphrase typical/likely content as "
-    "if you had retrieved it from the live site — the judge rejects "
-    "confidently-wrong fabricated answers harder than honest \"I was "
-    "blocked\" answers. Do not start a fresh external search only because "
-    "you are finalizing; use one remaining budgeted fallback only if it "
-    "can still produce same-site evidence or exact public-result evidence.\n"
+    "Do a short final check against the ORIGINAL TASK and the latest "
+    "page/tool evidence.\n"
+    "1. Verify the requested site, section, search/filter/sort, order, "
+    "and item count exactly match the task.\n"
+    "2. Verify names, titles, dates, prices, ratings, scores, addresses, "
+    "and counts are copied from observed evidence, not memory or guesses.\n"
+    "3. If evidence is missing or the page is wrong, call one tool now "
+    "(extract_structured_data, page_text/get_text, navigate, scroll, or "
+    "find_elements) to fix it. If the target site is blocked, use exact "
+    "public non-live result evidence only when it directly answers the "
+    "task; otherwise finish with success=False.\n"
 )
 
 _VALIDATION_PROMPT_TEXT = (
@@ -1265,11 +1222,13 @@ class Agent:
         llm_timeout: float = 180.0,
         # Self-validation: when True, inject a one-shot
         # "re-check before finalizing" prompt the first time the LLM
-        # tries to finish. Kept as an opt-in guard, but default OFF in
-        # v0.12.13: L2 traces showed 100/198 tasks doing a redundant
-        # done -> validation -> done sequence. Targeted recovery nudges
-        # and count checks still run without global self-validation.
-        self_validate: bool = False,
+        # tries to finish. v0.12.14 defaults it back ON but validates
+        # only high-risk finals by default; v0.12.13 showed fully
+        # disabling validation saved cost but lost too much accuracy.
+        self_validate: bool = True,
+        # When True, validation is skipped for low-risk static answers.
+        # Set to False to force the old validate-every-final behavior.
+        self_validate_risk_only: bool = True,
         # Skip self-validation only on tasks finished in <= 2 steps —
         # the trivially-quick "navigate + done" cases that genuinely
         # can't be wrong. v0.4.16 had this at 5 which skipped legitimate
@@ -1475,6 +1434,7 @@ class Agent:
         self.tool_timeout = tool_timeout
         self.llm_timeout = llm_timeout
         self.self_validate = self_validate
+        self.self_validate_risk_only = self_validate_risk_only
         self.self_validate_min_steps = self_validate_min_steps
         self.scratchpad_enabled = scratchpad_enabled
         self.scratchpad_max_bytes = scratchpad_max_bytes
@@ -2691,6 +2651,11 @@ class Agent:
                     candidate_done_text,
                     state_summary.url,
                 )
+                validation_risk_reason = _final_answer_validation_risk_reason(
+                    self.task,
+                    candidate_done_text,
+                    state_summary.url,
+                )
                 recovery_nudge = _final_answer_recovery_nudge(
                     self.task,
                     candidate_done_text,
@@ -2775,6 +2740,10 @@ class Agent:
                     and not proposed_failure_answer
                     and step_n < max_steps  # don't validate on the very last step
                     and step_n >= self.self_validate_min_steps  # skip on short tasks
+                    and (
+                        not self.self_validate_risk_only
+                        or bool(validation_risk_reason)
+                    )
                     and not _telegraph_brexit_answer_has_five_relevant_titles(
                         self.task, done_text
                     )
@@ -2787,8 +2756,10 @@ class Agent:
                 ):
                     logger.info(
                         "agent: VALIDATION_CHECK injected before "
-                        "finalizing answer (step %d, answer_len=%d)",
+                        "finalizing answer (step %d, answer_len=%d, "
+                        "risk=%s)",
                         step_n, len(done_text),
+                        validation_risk_reason or "forced",
                     )
                     self._validation_step_used = True
                     # Echo the proposed answer so the LLM sees what it
@@ -3071,6 +3042,15 @@ class Agent:
                     )
                 except Exception:
                     done_count_check = None
+            done_validation_risk_reason = (
+                _final_answer_validation_risk_reason(
+                    self.task,
+                    done_result.extracted_content or "",
+                    state_summary.url,
+                )
+                if done_result is not None
+                else ""
+            )
 
             if done_result is not None:
                 # Replace the parsed-out tool result with the done flag set
@@ -3139,6 +3119,10 @@ class Agent:
                     and bool(done_result.success)
                     and step_n < max_steps
                     and step_n >= self.self_validate_min_steps
+                    and (
+                        not self.self_validate_risk_only
+                        or bool(done_validation_risk_reason)
+                    )
                     and not _telegraph_brexit_answer_has_five_relevant_titles(
                         self.task, done_result.extracted_content or ""
                     )
@@ -3152,8 +3136,9 @@ class Agent:
                     logger.info(
                         "agent: VALIDATION_CHECK injected before "
                         "finalizing structured-output answer "
-                        "(step %d, payload_len=%d)",
+                        "(step %d, payload_len=%d, risk=%s)",
                         step_n, len(done_result.extracted_content or ""),
+                        done_validation_risk_reason or "forced",
                     )
                     self._validation_step_used = True
                     self._messages.append(
@@ -6809,6 +6794,47 @@ _UNSAFE_EXTERNAL_RESULT_TASK_PHRASES = (
     "trending",
     "upcoming",
 )
+_VALIDATION_TASK_RISK_PHRASES = (
+    "advanced search",
+    "availability",
+    "available",
+    "current ",
+    "date",
+    "dates",
+    "departing",
+    "fare",
+    "filter",
+    "filters",
+    "first ",
+    "latest",
+    "live ",
+    "locator",
+    "most recent",
+    "newest",
+    "next ",
+    "price",
+    "prices",
+    "search bar",
+    "sort",
+    "top ",
+    "trending",
+    "upcoming",
+    "use the search",
+)
+_VALIDATION_ANSWER_RISK_PHRASES = (
+    "according to search results",
+    "based on search results",
+    "blocked",
+    "captcha",
+    "cloudflare",
+    "could not access",
+    "duckduckgo",
+    "google",
+    "search result",
+    "search-results",
+    "snippet",
+    "unable to access",
+)
 _SEARCH_OR_FALLBACK_FINAL_HOSTS = (
     "duckduckgo.com",
     "google.com",
@@ -6963,6 +6989,36 @@ def _looks_like_bounded_external_result_answer(
         )
         or re.search(r"\b(?:title|author|date|rating|score|policy|section):", s)
     )
+
+
+def _final_answer_validation_risk_reason(
+    task: str,
+    text: str,
+    final_url: str | None = None,
+) -> str:
+    """Return why a proposed final answer deserves one validation turn."""
+    if not task or not text:
+        return ""
+    task_lc = task.lower()
+    answer_lc = text.lower()
+    if _looks_like_bounded_external_result_answer(task, text, final_url):
+        return "external_result_evidence"
+    if _looks_like_search_host_final(task, final_url):
+        return "search_host_final"
+    if any(phrase in answer_lc for phrase in _VALIDATION_ANSWER_RISK_PHRASES):
+        return "blocked_or_external_answer"
+    if _task_requests_multiple_result_items(task_lc):
+        return "multi_item_task"
+    if any(phrase in task_lc for phrase in _VALIDATION_TASK_RISK_PHRASES):
+        return "site_task_detail"
+    if re.search(
+        r"\b(?:\d+|two|three|four|five|six|seven|eight|nine|ten)\s+"
+        r"(?:items?|titles?|articles?|products?|results?|stores?|"
+        r"facilities?|headlines?|videos?|questions?|answers?)\b",
+        task_lc,
+    ):
+        return "counted_items"
+    return ""
 
 
 def _host_from_url_or_host(value: str) -> str:
