@@ -58,6 +58,18 @@ class DoneToolListLLM(BaseChatModel):
         )
 
 
+class PlainTextFinalLLM(BaseChatModel):
+    name = "plain-text-final"
+    model = "plain-text-final"
+
+    def __init__(self):
+        self.calls = 0
+
+    async def ainvoke(self, messages, tools, *, system=None):
+        self.calls += 1
+        return ChatInvokeCompletion(text="Return policy: 90 days.")
+
+
 class Snapshot:
     elements = []
 
@@ -159,6 +171,42 @@ class DoneCountHelperTests(unittest.TestCase):
         self.assertFalse(history.history[0].result[0].is_done)
         self.assertIn("Gamma Article", history.final_result())
         self.assertTrue(agent._done_count_check_fired)
+
+    def test_default_final_path_skips_global_self_validation(self):
+        llm = PlainTextFinalLLM()
+        agent = Agent(
+            "Summarize the return policy. website: https://example.com",
+            llm,
+            browser_session=Session(),
+            max_steps=3,
+            auto_initial_navigation=False,
+        )
+
+        history = asyncio.run(agent.run())
+
+        self.assertEqual(llm.calls, 1)
+        self.assertIn("90 days", history.final_result())
+        self.assertTrue(history.is_done())
+        self.assertFalse(agent.self_validate)
+
+    def test_explicit_self_validation_still_requires_confirmation_turn(self):
+        llm = PlainTextFinalLLM()
+        agent = Agent(
+            "Summarize the return policy. website: https://example.com",
+            llm,
+            browser_session=Session(),
+            max_steps=3,
+            self_validate=True,
+            self_validate_min_steps=0,
+            auto_initial_navigation=False,
+        )
+
+        history = asyncio.run(agent.run())
+
+        self.assertEqual(llm.calls, 2)
+        self.assertFalse(history.history[0].result[0].is_done)
+        self.assertIn("90 days", history.final_result())
+        self.assertTrue(agent._validation_step_used)
 
     def test_done_marker_path_uses_count_check_before_committing(self):
         llm = DoneToolListLLM()

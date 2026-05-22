@@ -1265,14 +1265,11 @@ class Agent:
         llm_timeout: float = 180.0,
         # Self-validation: when True, inject a one-shot
         # "re-check before finalizing" prompt the first time the LLM
-        # tries to finish. v0.4.15 default ON; flipped OFF in v0.4.19
-        # based on a (later disproven) measurement. v0.4.15 still holds
-        # the judge-score peak of all our versions (59% vs 53% on the
-        # later versions that have it OFF), and the diff is exactly the
-        # 6pp regression v0.4.16+ introduced. Re-enabled by default in
-        # v0.5.3. Consumers can still opt out if their use case shows
-        # a different trade-off.
-        self_validate: bool = True,
+        # tries to finish. Kept as an opt-in guard, but default OFF in
+        # v0.12.13: L2 traces showed 100/198 tasks doing a redundant
+        # done -> validation -> done sequence. Targeted recovery nudges
+        # and count checks still run without global self-validation.
+        self_validate: bool = False,
         # Skip self-validation only on tasks finished in <= 2 steps —
         # the trivially-quick "navigate + done" cases that genuinely
         # can't be wrong. v0.4.16 had this at 5 which skipped legitimate
