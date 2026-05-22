@@ -13,6 +13,7 @@ from browser_use_rs.agent import (  # noqa: E402
     _bbc_goodfood_alias_recovery_nudge,
     _direct_section_url_for_consent_recovery,
     _final_answer_recovery_nudge,
+    _final_answer_validation_risk_reason,
     _looks_like_bbc_goodfood_broad_free_from_answer,
     _looks_like_bbc_goodfood_generic_substitution_answer,
     _looks_like_fabricated_blocked_answer,
@@ -99,6 +100,24 @@ class FinalAnswerGuardTests(unittest.TestCase):
         )
 
         self.assertTrue(_looks_like_site_required_external_answer(task, answer))
+
+    def test_final_validation_risk_targets_high_risk_tasks(self):
+        self.assertEqual(
+            _final_answer_validation_risk_reason(
+                "List the top 3 latest articles. website: https://example.com",
+                "1. Alpha\n2. Beta\n3. Gamma",
+                "https://example.com/search?q=latest",
+            ),
+            "multi_item_task",
+        )
+        self.assertEqual(
+            _final_answer_validation_risk_reason(
+                "Summarize the return policy. website: https://example.com",
+                "Returns are accepted within 90 days.",
+                "https://example.com/returns",
+            ),
+            "",
+        )
 
     def test_bounded_external_result_final_can_pass_static_public_task(self):
         task = (
