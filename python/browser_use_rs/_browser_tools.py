@@ -687,12 +687,6 @@ def _alias(target_tool, alias_name):
     import copy
     new = copy.copy(target_tool)
     new.name = alias_name
-    # v0.12.15: aliases stay dispatchable for compatibility, but the
-    # default Agent no longer advertises them as separate LLM function
-    # declarations. The model can call the canonical tool names; keeping
-    # duplicate alias schemas in Gemini's cached prefix cost ~10KB every
-    # step on WebBench_READ_v5.
-    new.expose_to_llm = False
     return new
 
 

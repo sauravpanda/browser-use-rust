@@ -1302,7 +1302,6 @@ class Agent:
         override_system_message: str | None = None,
         initial_actions: list[dict] | None = None,
         auto_initial_navigation: bool = True,
-        expose_tool_aliases: bool = False,
         register_new_step_callback: StepStartCallback | None = None,
         register_done_callback: DoneCallback | None = None,
         register_should_stop_callback: ShouldStopCallback | None = None,
@@ -1408,8 +1407,6 @@ class Agent:
                 tools.append(t)
         self.tools = tools
         self.tools_by_name: dict[str, Tool] = {t.name: t for t in tools}
-        self.expose_tool_aliases = bool(expose_tool_aliases)
-        self.llm_tools: list[Tool] = self._build_llm_tools(tools)
         # Alias-aware guard sets (v0.7.2). Resolve every tool name +
         # registered alias to its canonical name via ALIAS_TO_CANONICAL,
         # then include in the guard set if the canonical is in the
@@ -1793,23 +1790,6 @@ class Agent:
         # browser_use's API. Consumer code (evaluations-internal) reads
         # this for diagnostics; we just expose the live message buffer.
         self.message_manager = _MessageManagerView(self)
-
-    def _build_llm_tools(self, tools: list[Tool]) -> list[Tool]:
-        """Return the tool declarations advertised to the LLM.
-
-        Runtime dispatch keeps every tool in `self.tools_by_name`,
-        including upstream compatibility aliases. By default we hide
-        alias declarations from the model because they duplicate the
-        canonical schema and inflate Gemini's cached prefix on every
-        step. Callers that need the old full surface can pass
-        `expose_tool_aliases=True`.
-        """
-        if self.expose_tool_aliases:
-            return list(tools)
-        return [
-            t for t in tools
-            if getattr(t, "expose_to_llm", True) is not False
-        ]
 
     @property
     def last_input_messages(self) -> list[Message]:
@@ -2542,7 +2522,7 @@ class Agent:
                 completion = await asyncio.wait_for(
                     self.llm.ainvoke(
                         self._messages,
-                        self.llm_tools,
+                        self.tools,
                         system=self.system_prompt,
                     ),
                     timeout=self.llm_timeout,
@@ -2649,7 +2629,7 @@ class Agent:
                                 "not call a tool and did not provide a "
                                 "final answer. Continue the task from the "
                                 "current page. If you need the typed query "
-                                "submitted, call `send_keys(keys=\"Enter\")` "
+                                "submitted, call `press_keys(keys=\"Enter\")` "
                                 "or click the visible search button. If the "
                                 "task is complete, call `done(...)` with a "
                                 "non-empty answer."
@@ -3369,7 +3349,7 @@ class Agent:
             self._messages.append(UserMessage(content=prompt))
             completion = await asyncio.wait_for(
                 self.llm.ainvoke(
-                    self._messages, self.llm_tools,
+                    self._messages, self.tools,
                     system=self.system_prompt,
                 ),
                 timeout=self.tool_timeout,
@@ -6481,7 +6461,7 @@ class Agent:
         otherwise hash drift is a false positive.
         """
         sig: list[dict[str, Any]] = []
-        for tool in getattr(self, "llm_tools", self.tools):
+        for tool in self.tools:
             entry: dict[str, Any] = {"name": getattr(tool, "name", None)}
             for attr in ("description", "parameters", "input_schema"):
                 if hasattr(tool, attr):

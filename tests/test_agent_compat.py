@@ -8,7 +8,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python"))
 
 from browser_use_rs.agent import Agent  # noqa: E402
-from browser_use_rs._browser_tools import ALIAS_TO_CANONICAL  # noqa: E402
 from browser_use_rs.llm.base import BaseChatModel, ChatInvokeCompletion  # noqa: E402
 from browser_use_rs.tools import tool  # noqa: E402
 
@@ -104,41 +103,6 @@ class AgentCompatTests(unittest.TestCase):
         self.assertEqual("high", llm.media_resolution)
         self.assertEqual("high", agent.vision_detail_level)
         self.assertEqual(0, agent.images_per_step)
-
-    def test_default_llm_tool_schema_hides_aliases_but_keeps_dispatch(self):
-        agent = Agent(
-            "check tool aliases",
-            DummyLLM(),
-            browser_session=object(),
-            auto_initial_navigation=False,
-        )
-
-        llm_tool_names = {tool.name for tool in agent.llm_tools}
-        dispatch_tool_names = set(agent.tools_by_name)
-        alias_names = {
-            name for name, canonical in ALIAS_TO_CANONICAL.items()
-            if name != canonical
-        }
-
-        self.assertIn("input_text", dispatch_tool_names)
-        self.assertIn("press_keys", dispatch_tool_names)
-        self.assertIn("type_text", llm_tool_names)
-        self.assertIn("send_keys", llm_tool_names)
-        self.assertFalse(alias_names & llm_tool_names)
-
-    def test_expose_tool_aliases_restores_full_llm_schema(self):
-        agent = Agent(
-            "check tool aliases",
-            DummyLLM(),
-            browser_session=object(),
-            auto_initial_navigation=False,
-            expose_tool_aliases=True,
-        )
-
-        llm_tool_names = {tool.name for tool in agent.llm_tools}
-
-        self.assertIn("input_text", llm_tool_names)
-        self.assertIn("press_keys", llm_tool_names)
 
 
 if __name__ == "__main__":
