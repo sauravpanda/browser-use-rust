@@ -1190,10 +1190,41 @@ impl BrowserSession {
     pub async fn page_text(&self, max_chars: usize) -> Result<String> {
         let sid = self.session_id().await;
         let cap = if max_chars == 0 { 10_000 } else { max_chars };
+        // v0.12.21: body.innerText alone is blind to shadow roots and
+        // same-origin iframes — on the shadow/iframe challenge pages the
+        // agent filled and submitted correctly but page_text returned
+        // ~250 chars of chrome, so it could never SEE the success state
+        // and reported failure. Compose text across frames and open
+        // shadow roots (styles/scripts skipped; slot-projected text may
+        // appear twice, which is acceptable over invisibility).
         let script = format!(
             r#"(() => {{
-                const t = (document.body && (document.body.innerText || document.body.textContent)) || "";
-                return t.trim().slice(0, {cap});
+                const parts = [];
+                const pushShadow = (sr) => {{
+                    for (const child of sr.children) {{
+                        if (/^(STYLE|SCRIPT|NOSCRIPT|TEMPLATE)$/.test(child.tagName)) continue;
+                        const t = child.innerText;
+                        if (t && t.trim()) parts.push(t.trim());
+                    }}
+                    for (const host of sr.querySelectorAll('*')) {{
+                        if (host.shadowRoot) pushShadow(host.shadowRoot);
+                    }}
+                    for (const f of sr.querySelectorAll('iframe')) {{
+                        try {{ if (f.contentDocument) pushDoc(f.contentDocument); }} catch (e) {{}}
+                    }}
+                }};
+                const pushDoc = (doc) => {{
+                    const t = doc.body && (doc.body.innerText || doc.body.textContent);
+                    if (t && t.trim()) parts.push(t.trim());
+                    for (const host of doc.querySelectorAll('*')) {{
+                        if (host.shadowRoot) pushShadow(host.shadowRoot);
+                    }}
+                    for (const f of doc.querySelectorAll('iframe')) {{
+                        try {{ if (f.contentDocument) pushDoc(f.contentDocument); }} catch (e) {{}}
+                    }}
+                }};
+                pushDoc(document);
+                return parts.join('\n').trim().slice(0, {cap});
             }})()"#
         );
         let r = self
