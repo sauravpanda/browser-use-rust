@@ -13,32 +13,21 @@ from browser_use_rs.views import ActionResult, BrowserStateSummary  # noqa: E402
 
 
 class BatchGuardHandlingTests(unittest.TestCase):
-    def _agent_with_runner(self, runner, urls=None):
+    def _agent_with_runner(self, runner):
         class Session:
-            def __init__(self):
-                self._urls = list(urls or [])
-
             async def current_url(self):
-                if len(self._urls) > 1:
-                    return self._urls.pop(0)
-                return self._urls[0] if self._urls else "https://example.com/page"
+                return "https://example.com/page"
 
         agent = object.__new__(Agent)
         agent.session = Session()
-        agent._READ_ONLY_TOOLS = frozenset({"get_text"})
+        agent._READ_ONLY_TOOLS = frozenset()
         agent._INDEXED_TOOLS = frozenset({"click"})
         agent._indices_invalidated = False
         agent._run_tool = runner
         return agent
 
-    def test_same_page_indexed_batch_executes_fully(self):
-        # v0.12.19: the indexed-after-mutation guard is retired. A
-        # same-page [type_text, click] style batch runs to completion;
-        # stale indices are handled downstream by selector retargeting.
-        ran = []
-
+    def test_guard_skip_after_successful_mutation_is_non_error_feedback(self):
         async def runner(tc):
-            ran.append(tc.id)
             return (
                 ActionResult(extracted_content=f"clicked {tc.args['index']}"),
                 ToolResultMessage(
@@ -56,39 +45,36 @@ class BatchGuardHandlingTests(unittest.TestCase):
 
         results = asyncio.run(agent._run_tools_sequentially(calls))
 
-        self.assertEqual(["a", "b"], ran)
-        self.assertEqual("clicked 2", results[1][0].extracted_content)
-        self.assertTrue(agent._indices_invalidated)
+        skipped_result, skipped_message = results[1]
+        self.assertIsNone(skipped_result.error)
+        self.assertIn("skipped: an earlier action", skipped_result.extracted_content)
+        self.assertLessEqual(len(skipped_result.extracted_content), 180)
+        self.assertFalse(skipped_message.is_error)
 
-    def test_navigation_mid_batch_skips_non_read_remainder(self):
+    def test_guard_skip_after_failed_mutation_stays_error_feedback(self):
         async def runner(tc):
             return (
-                ActionResult(extracted_content=f"ran {tc.name}"),
+                ActionResult(error="click failed"),
                 ToolResultMessage(
-                    tool_call_id=tc.id, name=tc.name, content=f"ran {tc.name}"
+                    tool_call_id=tc.id,
+                    name=tc.name,
+                    content="click failed",
+                    is_error=True,
                 ),
             )
 
-        agent = self._agent_with_runner(
-            runner,
-            urls=["https://example.com/a", "https://example.com/b"],
-        )
+        agent = self._agent_with_runner(runner)
         calls = [
             ToolCall(id="a", name="click", args={"index": 1}),
             ToolCall(id="b", name="click", args={"index": 2}),
-            ToolCall(id="c", name="get_text", args={"selector": "h1"}),
         ]
 
         results = asyncio.run(agent._run_tools_sequentially(calls))
 
-        # Prior action succeeded → the skip stub is non-error feedback.
         skipped_result, skipped_message = results[1]
-        self.assertIsNone(skipped_result.error)
-        self.assertIn("skipped: page navigated", skipped_result.extracted_content)
-        self.assertLessEqual(len(skipped_result.extracted_content), 180)
-        self.assertFalse(skipped_message.is_error)
-        # Read-only calls after the navigation still run.
-        self.assertEqual("ran get_text", results[2][0].extracted_content)
+        self.assertIn("skipped: an earlier action", skipped_result.error)
+        self.assertLessEqual(len(skipped_result.error), 180)
+        self.assertTrue(skipped_message.is_error)
 
     def test_tool_timeout_message_is_bounded(self):
         async def slow_tool(session, **kwargs):
