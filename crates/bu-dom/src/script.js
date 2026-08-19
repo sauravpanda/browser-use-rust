@@ -98,15 +98,42 @@
         if (parseFloat(style.opacity) === 0) return false;
         const r = el.getBoundingClientRect();
         if (r.width < 1 || r.height < 1) return false;
+        // v0.12.21: viewport culling applies to the TOP document only.
+        // Page scroll reveals top-document content, so off-viewport
+        // elements there reappear in the next snapshot; content below
+        // the fold of a same-origin iframe is NOT revealed by page
+        // scroll, and culling it made nested-form fields unreachable
+        // (iframe-inception: 4 of 13 fields indexed). Action dispatch
+        // scrollIntoView()s at click time, so off-screen frame content
+        // is still actionable.
+        if (doc !== document) return true;
         const win = doc.defaultView || window;
         if (r.bottom < 0 || r.top > win.innerHeight) return false;
         if (r.right < 0 || r.left > win.innerWidth) return false;
         return true;
     };
 
+    const FORM_FIELD_TAGS = new Set(['input', 'textarea', 'select']);
+    const isFormField = (el) =>
+        FORM_FIELD_TAGS.has(el.tagName.toLowerCase()) || el.isContentEditable;
+
     const isTopAtCenter = (el, r, doc) => {
         const cx = r.left + r.width / 2;
         const cy = r.top + r.height / 2;
+        // elementFromPoint only answers inside the owner viewport; for
+        // points outside it (sub-frame content kept by the rule above)
+        // occlusion is unknowable here — keep the element.
+        const win = doc.defaultView || window;
+        if (cx < 0 || cy < 0 || cx > win.innerWidth || cy > win.innerHeight) {
+            return doc !== document;
+        }
+        // v0.12.21: form fields are exempt from occlusion culling.
+        // Floating-label kits (Material UI's notched-outline fieldset,
+        // Wufoo-style overlaid labels) legitimately cover the input's
+        // center while the field stays fully focusable — MUI forms
+        // indexed 2 of 7 fields under the old rule. Truly invisible
+        // fields are still dropped by the display/opacity/size checks.
+        if (isFormField(el)) return true;
         const top = doc.elementFromPoint(cx, cy);
         if (!top) return false;
         return top === el || el.contains(top) || top.contains(el);
@@ -297,6 +324,10 @@
 
             if (!intrinsic && !cursorOnly && !isStaticText) continue;
             if (cursorOnly && hasIntrinsicAncestor(el)) continue;
+            // Index only the ROOT of a contenteditable region — every
+            // descendant reports isContentEditable=true and would spam
+            // the snapshot with one index per paragraph. v0.12.21.
+            if (el.isContentEditable && el.parentElement && el.parentElement.isContentEditable) continue;
             if (!isVisibleInOwnerWindow(el, style, doc)) continue;
 
             // Static text path — emit non-interactive content so the
@@ -332,7 +363,17 @@
 
             const text = collectText(el);
             const attrs = collectAttrs(el);
-            if (!text && Object.keys(attrs).length === 0) continue;
+            // v0.12.21: contenteditable editors carry no kept attrs and
+            // usually no text when empty — mark them so the LLM knows
+            // this is a typing target (rich-text forms indexed 0 text
+            // fields without this).
+            if (el.isContentEditable && !FORM_FIELD_TAGS.has(tag)) {
+                attrs['contenteditable'] = 'true';
+            }
+            // Bare form fields (unnamed inputs, empty editors) stay
+            // indexed even with no text and no kept attrs — dropping
+            // them made whole forms unfillable.
+            if (!text && Object.keys(attrs).length === 0 && !isFormField(el)) continue;
             // Tag scrollable containers so the agent knows to scroll
             // INSIDE them (e.g. infinite-scroll product grids, comment
             // threads in modals) rather than scrolling the whole page.

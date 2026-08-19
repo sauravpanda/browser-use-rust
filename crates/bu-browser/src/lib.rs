@@ -885,20 +885,7 @@ impl BrowserSession {
         let sid = self.session_id().await;
         let script = format!(
             r#"(() => {{
-                const findByIdx = (doc) => {{
-                    const el = doc.querySelector('[data-bu-idx="{index}"]');
-                    if (el) return el;
-                    for (const iframe of doc.querySelectorAll('iframe')) {{
-                        try {{
-                            const sub = iframe.contentDocument;
-                            if (sub) {{
-                                const found = findByIdx(sub);
-                                if (found) return found;
-                            }}
-                        }} catch (e) {{}}
-                    }}
-                    return null;
-                }};
+                {finder}
                 const el = findByIdx(document);
                 if (!el) return null;
                 el.scrollIntoView({{block: 'center', behavior: 'instant'}});
@@ -914,7 +901,8 @@ impl BrowserSession {
                     win = win.parent;
                 }}
                 return {{ x: x + r.width / 2, y: y + r.height / 2 }};
-            }})()"#
+            }})()"#,
+            finder = find_by_idx_js(index)
         );
         let r = self
             .conn
@@ -1040,6 +1028,46 @@ impl BrowserSession {
     }
 
     pub async fn type_index(&self, index: u32, text: &str) -> Result<()> {
+        // Date-family inputs ignore trusted `Input.insertText` entirely
+        // (Chrome routes it to the segmented date editor, which drops
+        // free text). Set the value through the native property setter
+        // and fire input/change so frameworks (React et al.) observe
+        // the update. v0.12.21 — the shadow-DOM/date challenge failed
+        // exactly here: "the date field remained unfilled".
+        let probe = format!(
+            "(() => {{ {finder} const el = findByIdx(document); \
+             return el && el.tagName === 'INPUT' ? (el.type || '').toLowerCase() : ''; }})()",
+            finder = find_by_idx_js(index)
+        );
+        let input_type = self.evaluate(&probe).await.unwrap_or_default();
+        if matches!(
+            input_type.as_str(),
+            "date" | "time" | "month" | "week" | "datetime-local"
+        ) {
+            let value_json =
+                serde_json::to_string(text).unwrap_or_else(|_| "\"\"".to_string());
+            let script = format!(
+                "(() => {{ {finder} const el = findByIdx(document); \
+                 if (!el) return 'GONE'; \
+                 el.focus(); \
+                 const desc = Object.getOwnPropertyDescriptor(\
+                     Object.getPrototypeOf(el), 'value') \
+                     || Object.getOwnPropertyDescriptor(\
+                        HTMLInputElement.prototype, 'value'); \
+                 if (desc && desc.set) {{ desc.set.call(el, {value}); }} \
+                 else {{ el.value = {value}; }} \
+                 el.dispatchEvent(new Event('input', {{bubbles: true}})); \
+                 el.dispatchEvent(new Event('change', {{bubbles: true}})); \
+                 return 'OK'; }})()",
+                finder = find_by_idx_js(index),
+                value = value_json
+            );
+            let out = self.evaluate(&script).await?;
+            if out.contains("GONE") {
+                return Err(BrowserError::ElementGone(index));
+            }
+            return Ok(());
+        }
         self.click_index(index).await?;
         tokio::time::sleep(Duration::from_millis(50)).await;
         let sid = self.session_id().await;
@@ -1444,6 +1472,34 @@ fn find_chrome() -> Option<PathBuf> {
 
 
 
+
+/// JS prelude defining `findByIdx(root)`: resolve an element by its
+/// `data-bu-idx` across same-origin iframes AND open shadow roots.
+/// `querySelector` alone cannot see either, which made snapshot-indexed
+/// frame/shadow elements unclickable (v0.12.21).
+fn find_by_idx_js(index: u32) -> String {
+    format!(
+        r#"const findByIdx = (root) => {{
+            const el = root.querySelector('[data-bu-idx="{index}"]');
+            if (el) return el;
+            for (const iframe of root.querySelectorAll('iframe')) {{
+                try {{
+                    const sub = iframe.contentDocument;
+                    if (sub) {{ const f = findByIdx(sub); if (f) return f; }}
+                }} catch (e) {{}}
+            }}
+            for (const host of root.querySelectorAll('*')) {{
+                try {{
+                    if (host.shadowRoot) {{
+                        const f = findByIdx(host.shadowRoot);
+                        if (f) return f;
+                    }}
+                }} catch (e) {{}}
+            }}
+            return null;
+        }};"#
+    )
+}
 
 fn rand_suffix() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
