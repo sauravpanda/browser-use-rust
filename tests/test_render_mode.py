@@ -439,3 +439,44 @@ class ResponsesApiMappingTests(unittest.TestCase):
         self.assertEqual({"type": "function", "name": "done"}, m({"name": "done"}))
         self.assertEqual("required", m("required"))
         self.assertIsNone(m("auto"))
+
+
+class BoundedFinalizationTests(unittest.TestCase):
+    def test_validation_bounce_forces_done_on_next_call(self):
+        # v0.12.22: a validation re-check is bounded to one turn — the
+        # next call may only revise and re-commit via done(...).
+        llm = ScriptedToolChoiceLLM(
+            [
+                ChatInvokeCompletion(
+                    text="The top 3 headlines are: A, B, C"
+                ),
+                ChatInvokeCompletion(
+                    text=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="d1",
+                            name="done",
+                            args={"text": "Top 3: A, B, C", "success": True},
+                        )
+                    ],
+                ),
+            ]
+        )
+        agent = Agent(
+            "List the top 3 headlines on the homepage",
+            llm,
+            tools=[poke],
+            browser_session=object(),
+            auto_initial_navigation=False,
+            self_validate_min_steps=1,
+        )
+        asyncio.run(agent.run())
+
+        self.assertEqual(2, len(llm.calls))
+        self.assertIsNone(llm.calls[0]["tool_choice"])
+        self.assertEqual({"name": "done"}, llm.calls[1]["tool_choice"])
+        # The validation prompt is present on the bounded call.
+        self.assertTrue(
+            any("re-check" in t.lower() or "verify" in t.lower()
+                for t in _texts(llm.calls[1]["messages"]))
+        )

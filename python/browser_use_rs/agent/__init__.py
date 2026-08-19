@@ -2165,6 +2165,7 @@ class Agent:
                     self._messages.append(
                         UserMessage(content=_VALIDATION_PROMPT_TEXT)
                     )
+                    self._force_done_next_call()
                     # Record this step in history so the budget is
                     # accurate (the validation prompt cost a turn).
                     self._append_history(
@@ -2209,6 +2210,7 @@ class Agent:
                         AssistantMessage(text=done_text, tool_calls=[])
                     )
                     self._messages.append(UserMessage(content=count_check))
+                    self._force_done_next_call()
                     self._append_history(
                         state_summary,
                         AgentOutput(text=done_text, tool_calls=[]),
@@ -2506,6 +2508,7 @@ class Agent:
                     )
                     self._done_count_check_fired = True
                     self._messages.append(UserMessage(content=done_count_check))
+                    self._force_done_next_call()
                     continue
 
                 if (
@@ -2539,6 +2542,7 @@ class Agent:
                     self._messages.append(
                         UserMessage(content=_VALIDATION_PROMPT_DONE)
                     )
+                    self._force_done_next_call()
                     # Don't return — continue the loop so the LLM can
                     # respond to the validation prompt.
                     continue
@@ -4749,6 +4753,18 @@ class Agent:
         if self._next_goal:
             parts.append(f"PRIOR_NEXT_GOAL: {self._next_goal}")
         return "<agent_state>\n" + "\n".join(parts) + "\n</agent_state>\n\n"
+
+    def _force_done_next_call(self) -> None:
+        """Bound a finalization re-check to exactly one turn: after a
+        validation or count-check bounce, the next LLM call may only
+        revise and re-commit via done(...). Unbounded re-checks were
+        measured wandering into extra browse steps and occasionally
+        returning a WORSE answer than the bounced one (task 1898:
+        count-check → 3 stale-index steps → wrong records). Recovery
+        nudges are deliberately NOT bounded — they direct the agent to
+        browse somewhere specific. v0.12.22."""
+        if self._llm_supports_tool_choice and "done" in self.tools_by_name:
+            self._pending_tool_choice = {"name": "done"}
 
     def _consume_pending_tool_choice(self) -> str | dict | None:
         """One-shot read of the forced tool_choice for the next main
