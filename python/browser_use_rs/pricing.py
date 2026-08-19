@@ -51,6 +51,10 @@ _MODEL_PRICING: dict[str, tuple[float, float, float]] = {
     "gpt-5-nano": (0.05, 0.40, 0.005),
     "gpt-5.1": (1.25, 10.00, 0.125),
     "gpt-5.2": (1.75, 14.00, 0.175),
+    # Luna pricing per platform.openai.com/docs/pricing (mirrors the
+    # llm_use gateway's table). Without this entry the prefix match
+    # lands on "gpt-5" and overstates cost ~6x.
+    "gpt-5.6-luna": (0.20, 1.20, 0.02),
     "o3-2025-04-16": (10.00, 40.00, 2.50),
     "o4-mini": (1.10, 4.40, 0.275),
     # ----- Anthropic Claude -----
