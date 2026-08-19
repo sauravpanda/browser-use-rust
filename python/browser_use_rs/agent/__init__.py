@@ -5115,24 +5115,26 @@ class Agent:
     async def _run_tools_sequentially(
         self, tool_calls: list[ToolCall]
     ) -> list[tuple[ActionResult, ToolResultMessage]]:
-        """Execute tool calls in order with two staleness guards.
+        """Execute tool calls in order with a navigation staleness guard.
 
-        Mirrors upstream `multi_act` semantics + a fix for the v0.4.15
-        eval failure mode (87 stale-index errors, 11 BATCH_FAILED
-        instances, 9 of them shaped `[type_text, click]`):
+        Mirrors upstream `multi_act` semantics: the LLM plans a batch
+        against one snapshot; if any action navigates (URL change), the
+        remaining non-read calls were planned against a page that no
+        longer exists and are skipped. Read-only calls always run.
 
-        1. URL-change guard. After each call we check the active URL;
-           if it changed and there are more queued calls, we skip the
-           non-readonly remainder (they were planned against the old
-           page).
-        2. **Indexed-after-mutation guard (v0.4.17).** After running any
-           non-read tool, subsequent `[N]`-using calls (click, type_text,
-           upload_file, scroll_to) are skipped with a clear error
-           explaining that typing/clicking/scrolling can mutate the DOM
-           in ways that invalidate the LLM's pre-batch snapshot.
-           Read-only and index-free tools (page_text, get_text, scroll
-           by amount, etc.) are unaffected — `[scroll, scroll, page_text]`
-           batches still work.
+        v0.12.19: the v0.4.17 indexed-after-mutation guard is RETIRED.
+        It skipped every `[N]`-indexed call after ANY mutating action —
+        strictly stricter than upstream, which aborts only on URL/focus
+        change. Measured on WebBench (0.12.18 bakeoff): the guard held
+        the agent to 0.98 actions/step vs upstream's 1.19 (~2.7 extra
+        LLM turns per task) by punishing legitimate same-page batches
+        like `[type_text, click]`. The staleness risk it existed for
+        (v0.4.15's 87 stale-index errors) is now covered downstream:
+        selector retargeting (v0.5.5) transparently re-resolves an index
+        whose element moved, and residual stale-index errors return as
+        recoverable non-error hints. Same-page mutation still flips
+        `_indices_invalidated` so preflight validation defers to that
+        runtime recovery instead of rejecting against the stale set.
 
         Skipped tool_messages MUST still be emitted because the LLM
         provider expects a result for every tool call it issued —
@@ -5150,9 +5152,6 @@ class Agent:
 
         start_url = await _current_url()
         results: list[tuple[ActionResult, ToolResultMessage]] = []
-        # True once any non-read tool has run; gates subsequent indexed
-        # tools regardless of URL change.
-        indices_invalidated = False
 
         for i, tc in enumerate(tool_calls):
             pair = await self._run_tool(tc)
@@ -5160,64 +5159,31 @@ class Agent:
             prior_failed = bool(pair[0].error)
 
             if tc.name not in self._READ_ONLY_TOOLS:
-                indices_invalidated = True
-                # Mirror to instance flag so the next-turn validation in
-                # _run_tool also knows the snapshot is stale (covers
-                # single-action turns and any mid-batch _run_tool calls).
+                # The pre-batch snapshot's [N] set may be stale now;
+                # preflight validation defers to selector retargeting
+                # instead of rejecting against the stale set.
                 self._indices_invalidated = True
 
             if i + 1 >= len(tool_calls):
                 break
 
             cur_url = await _current_url()
-            url_changed = cur_url != start_url
-
-            # Fast path: nothing changed AND no indexed-tool risk.
-            if not url_changed and not indices_invalidated:
+            if cur_url == start_url:
                 continue
 
-            # Need to filter the remaining calls. Read-only always runs;
-            # indexed runs only if neither URL nor DOM-index assumption
-            # was invalidated (which here means: not at all, since we're
-            # in this branch precisely because something was).
+            # Navigation happened: remaining read-only calls still run;
+            # everything else was planned against a dead page and is
+            # skipped with a per-call stub the provider can pair up.
             for skipped in tool_calls[i + 1 :]:
                 if skipped.name in self._READ_ONLY_TOOLS:
                     pair = await self._run_tool(skipped)
                     results.append(pair)
                     continue
-
-                # Non-read tool. URL change kills everything; index
-                # invalidation kills indexed tools specifically.
-                if url_changed:
-                    err = (
-                        "skipped: page navigated mid-batch; re-plan "
-                        "using the next fresh snapshot before indexed "
-                        "[N] tools."
-                    )
-                    is_error = True
-                elif skipped.name in self._INDEXED_TOOLS:
-                    err = (
-                        "skipped: an earlier action in this batch "
-                        "mutated the DOM; wait for the next fresh "
-                        "snapshot before indexed [N] tools. Do not "
-                        "chain type_text -> click."
-                    )
-                    is_error = True
-                    logger.info(
-                        "agent: skipped %s in batch (indices invalidated by "
-                        "earlier mutating action)",
-                        skipped.name,
-                    )
-                else:
-                    # Index-free non-read (e.g. another scroll, navigate,
-                    # sleep). URL didn't change, so we let it run.
-                    pair = await self._run_tool(skipped)
-                    results.append(pair)
-                    if skipped.name not in self._READ_ONLY_TOOLS:
-                        indices_invalidated = True
-                        self._indices_invalidated = True
-                    continue
-
+                err = (
+                    "skipped: page navigated mid-batch; re-plan "
+                    "using the next fresh snapshot before indexed "
+                    "[N] tools."
+                )
                 results.append(
                     (
                         ActionResult(
@@ -5228,7 +5194,7 @@ class Agent:
                             tool_call_id=skipped.id,
                             name=skipped.name,
                             content=err,
-                            is_error=is_error and prior_failed,
+                            is_error=prior_failed,
                         ),
                     )
                 )
