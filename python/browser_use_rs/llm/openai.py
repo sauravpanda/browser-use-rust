@@ -133,6 +133,89 @@ def _to_openai_messages(
     return out
 
 
+def _to_responses_input(messages: list[Message]) -> list[dict]:
+    """Map the normalized history onto the Responses API's input items.
+
+    Assistant tool calls become `function_call` items and tool results
+    become `function_call_output` items (both keyed by call_id). Images
+    inside tool results are surfaced as a follow-up user message, same
+    as the chat-completions mapping above.
+    """
+    import json as _json
+
+    out: list[dict] = []
+    pending_image_parts: list[dict] = []
+
+    def flush_images() -> None:
+        if pending_image_parts:
+            out.append({"role": "user", "content": list(pending_image_parts)})
+            pending_image_parts.clear()
+
+    for msg in messages:
+        if isinstance(msg, SystemMessage):
+            out.append({"role": "system", "content": msg.content})
+        elif isinstance(msg, UserMessage):
+            flush_images()
+            if isinstance(msg.content, str):
+                out.append({"role": "user", "content": msg.content})
+                continue
+            parts: list[dict] = []
+            for p in msg.content:
+                if isinstance(p, TextPart):
+                    parts.append({"type": "input_text", "text": p.text})
+                elif isinstance(p, ImagePart):
+                    parts.append(
+                        {
+                            "type": "input_image",
+                            "image_url": f"data:{p.media_type};base64,{p.data}",
+                        }
+                    )
+            out.append({"role": "user", "content": parts})
+        elif isinstance(msg, AssistantMessage):
+            if msg.text:
+                out.append(
+                    {
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": msg.text}],
+                    }
+                )
+            for tc in msg.tool_calls:
+                out.append(
+                    {
+                        "type": "function_call",
+                        "call_id": tc.id,
+                        "name": tc.name,
+                        "arguments": _json.dumps(tc.args),
+                    }
+                )
+        elif isinstance(msg, ToolResultMessage):
+            text_chunks: list[str] = []
+            if isinstance(msg.content, str):
+                text_chunks.append(msg.content)
+            else:
+                for p in msg.content:
+                    if isinstance(p, TextPart):
+                        text_chunks.append(p.text)
+                    elif isinstance(p, ImagePart):
+                        pending_image_parts.append(
+                            {
+                                "type": "input_image",
+                                "image_url": f"data:{p.media_type};base64,{p.data}",
+                            }
+                        )
+            if pending_image_parts and not text_chunks:
+                text_chunks.append("image attached as next user-message part")
+            out.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": msg.tool_call_id,
+                    "output": "\n".join(text_chunks) or "ok",
+                }
+            )
+    flush_images()
+    return out
+
+
 class ChatOpenAI(BaseChatModel):
     name = "openai"
 
@@ -151,6 +234,11 @@ class ChatOpenAI(BaseChatModel):
         # — we default to None so the OpenAI server defaults apply.
         reasoning_effort: str | None = None,
         max_completion_tokens: int | None = None,
+        # Route through /v1/responses instead of /v1/chat/completions.
+        # Required for models that reject function tools combined with
+        # reasoning on chat completions (gpt-5.6-luna: "Function tools
+        # with reasoning_effort are not supported ... use /v1/responses").
+        use_responses_api: bool = False,
         timeout: float | None = None,
         client: AsyncOpenAI | None = None,
     ):
@@ -159,6 +247,7 @@ class ChatOpenAI(BaseChatModel):
         self.max_tokens = max_tokens
         self.reasoning_effort = reasoning_effort
         self.max_completion_tokens = max_completion_tokens
+        self.use_responses_api = use_responses_api
         self.timeout = timeout
         if client is not None:
             self.client = client
@@ -189,6 +278,97 @@ class ChatOpenAI(BaseChatModel):
             }
         return None
 
+    @staticmethod
+    def _map_responses_tool_choice(tool_choice: str | dict | None) -> Any:
+        """Responses API uses a flat function reference (no nested key)."""
+        if tool_choice in (None, "auto"):
+            return None
+        if tool_choice in ("required", "none"):
+            return tool_choice
+        if isinstance(tool_choice, dict) and tool_choice.get("name"):
+            return {"type": "function", "name": tool_choice["name"]}
+        return None
+
+    async def _ainvoke_responses(
+        self,
+        messages: list[Message],
+        tools: list[Tool],
+        *,
+        system: str | None = None,
+        tool_choice: str | dict | None = None,
+    ) -> ChatInvokeCompletion:
+        import json as _json
+
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "input": _to_responses_input(messages),
+            "tools": [
+                {
+                    "type": "function",
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": _clean_schema(t.input_schema),
+                }
+                for t in tools
+            ],
+            # Stateless: the agent replays the full conversation each call,
+            # so nothing is persisted server-side.
+            "store": False,
+        }
+        if system:
+            kwargs["instructions"] = system
+        if self.reasoning_effort is not None:
+            kwargs["reasoning"] = {"effort": self.reasoning_effort}
+        elif self.temperature is not None:
+            # Reasoning requests reject sampling params; only send
+            # temperature when reasoning is not configured.
+            kwargs["temperature"] = self.temperature
+        cap = self.max_completion_tokens or self.max_tokens
+        if cap is not None:
+            kwargs["max_output_tokens"] = cap
+        mapped_choice = self._map_responses_tool_choice(tool_choice)
+        if mapped_choice is not None:
+            kwargs["tool_choice"] = mapped_choice
+
+        from browser_use_rs.llm.base import with_retry
+
+        async def _call():
+            return await self.client.responses.create(**kwargs)
+
+        response = await with_retry(_call, label=f"openai-responses({self.model})")
+
+        text_parts: list[str] = []
+        tool_calls: list[ToolCall] = []
+        for item in response.output or []:
+            item_type = getattr(item, "type", "")
+            if item_type == "function_call":
+                try:
+                    args = _json.loads(item.arguments or "{}")
+                except _json.JSONDecodeError:
+                    args = {}
+                tool_calls.append(
+                    ToolCall(id=item.call_id, name=item.name, args=args)
+                )
+            elif item_type == "message":
+                for c in getattr(item, "content", None) or []:
+                    if getattr(c, "type", "") == "output_text" and c.text:
+                        text_parts.append(c.text)
+        usage_obj = getattr(response, "usage", None)
+        cached = getattr(
+            getattr(usage_obj, "input_tokens_details", None), "cached_tokens", 0
+        ) or 0
+        usage = ChatInvokeUsage(
+            input=getattr(usage_obj, "input_tokens", 0) or 0,
+            output=getattr(usage_obj, "output_tokens", 0) or 0,
+            cache_read=cached,
+        )
+        return ChatInvokeCompletion(
+            text="\n".join(text_parts) or None,
+            tool_calls=tool_calls,
+            usage=usage,
+            raw=response,
+        )
+
     async def ainvoke(
         self,
         messages: list[Message],
@@ -197,6 +377,10 @@ class ChatOpenAI(BaseChatModel):
         system: str | None = None,
         tool_choice: str | dict | None = None,
     ) -> ChatInvokeCompletion:
+        if self.use_responses_api:
+            return await self._ainvoke_responses(
+                messages, tools, system=system, tool_choice=tool_choice
+            )
         openai_msgs = _to_openai_messages(messages, system)
         tool_defs = [
             {

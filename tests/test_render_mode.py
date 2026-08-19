@@ -362,3 +362,49 @@ class ToolChoiceMappingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ResponsesApiMappingTests(unittest.TestCase):
+    def test_responses_input_mapping(self):
+        try:
+            from browser_use_rs.llm.openai import ChatOpenAI, _to_responses_input
+        except ImportError:
+            self.skipTest("openai SDK not installed")
+        from browser_use_rs.llm.base import ImagePart, TextPart
+
+        msgs = [
+            UserMessage(content="do the task"),
+            AssistantMessage(
+                text="<memory>x</memory>",
+                tool_calls=[ToolCall(id="c1", name="click", args={"index": 3})],
+            ),
+            ToolResultMessage(
+                tool_call_id="c1",
+                name="click",
+                content=[TextPart(text="clicked"), ImagePart(data="QUJD", media_type="image/png")],
+            ),
+            UserMessage(content=[TextPart(text="[PAGE_STATE]"), ImagePart(data="REVG")]),
+        ]
+        items = _to_responses_input(msgs)
+        kinds = [i.get("type") or i.get("role") for i in items]
+        # user, assistant text, function_call, function_call_output,
+        # image flush user, page-state user
+        self.assertEqual(
+            ["user", "assistant", "function_call", "function_call_output", "user", "user"],
+            kinds,
+        )
+        fc = items[2]
+        self.assertEqual("c1", fc["call_id"])
+        self.assertIn('"index": 3', fc["arguments"])
+        self.assertEqual("clicked", items[3]["output"])
+        flush = items[4]["content"][0]
+        self.assertEqual("input_image", flush["type"])
+        self.assertTrue(flush["image_url"].startswith("data:image/png;base64,"))
+        state_parts = items[5]["content"]
+        self.assertEqual("input_text", state_parts[0]["type"])
+        self.assertEqual("input_image", state_parts[1]["type"])
+
+        m = ChatOpenAI._map_responses_tool_choice
+        self.assertEqual({"type": "function", "name": "done"}, m({"name": "done"}))
+        self.assertEqual("required", m("required"))
+        self.assertIsNone(m("auto"))
