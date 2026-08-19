@@ -184,7 +184,21 @@ class BaseChatModel(ABC):
         tools: list["Tool"],
         *,
         system: str | None = None,
+        tool_choice: "ToolChoice" = None,
     ) -> ChatInvokeCompletion: ...
+
+
+# v0.12.17: provider-agnostic tool_choice. The agent loop uses this as
+# its hard enforcement mechanism (upstream constrains via schema swaps;
+# native tool calling constrains via the provider's tool_choice field):
+#   None / "auto"     — model decides (default, previous behavior)
+#   "required"        — model MUST call some tool this turn
+#   "none"            — model must NOT call tools (plain text only)
+#   {"name": "done"}  — model MUST call the named tool this turn
+# Providers translate to their native encoding; unknown values are
+# treated as "auto" rather than raising, so a mid-run provider swap
+# can't crash the loop.
+ToolChoice = str | dict | None
 
 
 # ---------------------------------------------------------------------------

@@ -169,12 +169,27 @@ class ChatAnthropic(BaseChatModel):
                 kwargs["timeout"] = timeout
             self.client = anthropic.AsyncAnthropic(**kwargs)
 
+    @staticmethod
+    def _map_tool_choice(tool_choice: str | dict | None) -> dict | None:
+        """Translate the provider-agnostic tool_choice into Anthropic's
+        encoding. Unknown values → None (auto)."""
+        if tool_choice in (None, "auto"):
+            return None
+        if tool_choice == "required":
+            return {"type": "any"}
+        if tool_choice == "none":
+            return {"type": "none"}
+        if isinstance(tool_choice, dict) and tool_choice.get("name"):
+            return {"type": "tool", "name": tool_choice["name"]}
+        return None
+
     async def ainvoke(
         self,
         messages: list[Message],
         tools: list[Tool],
         *,
         system: str | None = None,
+        tool_choice: str | dict | None = None,
     ) -> ChatInvokeCompletion:
         anthropic_msgs = _to_anthropic_messages(messages)
         tool_defs = [t.to_anthropic() for t in tools]
@@ -185,6 +200,17 @@ class ChatAnthropic(BaseChatModel):
             "tools": tool_defs,
             "messages": anthropic_msgs,
         }
+        # v0.12.17: forced tool use. NOTE: Anthropic rejects
+        # tool_choice type "any"/"tool" while extended thinking is
+        # enabled (only "auto"/"none" are compatible), so a forced
+        # choice suppresses the thinking config for THIS call only.
+        # The forced calls are termination/enforcement turns where
+        # thinking is wasted output-tokens anyway.
+        mapped_choice = self._map_tool_choice(tool_choice)
+        force_no_thinking = False
+        if mapped_choice is not None:
+            kwargs["tool_choice"] = mapped_choice
+            force_no_thinking = mapped_choice["type"] in ("any", "tool")
         # Caching: tag the LAST user/tool-result content block with
         # cache_control=ephemeral so the prompt cache extends through
         # the most recent turn. Combined with the system-prompt
@@ -236,9 +262,9 @@ class ChatAnthropic(BaseChatModel):
                     "cache_control": {"type": "ephemeral"},
                 }
             ]
-        if self.thinking:
+        if self.thinking and not force_no_thinking:
             kwargs["thinking"] = self.thinking
-        if self.thinking and self.effort:
+        if self.thinking and not force_no_thinking and self.effort:
             # output_config is a newer Anthropic API surface that older
             # versions of the python SDK don't recognise as a kwarg
             # (TypeError: unexpected keyword argument 'output_config').

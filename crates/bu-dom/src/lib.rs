@@ -212,3 +212,138 @@ pub async fn snapshot(conn: &Connection, session_id: &str) -> Result<DomState> {
         .ok_or(DomError::NoValue)?;
     Ok(serde_json::from_str(json_str)?)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn el(index: u32, tag: &str, text: &str) -> DomElement {
+        DomElement {
+            index,
+            tag: tag.to_string(),
+            text: text.to_string(),
+            attrs: BTreeMap::new(),
+            selector: String::new(),
+            bbox: Bbox { x: 0.0, y: 0.0, w: 10.0, h: 10.0 },
+            depth: 0,
+        }
+    }
+
+    fn state(elements: Vec<DomElement>) -> DomState {
+        DomState {
+            url: "https://example.com/".to_string(),
+            title: "Example".to_string(),
+            viewport: Viewport { width: 1280, height: 720, device_pixel_ratio: 1.0 },
+            elements,
+            page_info: PageInfo::default(),
+        }
+    }
+
+    #[test]
+    fn get_finds_by_index_and_errors_on_unknown() {
+        let s = state(vec![el(1, "button", "Go")]);
+        assert_eq!(s.get(1).unwrap().tag, "button");
+        assert!(matches!(s.get(9), Err(DomError::UnknownIndex(9))));
+    }
+
+    #[test]
+    fn bbox_center() {
+        let b = Bbox { x: 10.0, y: 20.0, w: 100.0, h: 50.0 };
+        assert_eq!(b.center(), (60.0, 45.0));
+    }
+
+    #[test]
+    fn llm_string_header_and_interactive_line() {
+        let s = state(vec![el(1, "button", "Sign in")]);
+        let out = s.to_llm_string();
+        assert!(out.starts_with("URL: https://example.com/\nTITLE: Example\n"));
+        assert!(out.contains("VIEWPORT: 1280x720\n"));
+        // Text elements terminate at the newline without a closing tag
+        // (v0.11.15 format).
+        assert!(out.contains("[1]<button>Sign in\n"));
+        assert!(!out.contains("</button>"));
+    }
+
+    #[test]
+    fn llm_string_static_text_has_no_index() {
+        let s = state(vec![el(0, "h2", "Today's News")]);
+        let out = s.to_llm_string();
+        assert!(out.contains("<h2> \"Today's News\"\n"));
+        assert!(!out.contains("[0]"));
+    }
+
+    #[test]
+    fn llm_string_void_element_self_closes() {
+        let s = state(vec![el(3, "input", "")]);
+        let out = s.to_llm_string();
+        assert!(out.contains("[3]<input />\n"));
+    }
+
+    #[test]
+    fn llm_string_escapes_quotes_in_attrs_and_skips_scrollable_attr() {
+        let mut e = el(2, "div", "Panel");
+        e.attrs.insert("scrollable".to_string(), "true".to_string());
+        e.attrs.insert("title".to_string(), "say \"hi\"".to_string());
+        let s = state(vec![e]);
+        let out = s.to_llm_string();
+        assert!(out.contains("|scroll|[2]<div title=\"say \\\"hi\\\"\">Panel\n"));
+        // The scrollable attr renders only as the |scroll| prefix.
+        assert!(!out.contains("scrollable=\"true\""));
+    }
+
+    #[test]
+    fn llm_string_indents_by_depth_capped_at_six() {
+        let mut deep = el(4, "a", "leaf");
+        deep.depth = 9; // cap at 6 tabs
+        let s = state(vec![deep]);
+        let out = s.to_llm_string();
+        assert!(out.contains("\t\t\t\t\t\t[4]<a>leaf\n"));
+        assert!(!out.contains("\t\t\t\t\t\t\t[4]"));
+    }
+
+    #[test]
+    fn llm_string_page_info_hints() {
+        let mut s = state(vec![]);
+        s.page_info = PageInfo {
+            pages_above: 0.0,
+            pages_below: 2.5,
+            scroll_y: 0.0,
+            doc_height: 5000.0,
+        };
+        let out = s.to_llm_string();
+        assert!(out.contains("PAGE_INFO: 0.0 pages above, 2.5 pages below — scroll down to reveal more\n"));
+
+        s.page_info = PageInfo {
+            pages_above: 0.0,
+            pages_below: 0.0,
+            scroll_y: 0.0,
+            doc_height: 500.0,
+        };
+        let out = s.to_llm_string();
+        assert!(out.contains("— entire page visible"));
+
+        // doc_height == 0 (pre-v0.6.3 snapshot) omits the block entirely.
+        s.page_info = PageInfo::default();
+        assert!(!s.to_llm_string().contains("PAGE_INFO"));
+    }
+
+    #[test]
+    fn deserializes_snapshots_without_optional_fields() {
+        // Snapshots from before v0.6.3/v0.7.0 lack depth, selector,
+        // attrs, and page_info — serde defaults must fill them.
+        let json_str = r#"{
+            "url": "https://a.com",
+            "title": "t",
+            "viewport": {"width": 800, "height": 600, "device_pixel_ratio": 2.0},
+            "elements": [
+                {"index": 1, "tag": "a", "text": "x",
+                 "bbox": {"x": 0, "y": 0, "w": 1, "h": 1}}
+            ]
+        }"#;
+        let s: DomState = serde_json::from_str(json_str).unwrap();
+        assert_eq!(s.elements[0].depth, 0);
+        assert_eq!(s.elements[0].selector, "");
+        assert!(s.elements[0].attrs.is_empty());
+        assert_eq!(s.page_info.doc_height, 0.0);
+    }
+}

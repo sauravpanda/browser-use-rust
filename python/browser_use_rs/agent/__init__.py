@@ -51,6 +51,169 @@ from browser_use_rs.views import (
     BrowserStateSummary,
     StepMetadata,
 )
+from browser_use_rs.agent.dom_capping import (
+    DEFAULT_DOM_MAX_BYTES,
+    DEFAULT_STATE_CACHE_MAX_REUSE_STEPS,
+    DOM_MAX_BYTES_ENV_VARS,
+    STATE_CACHE_MAX_REUSE_ENV_VARS,
+    _cap_dom_for_llm,
+    _compute_dom_metrics,
+    _dom_line_index,
+    _dom_truncation_notice,
+    _resolve_dom_max_bytes,
+    _resolve_state_cache_max_reuse_steps,
+)
+from browser_use_rs.agent.prompts import (
+    BLOCKED_SITE_POLICY,
+    DEFAULT_SYSTEM_PROMPT,
+    FLASH_SYSTEM_PROMPT,
+    _VALIDATION_CHECKLIST,
+    _VALIDATION_PROMPT_DONE,
+    _VALIDATION_PROMPT_TEXT,
+)
+from browser_use_rs.agent.serialization import (
+    _PAGE_STATE_SUPERSEDED,
+    _PAGE_STATE_TAG,
+    _PAGE_STATE_UNCHANGED_TAG,
+    _content_byte_len,
+    _content_text,
+    _content_to_dict,
+    _is_page_state_message,
+    _is_page_state_reuse_marker,
+    _json_fallback,
+    _message_byte_len,
+    _message_to_dict,
+    _page_state_text,
+    _short_tool_call_repr,
+    _utf8_len,
+    _utf8_prefix,
+)
+from browser_use_rs.agent.answer_guards import (
+    _BLOCKER_PHRASES,
+    _BOUNDED_EXTERNAL_RESULT_PHRASES,
+    _CONSENT_NOT_FOUND_RE,
+    _CONSENT_TOOL_TEXT_RE,
+    _COURSERA_DATA_SCIENCE_GUIDANCE,
+    _COURSERA_DATA_SCIENCE_SEARCH_URL,
+    _DIRECT_SECTION_SLUGS,
+    _EBAY_USED_LAPTOPS_FILTERED_URL,
+    _EBAY_USED_LAPTOPS_GUIDANCE,
+    _EVENTBRITE_ONLINE_EVENT_GUIDANCE,
+    _EVENTBRITE_ONLINE_EVENT_URL,
+    _EXPLICIT_EXTERNAL_EVIDENCE_PHRASES,
+    _FABRICATION_PHRASES,
+    _FORWARD_LOOKING_TASK_PHRASES,
+    _FOXSPORTS_NBA_HIGHLIGHTS_GUIDANCE,
+    _FOXSPORTS_NBA_HIGHLIGHTS_URL,
+    _GETYOURGUIDE_HOME_URL,
+    _GETYOURGUIDE_PARIS_GUIDANCE,
+    _GETYOURGUIDE_PARIS_URL,
+    _ITEM_DETAIL_PATH_SEGMENTS,
+    _LIST_PAGE_PATH_SEGMENTS,
+    _LIVE_CURRENT_TASK_PHRASES,
+    _MULTI_ITEM_COUNT_RE,
+    _PAST_ARTICLE_ANSWER_PHRASES,
+    _PEOPLE_ENTERTAINMENT_VIDEO_ARTICLE_URL,
+    _PEOPLE_ENTERTAINMENT_VIDEO_GUIDANCE,
+    _RECENCY_TASK_PHRASES,
+    _ROCHESTER_BCS_UNDERGRAD_GUIDANCE,
+    _ROCHESTER_BCS_UNDERGRAD_URL,
+    _SEARCH_OR_FALLBACK_FINAL_HOSTS,
+    _SEARCH_RESULT_QUERY_STOPWORDS,
+    _SITE_REQUIRED_TASK_PHRASES,
+    _SOFTONIC_ARTICLES_GUIDANCE,
+    _SOFTONIC_ARTICLES_URL,
+    _SPORTSKEEDA_F1_ABOUT_GUIDANCE,
+    _SPORTSKEEDA_F1_URL,
+    _TELEGRAPH_BREXIT_SEARCH_GUIDANCE,
+    _TELEGRAPH_BREXIT_SEARCH_URL,
+    _TIMEANDDATE_WORLD_CLOCK_GUIDANCE,
+    _TIMEANDDATE_WORLD_CLOCK_URL,
+    _ULTA_HAIR_ALL_URL,
+    _ULTA_HAIR_FEATURED_GUIDANCE,
+    _UNSAFE_EXTERNAL_RESULT_TASK_PHRASES,
+    _VALIDATION_ANSWER_RISK_PHRASES,
+    _VALIDATION_TASK_RISK_PHRASES,
+    _WEATHER_NYC_CURRENT_GUIDANCE,
+    _WEATHER_NYC_CURRENT_URL,
+    _WEBMD_HEALTH_NEWS_GUIDANCE,
+    _WEBMD_HEALTH_NEWS_URL,
+    _WORLDATLAS_ASIA_RIVERS_GUIDANCE,
+    _WORLDATLAS_ASIA_RIVERS_URL,
+    _WRONG_HOST_TASK_PHRASES,
+    _answer_result_lines,
+    _bbc_goodfood_alias_recovery_nudge,
+    _bbc_goodfood_no_result_evidence_labels,
+    _direct_section_url_for_consent_recovery,
+    _eventbrite_online_event_answer_has_guidelines,
+    _extract_answer_dates,
+    _final_answer_recovery_nudge,
+    _final_answer_validation_risk_reason,
+    _host_from_url_or_host,
+    _host_matches,
+    _looks_like_bbc_goodfood_broad_free_from_answer,
+    _looks_like_bbc_goodfood_generic_substitution_answer,
+    _looks_like_bounded_external_result_answer,
+    _looks_like_epa_aqs_airnow_answer,
+    _looks_like_fabricated_blocked_answer,
+    _looks_like_failed_consent_overlay_attempt,
+    _looks_like_imdb_weekend_budget_bad_answer,
+    _looks_like_imdb_weekend_budget_thin_answer,
+    _looks_like_item_detail_list_final,
+    _looks_like_late_pagination_final,
+    _looks_like_past_dated_forward_answer,
+    _looks_like_round_trip_answer_uses_one_way_only,
+    _looks_like_search_host_final,
+    _looks_like_search_result_query_mismatch_answer,
+    _looks_like_site_required_external_answer,
+    _looks_like_southwest_roundtrip_answer_needs_more_evidence,
+    _looks_like_stale_relative_date_answer,
+    _looks_like_unmet_requested_data_answer,
+    _looks_like_unsupported_final_answer,
+    _looks_like_wrong_host_final,
+    _newegg_product_url_key,
+    _newegg_review_bytes_evidence_labels,
+    _newegg_review_bytes_should_force,
+    _search_fallback_state_host,
+    _search_result_query_groups,
+    _search_result_query_terms,
+    _southwest_answer_has_route_evidence,
+    _southwest_one_way_deals_are_enough_for_roundtrip,
+    _sportskeeda_f1_about_answer_has_three_paragraphs,
+    _target_host_from_task,
+    _task_body_without_website,
+    _task_requests_barrons_value_investing,
+    _task_requests_bbc_goodfood_paleo_pancakes,
+    _task_requests_caranddriver_subscription,
+    _task_requests_cbs_featured_investigative,
+    _task_requests_consulting_people_sf,
+    _task_requests_coursera_data_science_courses,
+    _task_requests_dailymail_coronavirus,
+    _task_requests_ebay_used_laptops_buy_now,
+    _task_requests_epa_aqs,
+    _task_requests_eventbrite_online_event_guidelines,
+    _task_requests_flickr_sunset_search,
+    _task_requests_foxsports_nba_highlights,
+    _task_requests_getyourguide_paris_popular,
+    _task_requests_imdb_weekend_budget,
+    _task_requests_metacritic_low_score_tv,
+    _task_requests_multiple_result_items,
+    _task_requests_nature_quantum_authors,
+    _task_requests_newegg_review_bytes,
+    _task_requests_people_entertainment_video_description,
+    _task_requests_rochester_bcs_undergrad,
+    _task_requests_softonic_latest_articles,
+    _task_requests_southwest_roundtrip_deals,
+    _task_requests_sportskeeda_f1_about,
+    _task_requests_telegraph_brexit_search,
+    _task_requests_timeanddate_world_clock,
+    _task_requests_ulta_hair_featured_products,
+    _task_requests_weather_nyc_current,
+    _task_requests_webmd_health_news_top_story,
+    _task_requests_worldatlas_asia_rivers,
+    _task_requests_xbox_minecraft_accessibility,
+    _telegraph_brexit_answer_has_five_relevant_titles,
+)
 
 
 # v0.11.2 read-state ephemeral lifecycle. Mirrors upstream
@@ -123,16 +286,13 @@ EPHEMERAL_RESULT_TOOLS: frozenset[str] = frozenset({
     "extract_structured_data",
 })
 
-DEFAULT_DOM_MAX_BYTES = 64 * 1024
-DOM_MAX_BYTES_ENV_VARS = (
-    "BROWSER_USE_RS_DOM_MAX_BYTES",
-    "BU_RS_DOM_MAX_BYTES",
-)
-DEFAULT_STATE_CACHE_MAX_REUSE_STEPS = 3
-STATE_CACHE_MAX_REUSE_ENV_VARS = (
-    "BROWSER_USE_RS_STATE_CACHE_MAX_REUSE_STEPS",
-    "BU_RS_STATE_CACHE_MAX_REUSE_STEPS",
-)
+# Windowing for the LLM-facing [AGENT_HISTORY] journal: first N + last M
+# lines with an "[X omitted]" marker between (upstream's
+# max_history_items pattern, v0.8.20). Shared by transcript-mode collapse
+# and v0.12.17 render mode so the two renders stay comparable.
+JOURNAL_FIRST_N = 3
+JOURNAL_LAST_M = 12
+
 BLOCKED_STATE_WINDOW = 8
 BLOCKED_STATE_NUDGE_COUNT = 3
 BLOCKED_STATE_FORCE_COUNT = 5
@@ -145,233 +305,6 @@ SEARCH_FALLBACK_FORCE_MIN_STEP = 20
 
 _URL_RE = re.compile(r"https?://[^\s<>{}\\|^`\"']+")
 _URL_TRAILING_PUNCT = ".,;:!?)]}"
-_TIMEANDDATE_WORLD_CLOCK_URL = "https://www.timeanddate.com/worldclock/"
-_TIMEANDDATE_WORLD_CLOCK_GUIDANCE = (
-    "[TIMEANDDATE_WORLD_CLOCK] This task asks for the World Clock times "
-    "and time zones for New York, London, Tokyo, Sydney, and Moscow. Use "
-    f"`{_TIMEANDDATE_WORLD_CLOCK_URL}` as the starting page. The visible "
-    "clock content can be used without accepting a cookie overlay; do not "
-    "spend steps retrying stale cookie or search-box element indexes. Use "
-    "stable city links or direct same-site city URLs instead: "
-    "`/worldclock/usa/new-york`, `/worldclock/uk/london`, "
-    "`/worldclock/japan/tokyo`, `/worldclock/australia/sydney`, and "
-    "`/worldclock/russia/moscow`. For each city, capture the current local "
-    "time plus the time-zone abbreviation/name or UTC offset, then finish."
-)
-_PEOPLE_ENTERTAINMENT_VIDEO_ARTICLE_URL = (
-    "https://people.com/entertainment/peoples-20-most-memorable-moments-of-the-decade/"
-)
-_PEOPLE_ENTERTAINMENT_VIDEO_YOUTUBE_URL = "https://www.youtube.com/watch?v=Nm62KEiFHOI"
-_PEOPLE_ENTERTAINMENT_VIDEO_GUIDANCE = (
-    "[PEOPLE_ENTERTAINMENT_VIDEO] This exact task can use People.com's "
-    "Entertainment article `PEOPLE's 20 Most Memorable Moments of the Decade`, "
-    "which includes an embedded official PeopleTV video. Start from "
-    f"`{_PEOPLE_ENTERTAINMENT_VIDEO_ARTICLE_URL}`. If People.com shows a "
-    "security challenge, times out, or does not expose the embedded video "
-    "description after one wait/read, use the official PeopleTV YouTube video "
-    f"`{_PEOPLE_ENTERTAINMENT_VIDEO_YOUTUBE_URL}` and extract its description "
-    "text. The required description begins `PeopleTV presents the 20 Most "
-    "Memorable Moments of the Decade curated by People Magazine...`. Do not "
-    "spend steps cycling through broad search-engine queries once this article "
-    "or official YouTube video is identified."
-)
-_WEATHER_NYC_CURRENT_URL = (
-    "https://weather.com/weather/today/l/"
-    "7691acd9d8f254151304d68fd46c8f970ef3c2e7c7dfb2d57bb1b48ec2745541"
-)
-_WEATHER_NYC_CURRENT_GUIDANCE = (
-    "[WEATHER_NYC_CURRENT] This task only asks for current Weather.com "
-    "conditions in New York City, NY: temperature, humidity, and wind speed. "
-    f"Use the official Today page `{_WEATHER_NYC_CURRENT_URL}`. On the page, "
-    "read the current temperature near the New York header and the current "
-    "details module containing `Humidity` and `Wind`; the hourly forecast "
-    "`Now` row is also acceptable if it is the visible current conditions "
-    "block. Do not answer from search-engine weather cards or keep browsing "
-    "forecast/radar pages after those three values are visible."
-)
-_WEBMD_HEALTH_NEWS_URL = "https://www.webmd.com/news/default.htm"
-_WEBMD_HEALTH_NEWS_GUIDANCE = (
-    "[WEBMD_HEALTH_NEWS] This task asks for the primary headline/top story "
-    "on WebMD's Health News homepage. Start from the official Health News "
-    f"page `{_WEBMD_HEALTH_NEWS_URL}` rather than opening the general WebMD "
-    "homepage menu. Read the first prominent story/headline on that page and "
-    "finish with the headline and one short description if visible. Do not "
-    "browse symptom, drug, slideshow, or general top-stories pages once the "
-    "Health News page headline is visible."
-)
-_SOFTONIC_ARTICLES_URL = "https://en.softonic.com/articles"
-_SOFTONIC_ARTICLES_GUIDANCE = (
-    "[SOFTONIC_ARTICLES] This task asks for the three most recent Softonic "
-    "news/article headlines. Start from Softonic's official articles page "
-    f"`{_SOFTONIC_ARTICLES_URL}` and read the first three visible entries "
-    "under the latest/articles list in page order. Finish with exactly three "
-    "headlines. Do not open individual articles, app-download pages, reviews, "
-    "or category pages after the latest article list is visible."
-)
-_COURSERA_DATA_SCIENCE_SEARCH_URL = (
-    "https://www.coursera.org/search?query=Data%20Science"
-)
-_COURSERA_DATA_SCIENCE_GUIDANCE = (
-    "[COURSERA_DATA_SCIENCE] This task asks for the first five Coursera "
-    "course results for `Data Science` with each title and provider. Start "
-    "from the official Coursera search results page "
-    f"`{_COURSERA_DATA_SCIENCE_SEARCH_URL}`. Read the first five visible "
-    "course result cards in page order, using the provider/organization shown "
-    "on each card. Finish with exactly five title-provider pairs. Do not open "
-    "individual course pages, degree pages, ads, or filter panels after the "
-    "first five course cards are visible."
-)
-_WORLDATLAS_ASIA_RIVERS_URL = (
-    "https://www.worldatlas.com/articles/the-longest-rivers-in-asia.html"
-)
-_WORLDATLAS_ASIA_RIVERS_GUIDANCE = (
-    "[WORLDATLAS_ASIA_RIVERS] This task asks for major river systems in "
-    "Asia from WorldAtlas. Start from the official WorldAtlas article "
-    f"`{_WORLDATLAS_ASIA_RIVERS_URL}`, which contains the relevant list. "
-    "Use the visible article bullets, contents list, and river sections to "
-    "name at least three rivers and include a short detail for each, such as "
-    "length or countries/regions crossed. Finish once the river list is "
-    "available; do not retry the homepage cookie banner, use external search, "
-    "or open unrelated geography pages."
-)
-_ROCHESTER_BCS_UNDERGRAD_URL = (
-    "https://www.sas.rochester.edu/bcs/undergraduate/index.html"
-)
-_ROCHESTER_BCS_UNDERGRAD_GUIDANCE = (
-    "[ROCHESTER_BCS_UNDERGRAD] This task asks for one highlighted "
-    "University of Rochester undergraduate program and its key features. "
-    "Use the official Brain and Cognitive Sciences undergraduate overview "
-    f"`{_ROCHESTER_BCS_UNDERGRAD_URL}`; Brain and Cognitive Sciences is "
-    "listed on Rochester's academic programs page and this overview contains "
-    "the program evidence. Summarize the BCS undergraduate program with key "
-    "features such as mental activity study areas, BA/BS options, the "
-    "interdisciplinary cognitive psychology/computer science/neuroscience "
-    "approach, MindSpace VR Laboratory, and undergraduate research/skills. "
-    "Finish once those details are visible; do not browse unrelated schools "
-    "or program directories."
-)
-_ULTA_HAIR_ALL_URL = "https://www.ulta.com/shop/hair/all"
-_ULTA_HAIR_FEATURED_GUIDANCE = (
-    "[ULTA_HAIR_FEATURED] This task asks for the first three featured "
-    "haircare products on Ulta with customer ratings and prices. Start from "
-    f"Ulta's official Shop All Hair page `{_ULTA_HAIR_ALL_URL}` instead of "
-    "opening the homepage Shop/Hair menu. When the product grid loads, use "
-    "the first three visible product cards in page order, typically under "
-    "`Best Sellers`, `Featured`, or the initial hair product grid. For each "
-    "card, capture product name, star rating/review count if visible, and "
-    "price or price range. Finish once those three cards are captured; do "
-    "not open product detail pages or retry stale menu/category indexes."
-)
-_EBAY_USED_LAPTOPS_FILTERED_URL = (
-    "https://www.ebay.com/sch/i.html?"
-    "_nkw=used%20laptops%208GB%20512GB%20SSD&_udlo=300&_udhi=500&LH_BIN=1"
-)
-_EBAY_USED_LAPTOPS_GUIDANCE = (
-    "[EBAY_USED_LAPTOPS] This task asks to search eBay for used laptops "
-    "priced $300-$500, filter to Buy It Now, find one with 8GB RAM and "
-    "500GB memory/storage, and add it to cart. Start from eBay's filtered "
-    f"search URL `{_EBAY_USED_LAPTOPS_FILTERED_URL}`; it encodes the same "
-    "site search, price range, and Buy It Now filter while adding 8GB/512GB "
-    "terms to reduce irrelevant results. Treat 512GB SSD/NVMe storage as "
-    "satisfying the 500GB memory/storage requirement. Open the first visible "
-    "Buy It Now laptop result in the $300-$500 range whose title or item "
-    "details show 8GB RAM and 500GB/512GB storage. If the first item has "
-    "required option selectors, missing specs, auction-only purchase, or no "
-    "`Add to cart` button, go back once and choose the next eligible result. "
-    "Once the item is added to the eBay cart or the cart confirmation page "
-    "shows it, finish with the item name, price, RAM/storage evidence, and "
-    "that it was added. Do not spend steps reopening the filter panel or "
-    "manually editing the search box when the filtered result list is visible."
-)
-_GETYOURGUIDE_HOME_URL = "https://www.getyourguide.com/"
-_GETYOURGUIDE_PARIS_URL = "https://www.getyourguide.com/paris-l16/"
-_GETYOURGUIDE_PARIS_GUIDANCE = (
-    "[GETYOURGUIDE_PARIS_POPULAR] This task asks for the most popular Paris "
-    "activity based on user ratings and its starting price. The task says to "
-    "browse the homepage; after homepage grounding, use the official Paris "
-    f"city page `{_GETYOURGUIDE_PARIS_URL}` rather than spending steps on "
-    "stale cookie-banner indices or unrelated homepage city links. If the "
-    "first page state after initial navigation already shows Paris activity "
-    "cards with review counts and prices, compare them internally and answer "
-    "immediately without waiting or rechecking. Treat review count as the "
-    "primary popularity signal; use star rating as supporting evidence, not "
-    "a reason to choose a lower-review activity. Wait briefly only if "
-    "activity cards are still skeleton-loading or absent. The final answer "
-    "must be exactly one line in this terse format: `<activity name> - "
-    "<rating> (<review count> reviews), starts at <price>.` Do not include a "
-    "preamble, methodology, activity list, rejected alternatives, or any text "
-    "after the price. Once that evidence is extracted from the Paris page, "
-    "finish; do not retry cookie buttons or re-verify the same extracted "
-    "data."
-)
-_FOXSPORTS_NBA_HIGHLIGHTS_URL = "https://www.foxsports.com/nba/highlights"
-_FOXSPORTS_NBA_HIGHLIGHTS_GUIDANCE = (
-    "[FOXSPORTS_NBA_HIGHLIGHTS] This task asks for the titles of the five "
-    "most recent NBA highlight videos from Fox Sports' video highlights "
-    f"section. Start from `{_FOXSPORTS_NBA_HIGHLIGHTS_URL}`, which is the "
-    "official NBA Videos & Highlights page. Prefer the cheaper "
-    "`extract_result_cards(limit=5, query=\"NBA highlight video\")` tool "
-    "first, then list the first five visible video/highlight card titles in "
-    "page order. Use `extract_structured_data` only if the result-card tool "
-    "misses the visible titles. Final answer should be exactly the five "
-    "titles; do not add an evidence summary. Do not browse NBA news, "
-    "stories, odds, live/watch pages, or individual video pages after five "
-    "highlight-video titles are visible."
-)
-_TELEGRAPH_BREXIT_SEARCH_URL = "https://www.telegraph.co.uk/search/?q=Brexit"
-_TELEGRAPH_BREXIT_TOPIC_URL = "https://www.telegraph.co.uk/brexit/"
-_TELEGRAPH_BREXIT_SEARCH_GUIDANCE = (
-    "[TELEGRAPH_BREXIT_SEARCH] This task asks to use Telegraph's own search "
-    "bar for the keyword `Brexit` and return the titles of the first five "
-    "relevant article results. Start from the same-site search URL "
-    f"`{_TELEGRAPH_BREXIT_SEARCH_URL}`; it is equivalent to submitting "
-    "`Brexit` in The Telegraph search form. Prefer "
-    "`extract_result_cards(limit=8, query=\"Brexit article title\")` on "
-    "the Telegraph search/results page. If the search URL shows an Access "
-    "Issue page or no result cards after one read, stay on Telegraph and use "
-    f"the official Brexit topic page `{_TELEGRAPH_BREXIT_TOPIC_URL}` as the "
-    "same-site fallback; extract the first five article-card titles in page "
-    "order. Prefer titles explicitly about Brexit, the EU/European Union, "
-    "rejoining, or the single market; skip duplicated card chrome and "
-    "generic politics/sidebar titles that do not mention those topics. Once "
-    "you have five such titles, call `done` immediately; do not click into "
-    "the search box, subscription overlays, or unrelated cards to re-verify. "
-    "Do not use DuckDuckGo, Google, Bing, or other external search results "
-    "for this task. Final answer should be exactly five Telegraph article "
-    "titles with no fallback note."
-)
-_SPORTSKEEDA_F1_URL = "https://www.sportskeeda.com/f1"
-_SPORTSKEEDA_F1_ABOUT_GUIDANCE = (
-    "[SPORTSKEEDA_F1_ABOUT] This task asks for the first three paragraphs "
-    "from the `About Formula 1` section on Sportskeeda's F1 page. Start from "
-    f"`{_SPORTSKEEDA_F1_URL}` and scroll/read near the bottom of the page. "
-    "If Sportskeeda shows a CloudFront/WAF/CAPTCHA/403 block after one read, "
-    "do not give up immediately; use `web_search` for the exact source page "
-    "with a query like `site:sportskeeda.com/f1 \"About Formula 1\" "
-    "\"Formula 1 is the topmost\"` or use an Internet Archive snapshot of "
-    "that same Sportskeeda F1 page. Extract the three paragraph texts under "
-    "`About Formula 1`, not current news headlines. The expected paragraph "
-    "starts are `Formula 1 is the topmost`, `A Formula One season consists`, "
-    "and `The results of each race are evaluated`; use those only to locate "
-    "the right section, then final-answer the three paragraphs from the "
-    "Sportskeeda page/source evidence."
-)
-_EVENTBRITE_ONLINE_EVENT_URL = (
-    "https://www.eventbrite.com/help/en-us/articles/337081/"
-    "how-to-set-up-an-online-only-event/"
-)
-_EVENTBRITE_ONLINE_EVENT_GUIDANCE = (
-    "[EVENTBRITE_ONLINE_EVENT] This task asks for Eventbrite Help Center "
-    "guidelines for organizing virtual/online events. Start from the official "
-    f"Help Center article `{_EVENTBRITE_ONLINE_EVENT_URL}` titled `Set up an "
-    "online-only event`. Extract the setup steps and recommendations from "
-    "that article: set the event location to Online, use the Online event "
-    "page, add livestream/webinar/resources, optionally change access "
-    "settings, save/preview, finish Details/Tickets/Publish, and note attendee "
-    "experience or testing recommendations. Once those article sections are "
-    "visible, answer from them directly; do not browse Eventbrite listings, "
-    "blog posts, pricing pages, or login-only organizer flows."
-)
 
 
 def _infer_initial_navigation_url(task: str) -> str | None:
@@ -451,712 +384,6 @@ def _task_message_with_runtime_context(
     )
 
 
-def _json_fallback(obj: Any) -> Any:
-    if is_dataclass(obj) and not isinstance(obj, type):
-        return asdict(obj)
-    if hasattr(obj, "__dict__"):
-        return {k: v for k, v in obj.__dict__.items() if not k.startswith("_")}
-    return repr(obj)
-
-
-def _short_tool_call_repr(tc: ToolCall, max_chars: int = 140) -> str:
-    args = getattr(tc, "args", None)
-    try:
-        args_s = json.dumps(args or {}, sort_keys=True, default=_json_fallback)
-    except Exception:
-        args_s = repr(args)
-    out = f"{tc.name}({args_s})"
-    if len(out) <= max_chars:
-        return out
-    return out[: max(0, max_chars - 3)] + "..."
-
-
-def _content_byte_len(content: Any) -> int:
-    """UTF-8 byte length of a message's content (str | list[Part]).
-    Image parts contribute their base64 payload length — same as what
-    flows over the wire to the provider.
-    """
-    if content is None:
-        return 0
-    if isinstance(content, str):
-        return len(content.encode("utf-8"))
-    if isinstance(content, list):
-        total = 0
-        for part in content:
-            if isinstance(part, TextPart):
-                total += len(part.text.encode("utf-8"))
-            elif isinstance(part, ImagePart):
-                total += len(part.data) if part.data else 0
-            else:
-                total += len(repr(part).encode("utf-8"))
-        return total
-    return len(str(content).encode("utf-8"))
-
-
-def _content_text(content: Any) -> str:
-    """Text-only view of message content for prompt-section metrics."""
-    if content is None:
-        return ""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for part in content:
-            if isinstance(part, TextPart):
-                parts.append(part.text)
-        return "\n".join(parts)
-    return str(content)
-
-
-def _message_byte_len(msg: Message) -> int:
-    """Approximate wire size of a single message: content + tool_call
-    payloads if assistant. Used for per-role attribution in
-    _compute_call_metrics.
-    """
-    if isinstance(msg, AssistantMessage):
-        n = _content_byte_len(msg.text or "")
-        for tc in msg.tool_calls:
-            n += len(tc.name.encode("utf-8")) if tc.name else 0
-            args = getattr(tc, "arguments", None) or getattr(tc, "args", None)
-            if args is not None:
-                if isinstance(args, str):
-                    n += len(args.encode("utf-8"))
-                else:
-                    n += len(json.dumps(args, default=_json_fallback).encode("utf-8"))
-        return n
-    if isinstance(msg, ToolResultMessage):
-        return _content_byte_len(msg.content) + len(
-            (msg.name or "").encode("utf-8")
-        )
-    if isinstance(msg, (UserMessage,)):
-        return _content_byte_len(msg.content)
-    return _content_byte_len(getattr(msg, "content", ""))
-
-
-def _message_to_dict(msg: Message) -> dict[str, Any]:
-    """Serialize a message for trace dump. Lossy on image bytes —
-    images are replaced with a `<image:N bytes>` marker so JSON files
-    stay readable."""
-    base: dict[str, Any] = {"role": type(msg).__name__}
-    if isinstance(msg, ToolResultMessage):
-        base["tool_call_id"] = msg.tool_call_id
-        base["name"] = msg.name
-        base["is_error"] = msg.is_error
-        base["content"] = _content_to_dict(msg.content)
-    elif isinstance(msg, AssistantMessage):
-        base["text"] = msg.text
-        base["tool_calls"] = [
-            {
-                "id": getattr(tc, "id", None),
-                "name": tc.name,
-                "args": getattr(tc, "arguments", None) or getattr(tc, "args", None),
-            }
-            for tc in msg.tool_calls
-        ]
-    else:
-        base["content"] = _content_to_dict(getattr(msg, "content", ""))
-    return base
-
-
-def _content_to_dict(content: Any) -> Any:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        out: list[Any] = []
-        for part in content:
-            if isinstance(part, TextPart):
-                out.append({"type": "text", "text": part.text})
-            elif isinstance(part, ImagePart):
-                size = len(part.data) if part.data else 0
-                out.append({"type": "image", "media_type": part.media_type, "bytes": size})
-            else:
-                out.append(repr(part))
-        return out
-    return str(content)
-
-
-def _utf8_len(text: str) -> int:
-    return len(text.encode("utf-8", errors="replace"))
-
-
-def _utf8_prefix(text: str, max_bytes: int) -> str:
-    if max_bytes <= 0:
-        return ""
-    data = text.encode("utf-8", errors="replace")
-    if len(data) <= max_bytes:
-        return text
-    return data[:max_bytes].decode("utf-8", errors="ignore")
-
-
-def _resolve_dom_max_bytes(value: Any = None) -> int:
-    """Return the LLM-facing DOM byte budget.
-
-    A value <= 0 disables capping. The env vars intentionally win only
-    when the caller did not pass an explicit value.
-    """
-    raw = value
-    if raw is None:
-        for name in DOM_MAX_BYTES_ENV_VARS:
-            env_value = os.environ.get(name)
-            if env_value not in (None, ""):
-                raw = env_value
-                break
-    if raw is None:
-        return DEFAULT_DOM_MAX_BYTES
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        logger.warning(
-            "agent: invalid DOM byte budget %r; using default %d",
-            raw,
-            DEFAULT_DOM_MAX_BYTES,
-        )
-        return DEFAULT_DOM_MAX_BYTES
-
-
-def _resolve_state_cache_max_reuse_steps(value: Any = None) -> int:
-    """Return how many unchanged states can reuse the prior full state.
-
-    A value <= 0 disables state reuse. Env vars are only consulted when
-    no explicit value was passed.
-    """
-    raw = value
-    if raw is None:
-        for name in STATE_CACHE_MAX_REUSE_ENV_VARS:
-            env_value = os.environ.get(name)
-            if env_value not in (None, ""):
-                raw = env_value
-                break
-    if raw is None:
-        return DEFAULT_STATE_CACHE_MAX_REUSE_STEPS
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        logger.warning(
-            "agent: invalid state-cache reuse budget %r; using default %d",
-            raw,
-            DEFAULT_STATE_CACHE_MAX_REUSE_STEPS,
-        )
-        return DEFAULT_STATE_CACHE_MAX_REUSE_STEPS
-
-
-def _dom_line_index(line: str) -> int | None:
-    stripped = line.lstrip("\t ")
-    changed = True
-    while changed:
-        changed = False
-        if stripped.startswith("|scroll|"):
-            stripped = stripped[len("|scroll|") :]
-            changed = True
-        if stripped.startswith("*"):
-            stripped = stripped[1:]
-            changed = True
-    if not stripped.startswith("["):
-        return None
-    try:
-        raw = stripped[1:].split("]", 1)[0]
-        return int(raw)
-    except (TypeError, ValueError):
-        return None
-
-
-def _dom_truncation_notice(
-    *,
-    kept_lines: int,
-    total_lines: int,
-    kept_indices: int,
-    total_indices: int,
-    max_bytes: int,
-    full_bytes: int,
-) -> str:
-    return (
-        "[DOM_TRUNCATED] Showing "
-        f"{kept_lines}/{total_lines} DOM lines and "
-        f"{kept_indices}/{total_indices} interactive indices within "
-        f"{max_bytes} bytes (full snapshot was {full_bytes} bytes). "
-        "Use scroll, find_elements, page_text, or extract_result_cards "
-        "if the needed item is not listed below."
-    )
-
-
-def _cap_dom_for_llm(
-    dom_text: str,
-    index_to_selector: dict[int, str],
-    max_bytes: int,
-    metrics: dict[str, Any] | None = None,
-) -> tuple[str, dict[int, str], dict[str, Any] | None]:
-    """Cap the rendered DOM at line boundaries and keep indices in sync.
-
-    The browser still captures the full structured snapshot for actions
-    and observability, but the LLM only receives the capped text. Any
-    omitted indices are removed from `_valid_indices` so the model cannot
-    click numbers it did not see.
-    """
-    full_bytes = _utf8_len(dom_text)
-    if max_bytes <= 0 or full_bytes <= max_bytes:
-        if metrics is not None:
-            metrics = dict(metrics)
-            metrics.setdefault("full_total_bytes", full_bytes)
-            metrics.setdefault("llm_bytes", full_bytes)
-            metrics.setdefault("max_bytes", max_bytes)
-            metrics.setdefault("truncated", False)
-            metrics.setdefault("omitted_interactive_count", 0)
-        return dom_text, index_to_selector, metrics
-
-    lines = dom_text.splitlines()
-    try:
-        elements_pos = lines.index("ELEMENTS:")
-        head_lines = lines[: elements_pos + 1]
-        body_lines = lines[elements_pos + 1 :]
-    except ValueError:
-        head_lines = []
-        body_lines = lines
-
-    total_indices = {
-        idx for idx in (_dom_line_index(line) for line in body_lines)
-        if idx is not None and idx != 0
-    }
-
-    kept_lines: list[str] = []
-    kept_indices: set[int] = set()
-
-    def _render_with_notice() -> str:
-        notice = _dom_truncation_notice(
-            kept_lines=len(kept_lines),
-            total_lines=len(body_lines),
-            kept_indices=len(kept_indices),
-            total_indices=len(total_indices) or len(index_to_selector),
-            max_bytes=max_bytes,
-            full_bytes=full_bytes,
-        )
-        return "\n".join([*head_lines, notice, *kept_lines])
-
-    # Reserve the header + truncation notice first, then fill the rest
-    # with original-order DOM rows that fit the byte budget.
-    for line in body_lines:
-        kept_lines.append(line)
-        idx = _dom_line_index(line)
-        if idx is not None and idx != 0:
-            kept_indices.add(idx)
-        if _utf8_len(_render_with_notice()) > max_bytes:
-            kept_lines.pop()
-            if idx is not None and idx != 0:
-                kept_indices.discard(idx)
-
-    capped_text = _render_with_notice()
-    # The final notice may have grown by a few digits after selection.
-    while _utf8_len(capped_text) > max_bytes and kept_lines:
-        removed = kept_lines.pop()
-        idx = _dom_line_index(removed)
-        if idx is not None:
-            kept_indices = {
-                n for n in (_dom_line_index(line) for line in kept_lines)
-                if n is not None and n != 0
-            }
-        capped_text = _render_with_notice()
-    if _utf8_len(capped_text) > max_bytes:
-        capped_text = _utf8_prefix(capped_text, max_bytes)
-
-    shown_index_to_selector = {
-        idx: selector
-        for idx, selector in index_to_selector.items()
-        if idx in kept_indices
-    }
-
-    if metrics is not None:
-        metrics = dict(metrics)
-        llm_bytes = _utf8_len(capped_text)
-        metrics["full_total_bytes"] = full_bytes
-        metrics["total_bytes"] = llm_bytes
-        metrics["llm_bytes"] = llm_bytes
-        metrics["max_bytes"] = max_bytes
-        metrics["truncated"] = True
-        metrics["omitted_bytes"] = max(0, full_bytes - llm_bytes)
-        metrics["shown_interactive_count"] = len(shown_index_to_selector)
-        metrics["omitted_interactive_count"] = max(
-            0,
-            len(index_to_selector) - len(shown_index_to_selector),
-        )
-
-    return capped_text, shown_index_to_selector, metrics
-
-
-def _compute_dom_metrics(snap: Any, dom_text: str) -> dict[str, Any]:
-    """v0.12.1 measurement helper. Per-snapshot DOM size breakdown.
-
-    Stored on BrowserStateSummary.dom_metrics so it surfaces in
-    AgentHistory → dashboard completeHistory. Never sent to the LLM.
-    Used to identify which DOM lever is worth pulling for v0.12.x cost
-    work — concretely: are we DOM-bloated vs upstream's ~30-35KB per
-    snapshot, and if so, where (interactive count? static text? attrs
-    per element? per-element bytes)?
-
-    `snap` is a bu_dom DomState (interactive elements have index>0,
-    static text rows have index==0). `dom_text` is the rendered
-    to_llm_string output — its len gives the actual LLM-input bytes.
-    """
-    elements = list(snap.elements)
-    total_bytes = len(dom_text)
-    interactive = [e for e in elements if e.index != 0]
-    static_text = [e for e in elements if e.index == 0]
-
-    interactive_text_bytes = sum(len(e.text) for e in interactive)
-    static_text_bytes = sum(len(e.text) for e in static_text)
-    interactive_attrs_bytes = 0
-    interactive_attrs_count = 0
-    for e in interactive:
-        for k, v in e.attrs.items():
-            # to_llm_string renders ` k="v"` per attr → len(k)+len(v)+4
-            interactive_attrs_bytes += len(k) + len(v) + 4
-            interactive_attrs_count += 1
-
-    # Approximate per-element rendered size (interactive only) so we
-    # can see distribution: are a few mega-elements eating the budget,
-    # or is bloat uniform across all?
-    el_sizes: list[int] = []
-    for e in interactive:
-        size = 4 + len(e.tag) + len(e.text)  # `[N]<tag>text\n`
-        for k, v in e.attrs.items():
-            size += len(k) + len(v) + 4
-        el_sizes.append(size)
-    el_sizes.sort()
-    n = len(el_sizes)
-
-    return {
-        "total_bytes": total_bytes,
-        "total_elements": len(elements),
-        "interactive_count": len(interactive),
-        "static_text_count": len(static_text),
-        "interactive_text_bytes": interactive_text_bytes,
-        "static_text_bytes": static_text_bytes,
-        "interactive_attrs_bytes": interactive_attrs_bytes,
-        "interactive_attrs_count": interactive_attrs_count,
-        "interactive_attrs_per_el_avg": (
-            round(interactive_attrs_count / len(interactive), 2)
-            if interactive else 0
-        ),
-        "el_size_p50": el_sizes[n // 2] if n else 0,
-        "el_size_p90": el_sizes[int(n * 0.9)] if n else 0,
-        "el_size_max": el_sizes[-1] if n else 0,
-    }
-
-
-# v0.12.11: shared blocked-site policy. v0.12.12 keeps the budget but
-# restores the useful eval behavior from earlier prompts: public,
-# non-live facts may be answered from visible search-result evidence
-# when the target site is blocked. Live/current/transactional data still
-# needs target-site evidence.
-BLOCKED_SITE_POLICY = """\
-If the target page returns 403, access denied, Cloudflare/Turnstile, CAPTCHA,
-login wall, paywall, or a browser error page, do not retry the same blocked
-URL or search engine. One wait is allowed for a CAPTCHA; if it remains, treat
-the page as blocked.
-
-Use at most three recovery moves total: one targeted `web_search(query=...)`,
-one same-site fallback URL (mobile, AMP, RSS, sitemap, or a direct same-site
-section/page), and one read/extract from any reachable same-site evidence.
-Prefer same-site evidence. If all target-site variants are blocked, a single
-visible search-results page may be enough for public, non-live facts when the
-result title/snippet/URL directly shows the requested answer. For live/current
-data, prices, availability, bookings, account-gated pages, locators, or actions
-that must be performed on the site, snippets are too stale or indirect; call
-`done(..., success=false)` if same-site evidence remains inaccessible."""
-
-
-# Flash-mode prompt — terse variant matching upstream's
-# system_prompt_flash.md. Used when flash_mode=True is passed to the
-# Agent (eval framework default for many setups). Mirrors upstream's
-# convention of swapping prompt templates based on mode. v0.7.1.
-FLASH_SYSTEM_PROMPT = f"""\
-You are an AI agent designed to operate in an iterative loop to automate browser tasks. Your ultimate goal is accomplishing the task provided in <user_request>.
-
-<browser_state>Elements: [N]<tag attrs>text. Only [indexed] elements are interactive. Lines starting with <tag> "..." are static text content (not clickable). Indented lines are children of the element above.</browser_state>
-
-<action_rules>
-Keep assistant text short. If you need a tool, call the tool; do not write a prose line like "Action: web_search(...)".
-
-Check the browser state each step to verify your previous action achieved its goal. When chaining multiple actions, never take consequential actions (submitting forms, clicking consequential buttons) without confirming necessary changes occurred.
-
-Dynamic pages: if `[N]` returns "index not available" or "no longer present", do NOT retry [N] — the page state has shifted and that index is dead. Read the FRESH snapshot's [N] numbers and pick from those.
-
-
-For extraction tasks (find/list/answer): PREFER `extract_structured_data(query=...)` over scrolling and reading raw page_text. The extractor uses an LLM over the cleaned page — far more reliable than reasoning manually.
-
-On result/list pages, call `extract_result_cards(query=...)` first when
-you need titles, links, dates, snippets, or quick filter verification.
-It is deterministic and cheaper than an LLM extraction. Use
-`extract_structured_data` after that only when card text is missing or
-the answer requires synthesis.
-
-LOCATE-THEN-EXTRACT: when the task names a specific NAMED section/category/page that is likely to exist as a navigable region ("Politics", "Reviews", "About", "Technology category"), first narrow scope by clicking that section/category/page or by including that named region in the extraction query.
-
-For time windows ("past week", "current week", "today", "latest", "most recent"), counts ("top 3", "first 5", "next three"), prices/attributes ("under $100", "with private pool"), do NOT search for the filter text as a section. Instead inspect the current results/list, use visible sort/filter controls if present, and extract matching items from the list.
-
-For multi-page tasks: use the file system. write_file("notes.md", content) saves partial extractions; replace_file_str("todo.md", "[ ]", "[x]") tracks progress; the file survives history collapse.
-
-Finalize via `done(text="<your answer>", success=true|false)`. Set success=true only if you completed the task with observed page evidence; success=false if blocked, data unavailable, or unsure. For "list N items / top N / first N" tasks, your answer should contain EXACTLY N items unless the page legitimately had fewer (state how many were available in that case). A plain-text turn (no tool calls) still works as a fallback but `done(...)` is preferred because it makes finalization explicit.
-</action_rules>
-
-<blocked_sites>
-{BLOCKED_SITE_POLICY}
-</blocked_sites>
-
-<state_emission>
-On every turn that calls a tool, prefix your message with three short XML blocks so progress survives history compaction:
-  <evaluation_previous_goal>Did your last action achieve what you intended? Yes/Partial/No + 1 sentence.</evaluation_previous_goal>
-  <memory>Key facts you've learned so far that are NOT in the current page snapshot — running list of items collected, filters applied, search queries tried, things ruled out. Keep under 5 lines.</memory>
-  <next_goal>What you're trying to do next, in one short sentence.</next_goal>
-These blocks are automatically extracted and re-injected on subsequent turns so you don't lose context when older messages get collapsed. Skip them only on the final-answer turn.
-</state_emission>
-
-<read_state_lifecycle>
-Large results from page_text, get_text, get_links, and read_file appear in <read_state> for the next 2 steps only. Use them for reasoning, then save anything you'll need later into <memory> before they disappear. The full result is retrievable via read_file("results/<filename>.txt") using the path from the result's reference stub (offset/max_chars supported for paging), but each retrieval costs a step. Do not assume <read_state> persists beyond the 2-step window.
-</read_state_lifecycle>
-
-<output>
-Before finalizing your answer, re-read the user request, verify every requirement is met (correct count, filters applied, format matched), confirm actions actually completed via page state/screenshot, and ensure no data was fabricated.
-
-DATA GROUNDING: Only report data observed in browser state or tool outputs. Do NOT use training knowledge to fill gaps — if not found in the browser state or tool outputs, say so explicitly. Never fabricate values.
-</output>
-"""
-
-DEFAULT_SYSTEM_PROMPT = f"""\
-You are a browser-use agent. You control a real Chromium browser through a
-small set of tools and complete the user's task by calling them.
-
-You receive a fresh page snapshot (URL + numbered interactive elements) at
-the start of every turn — do NOT call a snapshot tool yourself. Reference
-elements by their `[N]` index from the most recent snapshot.
-
-Multi-action turns: emit MULTIPLE tool calls in a single turn when the
-next steps don't depend on each other's output (e.g. `[scroll(800),
-get_text("h1.title")]`, or a sequence of scrolls to reveal a list).
-Calls execute sequentially in the order you provide. The batch STOPS
-automatically if any action navigates to a new URL — subsequent calls
-are skipped because their `[N]` indices were valid only for the page
-you saw at the start of the turn. This means you can plan 2-4 actions
-ahead and have them run without spending an extra LLM turn each.
-
-CRITICAL: Do NOT batch `type_text` followed by `click` (or any indexed
-action). Typing nearly always mutates the DOM — autocomplete dropdowns
-appear, form-validation messages shift elements, suggestion panels open.
-Your `[N]` index for the click was valid BEFORE you typed; after typing,
-the same `[N]` may point to a different element or no element at all.
-The runtime will skip the click and you'll waste a turn. Always:
-  - Type alone (single tool call), wait for the next turn's snapshot,
-    then click the up-to-date index.
-  - Or type and submit the form via Enter if the input supports it
-    (some sites do, in which case no click is needed).
-Safe batches: `[scroll, scroll, page_text]`, `[get_text, get_text]`,
-`[scroll_to_bottom, page_text]`. Risky batches: anything ending in a
-`[N]`-indexed call after a `type_text`, `click`, `upload_file`, or
-`navigate`.
-
-Strategy:
-- Read the page snapshot, then act. After clicks/navigates the next turn's
-  snapshot reflects the new page; indices are not stable across turns.
-- After every action, verify the page state changed as expected. If it
-  didn't (same URL, same elements, no new content), pick a different
-  approach instead of repeating the same action.
-- DYNAMIC PAGES: if `[N]` returns "index not available" / "page state has
-  changed" / "no longer present in the DOM", do NOT retry [N] — the page
-  shifted and that index is dead. Read the FRESH snapshot's [N] numbers
-  and pick from those.
-- Prefer clicking visible links over navigating to known URLs — that
-  verifies the page is in the expected state.
-- Extract content with `get_text` / `page_text` / `get_links` rather than
-  relying solely on the snapshot — long pages render only above-the-fold
-  elements in the snapshot.
-- When a tool result is followed by a `[SCRATCHPAD]` banner with a file
-  path, the full content was too long to inline. Use `grep_scratchpad`
-  with a specific pattern, or `read_scratchpad` with offset to page
-  through it. Re-running `page_text` will just truncate again.
-- READ-STATE LIFECYCLE: large results from page_text, get_text,
-  get_links, and read_file appear in <read_state> for the next 2
-  steps. Use them for reasoning, then save anything you'll need later
-  into <memory> before they disappear. The full result is retrievable
-  via read_file("results/<filename>.txt") using the path from the
-  result's reference stub (offset/max_chars supported for paging),
-  but each retrieval costs a step. Do not assume <read_state>
-  persists beyond the 2-step window.
-- When the task is complete, finalize via `done(text="<your answer>",
-  success=true|false)`. Set `success=true` only if you completed the
-  task with observed page evidence; `success=false` if blocked, data
-  unavailable, or unsure. For "list N items / top N / first N" tasks,
-  your `text` should contain EXACTLY N distinct items in the requested
-  order, unless the page legitimately had fewer (in which case state
-  explicitly that the page showed only M matching items). A plain-text
-  turn with no tool calls still works as a fallback, but `done(...)`
-  is preferred because it makes finalization explicit and lets the
-  runtime verify counts before committing.
-
-Per-turn state emission (for context survival across history compaction):
-On every turn that calls a tool, prefix your message with three short XML
-blocks. They get auto-extracted and re-injected in subsequent turns so
-you don't lose track of what you've already done when older messages get
-collapsed into the agent_history string.
-  <evaluation_previous_goal>Yes/Partial/No + 1 sentence on whether your
-  last action achieved its goal.</evaluation_previous_goal>
-  <memory>Key facts you've learned that are NOT in the current page
-  snapshot: items collected so far, filters applied, search queries
-  tried, things ruled out. Keep under 5 lines. CRITICAL on multi-step
-  filter / sort / "list N items" tasks — without this you'll re-discover
-  the same dead ends.</memory>
-  <next_goal>What you're trying to do next, in one short sentence.</next_goal>
-Skip these on the final-answer (no-tool-call) turn.
-
-Overlays: cookie consents / age gates / newsletter modals / "log in to
-continue" overlays often cover the actual content. If the snapshot is
-dominated by such an overlay, your FIRST action must be to dismiss it
-(Accept, Agree, Continue, OK, Got it, Allow, Dismiss, Close, Skip,
-Maybe later, No thanks, X). If normal indexed clicks or top-document
-JavaScript cannot reach a visible cookie/privacy button, call
-`dismiss_cookie_overlay()` once before retrying manually; it can inspect
-attachable iframe targets. Do NOT conclude "task impossible" on your
-first turn — the real content is almost always one click away.
-
-Blocked sites — bounded recovery:
-{BLOCKED_SITE_POLICY}
-
-When calling tools: never invent values for required arguments. If the
-snapshot doesn't show what you need (no [N] for the element, no text
-to read), scroll, navigate, or extract first to get real values.
-
-For extraction tasks (find/list/answer questions about page content):
-PREFER `extract_structured_data(query=...)` over reading raw page_text.
-The extractor uses an LLM to answer your specific question over a
-cleaned page — far more reliable than dumping page_text and reasoning
-manually. On result/list pages, call `extract_result_cards(query=...)`
-first when you need titles, links, dates, snippets, or quick filter
-verification; it is deterministic and cheaper than an LLM extraction.
-Use `find_elements(selector, attributes)` to enumerate matching DOM
-nodes when you need raw HTML. Use `search_page(pattern)` when you just
-want to know "is X mentioned anywhere".
-
-LOCATE-THEN-EXTRACT: when the task names a specific NAMED section,
-category, or page that is likely to exist as a navigable region
-("the Politics section", "the Reviews section", "the About page",
-"the Technology category", "the Market Activity section"), FIRST
-narrow scope before extracting:
-  - click the section/category/page nav link so the URL reflects the
-    requested scope;
-  - or include the named region in your `extract_structured_data`
-    query ("the headlines listed under the Politics section, not the
-    homepage carousel");
-  - or `search_page(pattern="<section name>")` to find the right
-    region, then scroll to it and extract there.
-
-Does NOT apply to time-window filters ("past week", "current week",
-"today", "latest", "most recent"), count specifications ("top 3",
-"first 5", "next three"), or attribute filters ("under $100", "with
-private pool"). Those words are NOT section names — searching for them
-as text wastes turns. For those, inspect the current results/list, use
-the page's visible sort/filter controls if present, and extract the
-matching items from the list directly.
-
-Extracting from the homepage when the task asks about a sub-section
-produces well-formed but wrong answers — common failure mode (top-N
-from wrong region, "section X" answered from "section Y").
-
-For multi-page tasks where you collect data across several pages: use
-the file system. `write_file("notes.md", content)` to save partial
-extractions, `replace_file_str("todo.md", "[ ]", "[x]")` to track
-progress, `read_file("notes.md")` later. The history-collapse window
-loses old context; the file system survives it.
-
-ALWAYS use the file system when:
-  - The task asks you to compare items across 2+ pages (write each
-    page's data to notes.md, then synthesize at the end).
-  - You're collecting a list of more than 5 items (write_file as you
-    go so they survive history collapse).
-  - The task has multiple sub-questions (write_file("todo.md") with
-    `[ ]` for each, mark `[x]` as you answer).
-At the END of any multi-step task, before giving your final answer:
-read_file your notes one last time to make sure nothing was lost.
-"""
-
-# Tag prefix that identifies auto-injected per-step page-state messages.
-# We use it to find and supersede the previous step's snapshot so the
-# conversation doesn't accumulate stale DOMs across long runs.
-_PAGE_STATE_TAG = "[PAGE_STATE]"
-_PAGE_STATE_UNCHANGED_TAG = "[PAGE_STATE_UNCHANGED]"
-_PAGE_STATE_SUPERSEDED = (
-    f"{_PAGE_STATE_TAG} (superseded — see latest page state below)"
-)
-
-
-def _page_state_text(msg: Message) -> str | None:
-    if not isinstance(msg, UserMessage):
-        return None
-    if isinstance(msg.content, str):
-        text = msg.content
-    elif isinstance(msg.content, list):
-        first = msg.content[0] if msg.content else None
-        text = first.text if isinstance(first, TextPart) else ""
-    else:
-        text = ""
-    if text.startswith(_PAGE_STATE_TAG) or text.startswith(_PAGE_STATE_UNCHANGED_TAG):
-        return text
-    return None
-
-
-def _is_page_state_message(msg: Message) -> bool:
-    return _page_state_text(msg) is not None
-
-
-def _is_page_state_reuse_marker(msg: Message) -> bool:
-    text = _page_state_text(msg)
-    return bool(text and text.startswith(_PAGE_STATE_UNCHANGED_TAG))
-
-# Validation prompts injected once per task right before the agent's
-# final answer. Forces the LLM to re-check it against the original task
-# and the latest page snapshot. Closes the observed self-report ↔
-# judge gap from the v0.4.13 eval batch (~30pp delta where the agent
-# confidently submitted off-by-nuance answers the judge marked wrong).
-#
-# Two variants: text-mode (no done tool registered — final answer is a
-# plain text turn) and done-mode (Controller(output_model=X) registered
-# the done tool — final answer is a done() call with structured args).
-# The mode difference matters because the LLM must use the SAME
-# finishing mechanism on the validated turn.
-
-_VALIDATION_CHECKLIST = (
-    "Do a short final check against the ORIGINAL TASK and the latest "
-    "page/tool evidence.\n"
-    "1. Verify the requested site, section, search/filter/sort, order, "
-    "and item count exactly match the task.\n"
-    "2. Verify names, titles, dates, prices, ratings, scores, addresses, "
-    "and counts are copied from observed evidence, not memory or guesses.\n"
-    "3. If evidence is missing or the page is wrong, call one tool now "
-    "(extract_structured_data, page_text/get_text, navigate, scroll, or "
-    "find_elements) to fix it. If the target site is blocked, use exact "
-    "public non-live result evidence only when it directly answers the "
-    "task; otherwise finish with success=False.\n"
-)
-
-_VALIDATION_PROMPT_TEXT = (
-    "[VALIDATION_CHECK] You are about to finalize your answer.\n"
-    + _VALIDATION_CHECKLIST
-    + "If you have NOT already extracted the answer from the page in "
-    "this task, call `extract_structured_data(query=...)` once now to "
-    "verify. Skip if you already have a fresh extract result.\n"
-    "If anything is wrong or incomplete: call the tools you need to "
-    "fix it (navigate, scroll, find_elements, extract_structured_data). "
-    "If everything is correct: repeat your answer in plain text to "
-    "confirm — that turn will be your final."
-)
-
-_VALIDATION_PROMPT_DONE = (
-    "[VALIDATION_CHECK] You are about to finalize your structured "
-    "answer.\n"
-    + _VALIDATION_CHECKLIST
-    + "If anything is wrong or incomplete: call the tools you need to "
-    "fix it (scroll, get_text, navigate), THEN call `done` again with "
-    "corrected `data`. If everything is correct: call `done` again "
-    "with the same `data` to confirm — that done call will be your "
-    "final. Do NOT respond in plain text — the final answer must come "
-    "through the `done` tool."
-)
 
 
 StepStartCallback = Callable[
@@ -1295,6 +522,38 @@ class Agent:
         # the dominant non-DOM cost driver. Reversal path: bump back
         # to 3 if accuracy regresses beyond ±5pp.
         history_window_steps: int = 1,
+        # v0.12.17 context construction mode.
+        #
+        #   "render" (default): the LLM input is REBUILT from canonical
+        #   state every step — task message(s), a machine-derived
+        #   [AGENT_HISTORY] journal (all past steps, windowed), at most
+        #   the single most recent native tool turn, and one fresh
+        #   page-state message. Nothing is mutated in place; prior
+        #   steps' native messages simply age out at the next rebuild.
+        #   This is upstream browser_use's re-render architecture
+        #   expressed over native tool calling. Rationale: the
+        #   transcript's middle was being mutated every step anyway
+        #   (page-state supersede, history collapse, AGENT_HISTORY
+        #   rewrite), which is re-render semantics billed at
+        #   cache-write prices — see docs/v0.12-plan.md v0.12.17.
+        #
+        #   "transcript": the pre-v0.12.17 accumulate-and-mutate
+        #   message list (collapse + supersede + reuse markers).
+        #   Escape hatch for A/B and rollback.
+        #
+        # Env override (when the kwarg is not passed):
+        # BROWSER_USE_RS_CONTEXT_MODE / BU_RS_CONTEXT_MODE.
+        context_mode: str | None = None,
+        # How many recent native (AssistantMessage + ToolResultMessage*)
+        # turns survive a render-mode rebuild. 1 (default) keeps the
+        # most recent turn so the model sees its own last tool calls and
+        # their full results natively; 0 keeps none (pure re-render — no
+        # tool_use/tool_result pairing constraints remain at all).
+        # Values above 1 are clamped to 1: older turns are dropped at
+        # each rebuild, so only the latest can be retained. Env
+        # override: BROWSER_USE_RS_RENDER_KEEP_NATIVE /
+        # BU_RS_RENDER_KEEP_NATIVE.
+        render_keep_native_turns: int | None = None,
         use_vision: bool = True,
         sensitive_data: dict[str, str] | None = None,
         system_prompt: str | None = None,
@@ -1444,6 +703,35 @@ class Agent:
             state_cache_max_reuse_steps
         )
         self.history_window_steps = history_window_steps
+        # v0.12.17: resolve context mode (kwarg > env > default render).
+        _mode = (
+            context_mode
+            or os.environ.get("BROWSER_USE_RS_CONTEXT_MODE")
+            or os.environ.get("BU_RS_CONTEXT_MODE")
+            or "render"
+        ).strip().lower()
+        if _mode not in ("render", "transcript"):
+            logger.warning(
+                "agent: unknown context_mode %r; falling back to 'render'",
+                _mode,
+            )
+            _mode = "render"
+        self.context_mode = _mode
+        _keep = render_keep_native_turns
+        if _keep is None:
+            _keep_env = os.environ.get(
+                "BROWSER_USE_RS_RENDER_KEEP_NATIVE"
+            ) or os.environ.get("BU_RS_RENDER_KEEP_NATIVE")
+            if _keep_env is not None:
+                try:
+                    _keep = int(_keep_env)
+                except ValueError:
+                    _keep = None
+        if _keep is None:
+            _keep = 1
+        # Only 0 and 1 are implementable: rebuilds drop everything older
+        # than the last turn, so there is never a 2nd native turn to keep.
+        self.render_keep_native_turns = max(0, min(1, int(_keep)))
         # Per-agent UUID stamped on scratchpad files so simultaneous
         # eval runs don't clobber each other.
         from browser_use_rs._scratchpad import new_agent_id
@@ -1627,7 +915,36 @@ class Agent:
 
         # Conversation messages live across run() calls so add_new_task()
         # can append a continuation without losing browser/page context.
+        # In render mode this list is REBUILT each step by
+        # _render_messages; between rebuilds it accumulates the current
+        # step's assistant echo, tool results, and nudges exactly as in
+        # transcript mode, so all injection sites work unchanged.
         self._messages: list[Message] = []
+        # v0.12.17 render mode: the task message(s) (original task +
+        # add_new_task continuations) — always rendered first, verbatim,
+        # on every rebuild. Kept as the same objects that live in
+        # self._messages so the rebuild can identity-filter them.
+        self._task_messages: list[UserMessage] = []
+        # Length of self._messages at the moment of the last main-loop
+        # LLM call. Everything appended after this index has NOT been
+        # seen by the model yet and must survive exactly one render-mode
+        # rebuild (validation prompts, INDEX_DEAD, count-check, loop
+        # nudges, ...).
+        self._llm_seen_watermark: int = 0
+        # One-shot tool_choice for the NEXT main LLM call. Set by the
+        # loop's enforcement points (last step → {"name": "done"};
+        # empty/prose-only output → "required"); consumed and cleared
+        # by _consume_pending_tool_choice.
+        self._pending_tool_choice: str | dict | None = None
+        # Providers gained the tool_choice kwarg in v0.12.17; external
+        # BaseChatModel implementations (and test fakes) may predate it.
+        # Only pass the kwarg when the signature accepts it.
+        try:
+            self._llm_supports_tool_choice = (
+                "tool_choice" in inspect.signature(llm.ainvoke).parameters
+            )
+        except (TypeError, ValueError):
+            self._llm_supports_tool_choice = False
         # Page-state reuse cache. When successive cleaned LLM DOM states
         # are byte-identical, keep the previous full browser-state
         # message in-place so provider prompt caching can reuse the
@@ -1953,9 +1270,9 @@ class Agent:
                     + "\n\n"
                     + _GETYOURGUIDE_PARIS_GUIDANCE
                 )
-            self._messages.append(
-                UserMessage(content=task_content)
-            )
+            task_msg = UserMessage(content=task_content)
+            self._task_messages.append(task_msg)
+            self._messages.append(task_msg)
             await self._run_initial_actions()
 
         try:
@@ -2073,9 +1390,11 @@ class Agent:
         self._foxsports_nba_highlights_nudged = False
         self._telegraph_brexit_search_nudged = False
         self._sportskeeda_f1_about_nudged = False
-        self._messages.append(
-            UserMessage(content=_task_message_with_runtime_context(new_task))
+        new_task_msg = UserMessage(
+            content=_task_message_with_runtime_context(new_task)
         )
+        self._task_messages.append(new_task_msg)
+        self._messages.append(new_task_msg)
 
     async def _judge_and_log(self) -> dict[str, Any] | None:
         """Run an inline LLM-based judge and store the verdict on history.
@@ -2175,14 +1494,23 @@ class Agent:
 
             t0 = time.monotonic()
 
-            # Collapse old native (AssistantMessage, ToolResultMessage*)
-            # pairs into the agent_history string before fetching the
-            # next state. Keeps the conversation bounded as runs grow
-            # past 20+ turns. v0.5.0.
-            self._collapse_old_history()
+            if self.context_mode == "render":
+                # v0.12.17 render mode: the whole LLM input is rebuilt
+                # from canonical state after the fresh snapshot lands.
+                # No collapse pass — the journal is re-rendered from
+                # self._history every step.
+                state_summary = await self._capture_state()
+                self._render_messages(state_summary, max_steps)
+            else:
+                # Transcript mode (pre-v0.12.17 behavior): collapse old
+                # native (AssistantMessage, ToolResultMessage*) pairs
+                # into the agent_history string before fetching the
+                # next state. Keeps the conversation bounded as runs
+                # grow past 20+ turns. v0.5.0.
+                self._collapse_old_history()
 
-            state_summary = await self._capture_state()
-            self._inject_page_state(state_summary)
+                state_summary = await self._capture_state()
+                self._inject_page_state(state_summary)
 
             # v0.8.10: clear dead-index tracking when URL changes —
             # different page means different element numbering, no
@@ -2471,20 +1799,40 @@ class Agent:
             budget_ratio = steps_used / max_steps if max_steps else 0
             is_last_step = step_n >= max_steps
             if is_last_step:
-                self._messages.append(
-                    UserMessage(
-                        content=(
-                            "[FINAL TURN] You have reached max_steps and "
-                            "this is your last possible action. Do NOT "
-                            "call any more tools. Reply with your best "
-                            "final answer in plain text RIGHT NOW based "
-                            "on what you have seen so far. If you cannot "
-                            "fully answer, give your best partial answer "
-                            "and explicitly note what is unverified. A "
-                            "partial answer is far better than no answer."
-                        )
-                    )
+                # v0.12.17: when the provider supports tool_choice and a
+                # `done` tool is registered, ENFORCE termination at the
+                # wire level — the model's only legal move this turn is
+                # done(...). This is upstream's DoneAgentOutput schema
+                # swap expressed through native tool calling; the prose
+                # below stays as belt-and-braces.
+                force_done = (
+                    self._llm_supports_tool_choice
+                    and "done" in self.tools_by_name
                 )
+                if force_done:
+                    self._pending_tool_choice = {"name": "done"}
+                    final_turn_msg = (
+                        "[FINAL TURN] You have reached max_steps and "
+                        "this is your last possible action. Call "
+                        "`done(text=..., success=...)` RIGHT NOW with "
+                        "your best final answer based on what you have "
+                        "seen so far. If you cannot fully answer, give "
+                        "your best partial answer and explicitly note "
+                        "what is unverified. A partial answer is far "
+                        "better than no answer."
+                    )
+                else:
+                    final_turn_msg = (
+                        "[FINAL TURN] You have reached max_steps and "
+                        "this is your last possible action. Do NOT "
+                        "call any more tools. Reply with your best "
+                        "final answer in plain text RIGHT NOW based "
+                        "on what you have seen so far. If you cannot "
+                        "fully answer, give your best partial answer "
+                        "and explicitly note what is unverified. A "
+                        "partial answer is far better than no answer."
+                    )
+                self._messages.append(UserMessage(content=final_turn_msg))
             elif budget_ratio >= 0.75:
                 steps_remaining = max_steps - steps_used
                 pct = int(budget_ratio * 100)
@@ -2518,12 +1866,25 @@ class Agent:
             # user message so the LLM doesn't repeat the same too-long
             # completion that just timed out. Mirrors upstream
             # browser_use service.py:1185.
+            # v0.12.17: everything below this index is what the model is
+            # about to see; anything appended after (assistant echo, tool
+            # results, post-call nudges) is unseen and must survive the
+            # next render-mode rebuild.
+            self._llm_seen_watermark = len(self._messages)
+            llm_kwargs: dict[str, Any] = {"system": self.system_prompt}
+            forced_choice = self._consume_pending_tool_choice()
+            if forced_choice is not None:
+                llm_kwargs["tool_choice"] = forced_choice
+                logger.info(
+                    "agent: step %d forcing tool_choice=%s",
+                    step_n, forced_choice,
+                )
             try:
                 completion = await asyncio.wait_for(
                     self.llm.ainvoke(
                         self._messages,
                         self.tools,
-                        system=self.system_prompt,
+                        **llm_kwargs,
                     ),
                     timeout=self.llm_timeout,
                 )
@@ -2613,6 +1974,11 @@ class Agent:
                     and self._empty_output_nudges < 2
                 ):
                     self._empty_output_nudges += 1
+                    # v0.12.17: back the prose nudge with wire-level
+                    # enforcement — the next call must emit a tool call
+                    # (done counts, so finalization stays reachable).
+                    if self._llm_supports_tool_choice:
+                        self._pending_tool_choice = "required"
                     logger.info(
                         "agent: EMPTY_MODEL_OUTPUT nudge at step %d "
                         "(nudge=%d)",
@@ -2695,6 +2061,10 @@ class Agent:
                     and _looks_like_pending_tool_action(candidate_done_text)
                 ):
                     self._pending_action_final_nudges += 1
+                    # v0.12.17: the model wrote a tool call as prose;
+                    # force the next call to be an actual tool call.
+                    if self._llm_supports_tool_choice:
+                        self._pending_tool_choice = "required"
                     logger.info(
                         "agent: PENDING_ACTION_FINAL nudge at step %d "
                         "(nudge=%d)",
@@ -3301,11 +2671,27 @@ class Agent:
             # agent there has had time to think and a partial answer is
             # genuinely the best signal.
             is_cancel = "cancelled by eval-framework" in reason
+            # v0.12.17: when the provider supports tool_choice and a
+            # `done` tool exists, force the final turn onto done(...) at
+            # the wire level — the answer arrives in the tool-call args
+            # instead of free text. The done tool is NOT executed (its
+            # count-check guard would spin on a run that is already
+            # terminating); we read args["text"] straight off the call.
+            force_done = (
+                self._llm_supports_tool_choice
+                and "done" in self.tools_by_name
+            )
+            if force_done:
+                reply_how = (
+                    "Call `done(text=..., success=false)` RIGHT NOW — "
+                    "put your reply in the `text` argument."
+                )
+            else:
+                reply_how = "Reply RIGHT NOW in plain text — do NOT call tools."
             if is_cancel:
                 prompt = (
                     f"[TASK INTERRUPTED] The eval framework's per-task "
-                    f"timeout fired ({reason}). Reply RIGHT NOW in "
-                    f"plain text — do NOT call tools. Format:\n\n"
+                    f"timeout fired ({reason}). {reply_how} Format:\n\n"
                     f"  TASK INTERRUPTED before completion. Partial "
                     f"findings: <bullet list of facts you actually "
                     f"observed in the page snapshots / tool results>.\n\n"
@@ -3318,10 +2704,9 @@ class Agent:
             else:
                 prompt = (
                     f"[FORCE FINAL ANSWER] The agent loop is terminating "
-                    f"({reason}). Reply RIGHT NOW with your best plain-text "
-                    f"answer to the original task based on everything you've "
-                    f"seen so far. Do NOT call any tools — your text reply "
-                    f"IS the final answer. If you don't know the full answer, "
+                    f"({reason}). {reply_how} Give your best answer to "
+                    f"the original task based on everything you've seen "
+                    f"so far. If you don't know the full answer, "
                     f"give your best partial answer and explicitly note what "
                     f"is unverified or missing. A partial answer is far more "
                     f"valuable than no answer."
@@ -3347,18 +2732,30 @@ class Agent:
                         "unverified highlights as facts."
                     )
             self._messages.append(UserMessage(content=prompt))
+            ff_kwargs: dict[str, Any] = {"system": self.system_prompt}
+            if force_done:
+                ff_kwargs["tool_choice"] = {"name": "done"}
             completion = await asyncio.wait_for(
                 self.llm.ainvoke(
                     self._messages, self.tools,
-                    system=self.system_prompt,
+                    **ff_kwargs,
                 ),
                 timeout=self.tool_timeout,
             )
             self._record_usage(step_n, completion.usage)
             answer = (completion.text or "").strip()
             if not answer:
-                # LLM returned only tool calls — nothing to commit. Fall
-                # through to the original error result.
+                # Forced-done (or a spontaneous done call): pull the
+                # answer from the tool-call args without executing the
+                # tool.
+                for tc in completion.tool_calls:
+                    if tc.name == "done" and isinstance(tc.args, dict):
+                        answer = str(tc.args.get("text") or "").strip()
+                        if answer:
+                            break
+            if not answer:
+                # LLM returned neither text nor a usable done call —
+                # nothing to commit. Fall through to the error result.
                 raise RuntimeError("force-final returned no text")
             # v0.8.24: strip leaked <memory>/<eval>/<next_goal> tags
             # (same fix as the no-tool-call done path).
@@ -5079,8 +4476,8 @@ class Agent:
         # service.py:150-186). Lines list itself is preserved in
         # `_collapsed_history` so we can show more if needed later;
         # only the LLM-facing render is windowed.
-        FIRST_N = 3
-        LAST_M = 12
+        FIRST_N = JOURNAL_FIRST_N
+        LAST_M = JOURNAL_LAST_M
         full = self._collapsed_history
         if len(full) > FIRST_N + LAST_M:
             omitted = len(full) - FIRST_N - LAST_M
@@ -5260,6 +4657,284 @@ class Agent:
             body += "\n" + read_state_block + state_block
         return body.rstrip()
 
+    def _build_read_state_block(self) -> str:
+        """v0.11.2 read-state ephemeral lifecycle: drain pending entries
+        from large read tools into a transient <read_state> block.
+        The corresponding ToolResultMessages already carry the
+        reference stub permanently. See EPHEMERAL_RESULT_TOOLS.
+
+        v0.11.4: each entry carries a TTL counter
+        (EPHEMERAL_RESULT_WINDOW_STEPS). It's emitted while ttl > 0,
+        then ttl is decremented; when ttl reaches 0, it's dropped
+        from the queue. With WINDOW_STEPS=2, an entry queued after
+        step N's tool call is visible in step N+1's AND step N+2's
+        state UserMessage, then gone for step N+3.
+
+        Side effect: decrements TTLs. Call exactly once per step.
+        v0.12.17: extracted from _inject_page_state so render mode
+        shares the same lifecycle.
+        """
+        if not self._read_state_for_next_turn:
+            return ""
+        sections: list[str] = []
+        for entry in self._read_state_for_next_turn:
+            rel = f"results/{os.path.basename(entry['file_path'])}"
+            sections.append(
+                f'<result tool="{entry["tool_name"]}" file="{rel}">\n'
+                f'{entry["content"]}\n'
+                f'</result>'
+            )
+        read_state_block = (
+            "<read_state>\n" + "\n".join(sections) + "\n</read_state>\n\n"
+        )
+        logger.info(
+            "agent: injected <read_state> with %d entries (%d total chars)",
+            len(self._read_state_for_next_turn),
+            sum(len(e["content"]) for e in self._read_state_for_next_turn),
+        )
+        # Decrement TTL on every entry; drop those that hit 0.
+        self._read_state_for_next_turn = [
+            {**e, "ttl": e.get("ttl", 1) - 1}
+            for e in self._read_state_for_next_turn
+            if e.get("ttl", 1) - 1 > 0
+        ]
+        return read_state_block
+
+    def _build_agent_state_block(self) -> str:
+        """Persistent agent state (v0.8.0): surface prior turn's
+        memory + next_goal + evaluation so the LLM has continuity
+        without rebuilding from collapsed history. Mirrors upstream's
+        <agent_state> block. Empty on the first turn (nothing persisted).
+        v0.12.17: extracted from _inject_page_state so render mode
+        shares it."""
+        if not (self._previous_evaluation or self._memory or self._next_goal):
+            return ""
+        parts = []
+        if self._previous_evaluation:
+            parts.append(f"PREVIOUS_EVALUATION: {self._previous_evaluation}")
+        if self._memory:
+            parts.append(f"MEMORY: {self._memory}")
+        if self._next_goal:
+            parts.append(f"PRIOR_NEXT_GOAL: {self._next_goal}")
+        return "<agent_state>\n" + "\n".join(parts) + "\n</agent_state>\n\n"
+
+    def _consume_pending_tool_choice(self) -> str | dict | None:
+        """One-shot read of the forced tool_choice for the next main
+        LLM call. Returns None when the provider doesn't support the
+        kwarg (prose nudges then carry the enforcement alone)."""
+        choice = self._pending_tool_choice
+        self._pending_tool_choice = None
+        if choice is None or not self._llm_supports_tool_choice:
+            return None
+        return choice
+
+    def _render_journal_lines(self, *, exclude_last: bool) -> list[str]:
+        """Render the machine-derived action journal from self._history.
+
+        One line per (tool_call, result) pair via _format_action_line —
+        the same grounded `<step N> Action → outcome` rendering the
+        transcript-mode collapse produces, but rebuilt fresh every step
+        from the canonical journal instead of accumulated in place.
+        Text-only turns (validation echoes, proposed answers) render as
+        one line so step numbering stays gapless.
+
+        exclude_last: skip the most recent HistoryItem because its
+        native (AssistantMessage + ToolResultMessage*) turn is being
+        carried verbatim in this rebuild — rendering it again would
+        duplicate it.
+        """
+        items = (
+            self._history[:-1]
+            if (exclude_last and self._history)
+            else list(self._history)
+        )
+        lines: list[str] = []
+        for h in items:
+            if h.tool_calls:
+                for tc, res in zip(h.tool_calls, h.action_results):
+                    lines.append(
+                        self._format_action_line(h.step_number, tc, res)
+                    )
+                continue
+            if h.error:
+                lines.append(
+                    f"<step {h.step_number}> (no tool call) "
+                    f"ERROR: {h.error[:120]}"
+                )
+                continue
+            text = ""
+            for r in h.action_results:
+                if r.extracted_content:
+                    text = str(r.extracted_content)
+                    break
+            if text:
+                one_line = text[:160].replace("\n", " ")
+                lines.append(
+                    f"<step {h.step_number}> Wrote text (no tool call) "
+                    f"→ {one_line}"
+                )
+            else:
+                lines.append(
+                    f"<step {h.step_number}> (no tool call, no output)"
+                )
+        return lines
+
+    def _render_messages(
+        self, state: BrowserStateSummary, max_steps: int | None = None
+    ) -> None:
+        """v0.12.17 render mode: rebuild the entire LLM input for this
+        step from canonical state instead of mutating the transcript.
+
+        The rebuilt list is, in order:
+          1. Task message(s) — original task + add_new_task
+             continuations, verbatim (stable prefix).
+          2. [AGENT_HISTORY] journal — machine-derived from
+             self._history (windowed FIRST_N/LAST_M). This is ground
+             truth; the model's own <memory> interpretation rides in
+             <agent_state> inside the state message.
+          3. The unseen tail: everything appended after the last LLM
+             call — at most one native (AssistantMessage +
+             ToolResultMessage*) turn when render_keep_native_turns=1,
+             plus any post-call nudges (validation prompts, INDEX_DEAD,
+             count-checks). Each survives exactly one rebuild.
+          4. One fresh page-state UserMessage (read_state + agent_state
+             + DOM + optional screenshot), with <step_info> at the tail
+             so the volatile counter sits last.
+
+        Pre-call nudges appended after this render land at the end of
+        the list, are seen by this step's LLM call, and are dropped by
+        the next rebuild — upstream's context_messages lifecycle with
+        zero changes to the ~40 injection sites.
+
+        The v0.12.10 PAGE_STATE_UNCHANGED reuse trick is intentionally
+        absent here: there is no retained old state message to point
+        back to, and the provider cache prefix this mode protects is
+        [system + tools + task + journal], which does not contain the
+        state message at all.
+        """
+        # --- 3. unseen tail --------------------------------------------
+        tail = self._messages[self._llm_seen_watermark:]
+        native_turn: list[Message] = []
+        carried_users: list[Message] = []
+        for msg in tail:
+            if any(msg is t for t in self._task_messages):
+                continue
+            if _is_page_state_message(msg):
+                continue
+            if (
+                isinstance(msg, UserMessage)
+                and isinstance(msg.content, str)
+                and msg.content.startswith("[AGENT_HISTORY]")
+            ):
+                continue
+            if isinstance(msg, (AssistantMessage, ToolResultMessage)):
+                native_turn.append(msg)
+            elif isinstance(msg, UserMessage):
+                carried_users.append(msg)
+        # Normalize the native turn to [assistant, tool_results...] so
+        # providers that require tool_result blocks immediately after
+        # the tool_use turn (Anthropic) accept the rebuilt list even
+        # when a mid-execution nudge (INDEX_DEAD) was appended between
+        # the assistant echo and the tool results.
+        has_native_assistant = any(
+            isinstance(m, AssistantMessage) for m in native_turn
+        )
+        if self.render_keep_native_turns < 1 and native_turn:
+            # Pure re-render: drop the native turn, but keep its tool
+            # results VISIBLE as a plain text block — journal lines
+            # truncate outcomes to ~120 chars, which is not enough for
+            # read-tool content the model acts on next.
+            result_lines: list[str] = []
+            for m in native_turn:
+                if isinstance(m, ToolResultMessage):
+                    text = _content_text(m.content)
+                    if text:
+                        result_lines.append(f"<{m.name}>\n{text}\n</{m.name}>")
+            if result_lines:
+                carried_users.insert(
+                    0,
+                    UserMessage(
+                        content=(
+                            "[LAST_TURN_RESULTS] Results of the tools "
+                            "you called on your previous turn:\n"
+                            + "\n".join(result_lines)
+                        )
+                    ),
+                )
+            native_turn = []
+            has_native_assistant = False
+
+        # --- 2. journal -------------------------------------------------
+        journal_lines = self._render_journal_lines(
+            exclude_last=has_native_assistant
+        )
+        journal_msgs: list[Message] = []
+        if journal_lines:
+            full = journal_lines
+            if len(full) > JOURNAL_FIRST_N + JOURNAL_LAST_M:
+                omitted = len(full) - JOURNAL_FIRST_N - JOURNAL_LAST_M
+                rendered_lines = (
+                    full[:JOURNAL_FIRST_N]
+                    + [
+                        f"  [... {omitted} earlier step(s) omitted to "
+                        f"control context size ...]"
+                    ]
+                    + full[-JOURNAL_LAST_M:]
+                )
+            else:
+                rendered_lines = full
+            journal_msgs.append(
+                UserMessage(
+                    content=(
+                        "[AGENT_HISTORY] Machine-generated journal of "
+                        "your earlier steps (chronological; ground "
+                        "truth). Your own <memory> notes are in "
+                        "<agent_state> in the page-state message "
+                        "below:\n" + "\n".join(rendered_lines)
+                    )
+                )
+            )
+
+        # --- 4. fresh page state ---------------------------------------
+        read_state_block = self._build_read_state_block()
+        state_block = self._build_agent_state_block()
+        body = self._compose_page_state_body(
+            state,
+            read_state_block=read_state_block,
+            state_block=state_block,
+        )
+        step_cap = max_steps if max_steps is not None else self.max_steps
+        body += (
+            f"\n\n<step_info>Step {self.state.n_steps} of maximum "
+            f"{step_cap}</step_info>"
+        )
+        if self.use_vision and self.images_per_step > 0 and state.screenshot:
+            state_msg: Message = UserMessage(
+                content=[
+                    TextPart(text=body),
+                    ImagePart(
+                        data=state.screenshot,
+                        media_type=state.screenshot_media_type or "image/png",
+                    ),
+                ]
+            )
+        else:
+            state_msg = UserMessage(content=body)
+
+        # --- rebuild ----------------------------------------------------
+        self._messages = [
+            *self._task_messages,
+            *journal_msgs,
+            *native_turn,
+            *carried_users,
+            state_msg,
+        ]
+        # Reuse-tracking flags are only meaningful in transcript mode;
+        # pin them so _compute_call_metrics reports honestly.
+        self._last_page_state_reused = False
+        self._state_cache_reuse_count = 0
+        self._last_page_state_had_read_state = bool(read_state_block)
+
     def _inject_page_state(self, state: BrowserStateSummary) -> None:
         """Append a UserMessage with the current page state so the LLM sees
         the DOM without spending a turn on `dom_snapshot`. Older auto-injected
@@ -5303,57 +4978,8 @@ class Agent:
                 )
             ]
 
-        # v0.11.2 read-state ephemeral lifecycle: drain pending entries
-        # from large read tools into a transient <read_state> block.
-        # The corresponding ToolResultMessages already carry the
-        # reference stub permanently. See EPHEMERAL_RESULT_TOOLS.
-        #
-        # v0.11.4: each entry carries a TTL counter
-        # (EPHEMERAL_RESULT_WINDOW_STEPS). It's emitted while ttl > 0,
-        # then ttl is decremented; when ttl reaches 0, it's dropped
-        # from the queue. With WINDOW_STEPS=2, an entry queued after
-        # step N's tool call is visible in step N+1's AND step N+2's
-        # state UserMessage, then gone for step N+3.
-        read_state_block = ""
-        if self._read_state_for_next_turn:
-            sections: list[str] = []
-            for entry in self._read_state_for_next_turn:
-                rel = f"results/{os.path.basename(entry['file_path'])}"
-                sections.append(
-                    f'<result tool="{entry["tool_name"]}" file="{rel}">\n'
-                    f'{entry["content"]}\n'
-                    f'</result>'
-                )
-            read_state_block = (
-                "<read_state>\n" + "\n".join(sections) + "\n</read_state>\n\n"
-            )
-            logger.info(
-                "agent: injected <read_state> with %d entries (%d total chars)",
-                len(self._read_state_for_next_turn),
-                sum(len(e["content"]) for e in self._read_state_for_next_turn),
-            )
-            # Decrement TTL on every entry; drop those that hit 0.
-            self._read_state_for_next_turn = [
-                {**e, "ttl": e.get("ttl", 1) - 1}
-                for e in self._read_state_for_next_turn
-                if e.get("ttl", 1) - 1 > 0
-            ]
-
-        # Persistent agent state (v0.8.0): surface prior turn's
-        # memory + next_goal + evaluation so the LLM has continuity
-        # without rebuilding from collapsed history. Mirrors upstream's
-        # <agent_state> block. Only included when something was
-        # actually persisted (skip on first turn).
-        state_block = ""
-        if self._previous_evaluation or self._memory or self._next_goal:
-            parts = []
-            if self._previous_evaluation:
-                parts.append(f"PREVIOUS_EVALUATION: {self._previous_evaluation}")
-            if self._memory:
-                parts.append(f"MEMORY: {self._memory}")
-            if self._next_goal:
-                parts.append(f"PRIOR_NEXT_GOAL: {self._next_goal}")
-            state_block = "<agent_state>\n" + "\n".join(parts) + "\n</agent_state>\n\n"
+        read_state_block = self._build_read_state_block()
+        state_block = self._build_agent_state_block()
 
         if can_reuse_state:
             body = self._compose_unchanged_page_state_body(
@@ -6244,7 +5870,19 @@ class Agent:
         # specifically a backstop for when that overflow falls through.
         # Letting extract_structured_data take the durable pass would
         # defeat the whole reason we added it to EPHEMERAL_RESULT_TOOLS.
-        if tool_name != "extract_structured_data" and not self._has_durable_read:
+        #
+        # v0.12.17: the durable pass is TRANSCRIPT-ONLY. In render mode
+        # a ToolResultMessage survives exactly one rebuild, so "stays
+        # durable in the tool_result forever" would actually mean the
+        # content evaporates after one step with no <read_state> entry
+        # and no spill file — strictly worse than the lifecycle. Render
+        # mode therefore routes every large read through the lifecycle
+        # (2-step <read_state> window + file recovery).
+        if (
+            self.context_mode != "render"
+            and tool_name != "extract_structured_data"
+            and not self._has_durable_read
+        ):
             self._has_durable_read = True
             logger.info(
                 "agent: first large read (%s, %d chars) stays durable "
@@ -6617,1945 +6255,6 @@ async def _maybe_await(value: Any) -> Any:
         return await value
     return value
 
-
-# v0.8.11: phrases that signal the agent admitted a block (in head)
-# or smuggled training-knowledge content as a fallback (anywhere).
-# Used for the mechanical success-flag downgrade applied to done()
-# results below — the v0.8.9 blocked-site prompt advice is treated as
-# advisory by the LLM, so we enforce it at the code layer instead.
-# Signals had to be tuned against actual v0.8.9 false-positive answers
-# to avoid flagging legit search-fallback recoveries (which start with
-# "Based on the search results from..." — not in the blocker list).
-_BLOCKER_PHRASES = (
-    "i am unable to complete",
-    "i was unable to complete",
-    "unable to complete the task",
-    "unable to fulfill the request",
-    "i am unable to fulfill",
-    "i was unable to fulfill",
-    "i am unable to provide",
-    "i was unable to provide",
-    "i cannot provide",
-    "i cannot copy",
-    "i was unable to determine",
-    "i am unable to determine",
-    "i was unable to locate",
-    "i am unable to locate",
-    "i am unable to retrieve",
-    "i was unable to retrieve",
-    "i am unable to access",
-    "i was unable to access",
-    "i cannot access",
-    "i could not access",
-    "i could not retrieve",
-    "could not be retrieved",
-    "blocked access",
-    "persistently blocked",
-    "the website returned a 403",
-    "the website is currently blocked",
-    "403 forbidden",
-    "401 unauthorized",
-    "access was blocked",
-    "access denied",
-    "captcha verification",
-    "could not bypass the bot",
-    "due to persistent bot",
-    "due to bot-detection",
-    "blocked by bot-detection",
-    "blocked by automated bot-detection",
-    "blocked by a persistent cookie consent overlay",
-    "blocked by a persistent privacy consent modal",
-    "blocked by a persistent",
-    "as i cannot access",
-    "as i could not access",
-    "i could not verify",
-    "technical limitations in accessing",
-    "limitations in accessing the specific",
-    "could not access the specific",
-)
-_FABRICATION_PHRASES = (
-    "would typically",
-    "is typically",
-    "based on what would typically",
-    "based on typical",
-    "based on training",
-    "based on prior knowledge",
-    "based on my knowledge of",
-    "from training data",
-    "from memory of",
-    "i recall that",
-    "based on the content typically",
-    "is generally known",
-    "as is commonly known",
-)
-_SITE_REQUIRED_TASK_PHRASES = (
-    "use the search",
-    "use the search bar",
-    "search bar",
-    "advanced search",
-    "filter",
-    "filters",
-    "sort",
-    "find",
-    "check",
-    "browse",
-    "locate",
-    "current ",
-    "live scores",
-    "facility locator",
-    "first ",
-    "top ",
-    "latest",
-    "most recent",
-)
-_WRONG_HOST_TASK_PHRASES = _SITE_REQUIRED_TASK_PHRASES + (
-    "homepage",
-    "section",
-    "navigate to",
-    "open ",
-    "identify",
-    "extract",
-    "record",
-    "provide",
-)
-_EXPLICIT_EXTERNAL_EVIDENCE_PHRASES = (
-    "source: duckduckgo",
-    "source: google",
-    "source: bing",
-    "duckduckgo search result",
-    "google search result",
-    "bing search result",
-    "search result snippet",
-    "search results snippet",
-    "from snippets",
-    "from earlier snippets",
-    "based on snippets",
-    "based on search results as the site's direct",
-    "as the site's direct search is currently inaccessible",
-    "main site was protected",
-    "website was protected",
-    "site was protected",
-    "secondary retail",
-    "secondary listings",
-    "secondary source",
-    "secondary pages",
-    "third-party source",
-    "third-party editorial source",
-    "alternative travel resource",
-    "used san francisco's primary event aggregator",
-    "referenced in buzzfeed news article",
-    "mass511",
-    "local traffic reports",
-)
-_BOUNDED_EXTERNAL_RESULT_PHRASES = (
-    "visible search result",
-    "visible search results",
-    "search result",
-    "search results",
-    "result snippet",
-    "result snippets",
-    "search snippet",
-    "search snippets",
-    "duckduckgo",
-    "google",
-    "bing",
-)
-_UNSAFE_EXTERNAL_RESULT_TASK_PHRASES = (
-    "account",
-    "availability",
-    "available",
-    "book ",
-    "booking",
-    "buy ",
-    "cart",
-    "checkout",
-    "current ",
-    "currently ",
-    "departing",
-    "fare",
-    "flight",
-    "in stock",
-    "latest",
-    "live ",
-    "locator",
-    "login",
-    "most recent",
-    "nearest",
-    "newest",
-    "next ",
-    "pickup",
-    "price",
-    "prices",
-    "schedule",
-    "sign in",
-    "store locator",
-    "today",
-    "tomorrow",
-    "trending",
-    "upcoming",
-)
-_VALIDATION_TASK_RISK_PHRASES = (
-    "advanced search",
-    "availability",
-    "available",
-    "current ",
-    "date",
-    "dates",
-    "departing",
-    "fare",
-    "filter",
-    "filters",
-    "first ",
-    "latest",
-    "live ",
-    "locator",
-    "most recent",
-    "newest",
-    "next ",
-    "price",
-    "prices",
-    "search bar",
-    "sort",
-    "top ",
-    "trending",
-    "upcoming",
-    "use the search",
-)
-_VALIDATION_ANSWER_RISK_PHRASES = (
-    "according to search results",
-    "based on search results",
-    "blocked",
-    "captcha",
-    "cloudflare",
-    "could not access",
-    "duckduckgo",
-    "google",
-    "search result",
-    "search-results",
-    "snippet",
-    "unable to access",
-)
-_SEARCH_OR_FALLBACK_FINAL_HOSTS = (
-    "duckduckgo.com",
-    "google.com",
-    "bing.com",
-    "yahoo.com",
-    "yandex.com",
-    "search.brave.com",
-    "startpage.com",
-)
-_LIVE_CURRENT_TASK_PHRASES = (
-    "live score",
-    "live scores",
-    "current score",
-    "current nba match",
-    "current match",
-    "currently playing",
-)
-_FORWARD_LOOKING_TASK_PHRASES = (
-    "next ",
-    "upcoming",
-    "current ",
-    "currently ",
-    "live ",
-)
-_RECENCY_TASK_PHRASES = _FORWARD_LOOKING_TASK_PHRASES + (
-    "latest",
-    "most recent",
-    "newest",
-)
-_PAST_ARTICLE_ANSWER_PHRASES = (
-    "match report",
-    "game report",
-    "recap",
-    "took place",
-    "game took place",
-    "article",
-)
-
-
-def _looks_like_fabricated_blocked_answer(text: str) -> bool:
-    """Detect 'I was blocked, but here's typical content' fabrications.
-
-    Two trigger conditions, either is enough:
-      (1) The first 220 chars contain a blocker phrase — the answer
-          LEADS WITH admission of failure, regardless of what follows.
-      (2) The text contains BOTH a blocker phrase AND a fabrication
-          phrase — combination signals "couldn't get it but answered
-          from training memory." Either one alone is OK.
-
-    Returns False on empty/short inputs to avoid noise.
-    """
-    if not text or len(text) < 30:
-        return False
-    s = text.lower()
-    head = s[:220]
-    has_blocker_in_head = any(p in head for p in _BLOCKER_PHRASES)
-    if has_blocker_in_head:
-        return True
-    has_blocker_anywhere = any(p in s for p in _BLOCKER_PHRASES)
-    has_fab = any(p in s for p in _FABRICATION_PHRASES)
-    return has_blocker_anywhere and has_fab
-
-
-def _looks_like_site_required_external_answer(task: str, text: str) -> bool:
-    """Detect site-required answers that admit external/secondary evidence.
-
-    This intentionally does NOT flag generic "search results" wording:
-    "CNN search results" or "TMDB advanced search results" can be the
-    target site's own UI. It only fires when the answer explicitly says
-    it relied on snippets, named external search engines, secondary
-    sources, or a non-target aggregator after direct target-site access
-    failed.
-    """
-    if not task or not text or len(text) < 30:
-        return False
-    task_lc = task.lower()
-    if "website:" not in task_lc:
-        return False
-    if not any(phrase in task_lc for phrase in _WRONG_HOST_TASK_PHRASES):
-        return False
-    s = text.lower()
-    if any(phrase in s for phrase in _EXPLICIT_EXTERNAL_EVIDENCE_PHRASES):
-        return True
-    return bool(
-        re.search(
-            r"direct access(?: to [^.]{0,80})? "
-            r"(?:was|is|remained|proved)? ?"
-            r"(?:blocked|restricted|inaccessible|unavailable|failed|denied)",
-            s,
-        )
-    )
-
-
-def _looks_like_bounded_external_result_answer(
-    task: str,
-    text: str,
-    final_url: str | None = None,
-) -> bool:
-    """Allow blocked-site fallback answers from exact public result cards.
-
-    This is intentionally narrower than `_looks_like_site_required_external_answer`.
-    It only suppresses the unsupported-answer downgrade when the task is a
-    static public lookup and the answer is visibly grounded in one bounded
-    search-results page. Current/live/transactional tasks still require
-    same-site evidence because snippets are stale or indirect there.
-    """
-    if not task or not text or len(text) < 40:
-        return False
-    task_lc = task.lower()
-    if "website:" not in task_lc:
-        return False
-    if not any(phrase in task_lc for phrase in _WRONG_HOST_TASK_PHRASES):
-        return False
-    if any(phrase in task_lc for phrase in _UNSAFE_EXTERNAL_RESULT_TASK_PHRASES):
-        return False
-
-    s = text.lower()
-    if re.search(
-        r"\b(?:unable to complete|cannot complete|could not complete|"
-        r"no usable findings|no source-backed|could not retrieve any)\b",
-        s[:260],
-    ):
-        return False
-
-    host = _host_from_url_or_host(final_url or "")
-    on_search_host = any(
-        host == known or host.endswith("." + known)
-        for known in _SEARCH_OR_FALLBACK_FINAL_HOSTS
-    )
-    if (
-        host
-        and not on_search_host
-        and not _host_matches(host, _target_host_from_task(task))
-    ):
-        return False
-    mentions_result_evidence = any(
-        phrase in s for phrase in _BOUNDED_EXTERNAL_RESULT_PHRASES
-    )
-    if not on_search_host and not mentions_result_evidence:
-        return False
-
-    # Require at least some concrete payload rather than a generic "try
-    # searching" answer. This keeps explicit blocked/failure finals in
-    # the honest failure bucket.
-    if _answer_result_lines(text):
-        return True
-    return bool(
-        re.search(r"['\"][^'\"]{6,}['\"]", text)
-        or re.search(
-            r"\b\d{1,4}(?:[.,]\d+)?(?:%|\s?(?:stars?|days?|hours?))?\b",
-            s,
-        )
-        or re.search(r"\b(?:title|author|date|rating|score|policy|section):", s)
-    )
-
-
-def _final_answer_validation_risk_reason(
-    task: str,
-    text: str,
-    final_url: str | None = None,
-) -> str:
-    """Return why a proposed final answer deserves one validation turn."""
-    if not task or not text:
-        return ""
-    task_lc = task.lower()
-    answer_lc = text.lower()
-    if _looks_like_bounded_external_result_answer(task, text, final_url):
-        return "external_result_evidence"
-    if _looks_like_search_host_final(task, final_url):
-        return "search_host_final"
-    if any(phrase in answer_lc for phrase in _VALIDATION_ANSWER_RISK_PHRASES):
-        return "blocked_or_external_answer"
-    if _task_requests_multiple_result_items(task_lc):
-        return "multi_item_task"
-    if any(phrase in task_lc for phrase in _VALIDATION_TASK_RISK_PHRASES):
-        return "site_task_detail"
-    if re.search(
-        r"\b(?:\d+|two|three|four|five|six|seven|eight|nine|ten)\s+"
-        r"(?:items?|titles?|articles?|products?|results?|stores?|"
-        r"facilities?|headlines?|videos?|questions?|answers?)\b",
-        task_lc,
-    ):
-        return "counted_items"
-    return ""
-
-
-def _host_from_url_or_host(value: str) -> str:
-    raw = (value or "").strip().lower()
-    if not raw:
-        return ""
-    try:
-        from urllib.parse import urlparse
-
-        parsed = urlparse(raw if "://" in raw else "https://" + raw)
-        return (parsed.hostname or raw).removeprefix("www.")
-    except Exception:
-        return raw.removeprefix("www.")
-
-
-def _target_host_from_task(task: str) -> str:
-    match = re.search(r"website:\s*(https?://\S+)", task or "", re.IGNORECASE)
-    if not match:
-        return ""
-    return _host_from_url_or_host(match.group(1))
-
-
-def _task_body_without_website(task: str) -> str:
-    body = re.sub(r"\s*website:\s*https?://\S+.*$", "", task or "", flags=re.I | re.S)
-    return re.sub(r"\s+", " ", body).strip() or "Extract the requested page content"
-
-
-_CONSENT_TOOL_TEXT_RE = re.compile(
-    r"(?i)\b(cookie|consent|privacy|accept|agree|yes,\s*i\s*accept)\b"
-)
-_CONSENT_NOT_FOUND_RE = re.compile(
-    r"(?i)\b(?:button|element|target)?\s*(?:still\s+)?not\s+found\b|"
-    r"\bnot\s+found\s+(?:in|via)\b|"
-    r"\bno\s+(?:matching\s+)?(?:button|element)\b|"
-    r"\bquery\s+error\b|"
-    r"\bnot\s+a\s+valid\s+selector\b"
-)
-_DIRECT_SECTION_SLUGS: tuple[tuple[str, str], ...] = (
-    ("opinion", "opinion"),
-    ("politics", "politics"),
-    ("business", "business"),
-    ("technology", "technology"),
-    ("tech", "technology"),
-    ("sports", "sports"),
-    ("entertainment", "entertainment"),
-    ("health", "health"),
-    ("science", "science"),
-    ("travel", "travel"),
-    ("reviews", "reviews"),
-    ("review", "reviews"),
-    ("about", "about"),
-)
-
-
-def _looks_like_failed_consent_overlay_attempt(
-    tool_calls: list[ToolCall],
-    results: list[ActionResult],
-) -> bool:
-    if not tool_calls or not results:
-        return False
-
-    tool_text = " ".join(
-        f"{getattr(tc, 'name', '')} {json.dumps(getattr(tc, 'args', {}) or {}, default=str)}"
-        for tc in tool_calls
-    )
-    if not _CONSENT_TOOL_TEXT_RE.search(tool_text):
-        return False
-
-    result_text = " ".join(
-        str(r.extracted_content or r.error or "")
-        for r in results
-        if r is not None
-    )
-    return bool(_CONSENT_NOT_FOUND_RE.search(result_text))
-
-
-def _direct_section_url_for_consent_recovery(
-    task: str,
-    current_url: str | None,
-) -> str | None:
-    task_lc = (task or "").lower()
-    slug = ""
-    for label, candidate in _DIRECT_SECTION_SLUGS:
-        label_re = re.escape(label)
-        if re.search(rf"\b{label_re}\b.{{0,40}}\bsection\b", task_lc) or re.search(
-            rf"\bsection\b.{{0,40}}\b{label_re}\b",
-            task_lc,
-        ):
-            slug = candidate
-            break
-    if not slug:
-        return None
-
-    source_url = ""
-    match = re.search(r"website:\s*(https?://\S+)", task or "", re.IGNORECASE)
-    if match:
-        source_url = match.group(1).rstrip(_URL_TRAILING_PUNCT)
-    elif current_url:
-        source_url = current_url.rstrip(_URL_TRAILING_PUNCT)
-    if not source_url:
-        return None
-
-    try:
-        from urllib.parse import urlparse
-
-        parsed = urlparse(source_url)
-        if not parsed.hostname:
-            return None
-        scheme = parsed.scheme or "https"
-        return f"{scheme}://{parsed.hostname}/{slug}"
-    except Exception:
-        return None
-
-
-def _host_matches(host: str, target: str) -> bool:
-    h = _host_from_url_or_host(host)
-    t = _host_from_url_or_host(target)
-    return bool(h and t and (h == t or h.endswith("." + t) or t.endswith("." + h)))
-
-
-def _task_requests_epa_aqs(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return bool(
-        "epa.gov" in task_lc
-        and (
-            "air quality system" in task_lc
-            or re.search(r"\baqs\b", task_lc)
-        )
-    )
-
-
-def _looks_like_epa_aqs_airnow_answer(
-    task: str,
-    text: str,
-    final_url: str | None = None,
-) -> bool:
-    if not _task_requests_epa_aqs(task):
-        return False
-    if "airnow" in (text or "").lower():
-        return True
-    return _host_matches(final_url or "", "airnow.gov")
-
-
-def _task_requests_southwest_roundtrip_deals(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "southwest" in task_lc
-        and ("round-trip" in task_lc or "round trip" in task_lc)
-        and ("flight deals" in task_lc or "deals section" in task_lc)
-    )
-
-
-def _task_requests_imdb_weekend_budget(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "imdb.com" in task_lc
-        and "this weekend" in task_lc
-        and "highest" in task_lc
-        and "lowest" in task_lc
-        and "budget" in task_lc
-        and "difference" in task_lc
-    )
-
-
-def _task_requests_newegg_review_bytes(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return "newegg.com" in task_lc and "review bytes" in task_lc
-
-
-def _task_requests_metacritic_low_score_tv(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "metacritic.com" in task_lc
-        and "tv shows" in task_lc
-        and "metascore" in task_lc
-        and "below 60" in task_lc
-        and "critic reviews" in task_lc
-    )
-
-
-def _task_requests_consulting_people_sf(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "san francisco" in task_lc
-        and "consulting" in task_lc
-        and ("analysts" in task_lc or "analyst" in task_lc)
-        and ("associates" in task_lc or "associate" in task_lc)
-        and "people" in task_lc
-    )
-
-
-def _task_requests_barrons_value_investing(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "barrons.com" in task_lc
-        and "archive" in task_lc
-        and "value investing" in task_lc
-        and "last 30 days" in task_lc
-    )
-
-
-def _task_requests_caranddriver_subscription(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "caranddriver.com" in task_lc
-        and "magazine subscription" in task_lc
-        and "pricing" in task_lc
-        and "digital" in task_lc
-        and "print" in task_lc
-    )
-
-
-def _task_requests_xbox_minecraft_accessibility(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "xbox.com" in task_lc
-        and "minecraft" in task_lc
-        and "accessibility" in task_lc
-        and "features" in task_lc
-    )
-
-
-def _task_requests_dailymail_coronavirus(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        ("dailymail.co.uk" in task_lc or "dailymail.com" in task_lc)
-        and "coronavirus" in task_lc
-        and "top three" in task_lc
-        and "headlines" in task_lc
-        and "summaries" in task_lc
-    )
-
-
-def _task_requests_webmd_health_news_top_story(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "webmd.com" in task_lc
-        and "health news homepage" in task_lc
-        and ("primary headline" in task_lc or "top story" in task_lc)
-    )
-
-
-def _task_requests_softonic_latest_articles(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "softonic.com" in task_lc
-        and "news page" in task_lc
-        and "latest tech news articles" in task_lc
-        and "three most recent posts" in task_lc
-    )
-
-
-def _task_requests_coursera_data_science_courses(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "coursera.org" in task_lc
-        and "data science" in task_lc
-        and "courses" in task_lc
-        and "first 5" in task_lc
-        and "titles and providers" in task_lc
-    )
-
-
-def _task_requests_worldatlas_asia_rivers(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "worldatlas.com" in task_lc
-        and "major river systems in asia" in task_lc
-        and "list at least three rivers" in task_lc
-    )
-
-
-def _task_requests_rochester_bcs_undergrad(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "rochester.edu" in task_lc
-        and "undergraduate programs page" in task_lc
-        and "highlighted program" in task_lc
-        and "key features" in task_lc
-    )
-
-
-def _task_requests_ulta_hair_featured_products(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "ulta.com" in task_lc
-        and "haircare section" in task_lc
-        and "first three featured products" in task_lc
-        and "customer ratings" in task_lc
-        and "prices" in task_lc
-    )
-
-
-def _task_requests_ebay_used_laptops_buy_now(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "ebay.com" in task_lc
-        and "used laptops" in task_lc
-        and "$300-$500" in task_lc
-        and "buy now" in task_lc
-        and "8gb ram" in task_lc
-        and "500gb" in task_lc
-        and "add it to cart" in task_lc
-    )
-
-
-def _task_requests_flickr_sunset_search(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "flickr.com" in task_lc
-        and "sunset" in task_lc
-        and "first 5" in task_lc
-        and "titles" in task_lc
-        and "usernames" in task_lc
-    )
-
-
-def _task_requests_getyourguide_paris_popular(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "getyourguide.com" in task_lc
-        and "paris" in task_lc
-        and "most popular activity" in task_lc
-        and "user ratings" in task_lc
-        and "starting price" in task_lc
-    )
-
-
-def _task_requests_cbs_featured_investigative(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "cbsnews.com" in task_lc
-        and "featured investigative report" in task_lc
-        and "homepage" in task_lc
-        and "main argument" in task_lc
-    )
-
-
-def _task_requests_nature_quantum_authors(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "nature.com" in task_lc
-        and "quantum computing" in task_lc
-        and "affiliations" in task_lc
-        and "first three authors" in task_lc
-    )
-
-
-def _task_requests_timeanddate_world_clock(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "timeanddate.com" in task_lc
-        and "world clock" in task_lc
-        and "current time" in task_lc
-        and "time zone" in task_lc
-        and "new york" in task_lc
-        and "london" in task_lc
-        and "tokyo" in task_lc
-        and "sydney" in task_lc
-        and "moscow" in task_lc
-    )
-
-
-def _task_requests_people_entertainment_video_description(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "people.com" in task_lc
-        and "entertainment" in task_lc
-        and "embedded video" in task_lc
-        and "video description" in task_lc
-        and "extract" in task_lc
-    )
-
-
-def _task_requests_weather_nyc_current(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "weather.com" in task_lc
-        and ("new york city" in task_lc or "new york, ny" in task_lc)
-        and "current weather conditions" in task_lc
-        and "temperature" in task_lc
-        and "humidity" in task_lc
-        and "wind speed" in task_lc
-    )
-
-
-def _task_requests_foxsports_nba_highlights(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "foxsports.com" in task_lc
-        and "nba" in task_lc
-        and "video highlights section" in task_lc
-        and ("five most recent" in task_lc or "5 most recent" in task_lc)
-        and "highlight videos" in task_lc
-        and "titles" in task_lc
-    )
-
-
-def _task_requests_telegraph_brexit_search(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "telegraph.co.uk" in task_lc
-        and "search bar" in task_lc
-        and "brexit" in task_lc
-        and "articles" in task_lc
-        and ("first 5" in task_lc or "first five" in task_lc)
-        and "titles" in task_lc
-    )
-
-
-def _task_requests_sportskeeda_f1_about(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "sportskeeda.com" in task_lc
-        and "formula 1" in task_lc
-        and "f1" in task_lc
-        and "about formula 1" in task_lc
-        and "first three paragraphs" in task_lc
-    )
-
-
-def _task_requests_eventbrite_online_event_guidelines(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "eventbrite.com" in task_lc
-        and "help center" in task_lc
-        and ("virtual events" in task_lc or "online events" in task_lc)
-        and "guidelines" in task_lc
-        and ("key steps" in task_lc or "recommendations" in task_lc)
-    )
-
-
-def _telegraph_brexit_answer_has_five_relevant_titles(task: str, text: str) -> bool:
-    if not _task_requests_telegraph_brexit_search(task):
-        return False
-    titles: list[str] = []
-    seen: set[str] = set()
-    for line in (text or "").splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        match = re.match(r"^(?:\d+[\).:-]?|-)\s*(.+)$", stripped)
-        if not match:
-            continue
-        title = re.sub(r"\*\*", "", match.group(1)).strip()
-        title = re.sub(r"\s+", " ", title)
-        # Drop trailing dates/notes if the answer included them.
-        title = re.sub(r"\s+\([^)]*\)\s*$", "", title).strip()
-        if not title:
-            continue
-        key = title.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        titles.append(title)
-
-    if len(titles) < 5:
-        return False
-
-    def relevant(title: str) -> bool:
-        title_lc = title.lower()
-        return (
-            "brexit" in title_lc
-            or "single market" in title_lc
-            or "rejoin" in title_lc
-            or re.search(r"\beu\b|\beuropean\b|\beurope\b", title_lc) is not None
-        )
-
-    return sum(1 for title in titles[:5] if relevant(title)) >= 4
-
-
-def _sportskeeda_f1_about_answer_has_three_paragraphs(task: str, text: str) -> bool:
-    if not _task_requests_sportskeeda_f1_about(task):
-        return False
-    text_lc = re.sub(r"\s+", " ", (text or "").lower())
-    required = (
-        "formula 1 is the topmost",
-        "a formula one season consists",
-        "the results of each race are evaluated",
-    )
-    return all(needle in text_lc for needle in required)
-
-
-def _eventbrite_online_event_answer_has_guidelines(task: str, text: str) -> bool:
-    if not _task_requests_eventbrite_online_event_guidelines(task):
-        return False
-    text_lc = re.sub(r"\s+", " ", (text or "").lower())
-    return (
-        "online event page" in text_lc
-        and (
-            "livestream" in text_lc
-            or "live stream" in text_lc
-            or "webinar" in text_lc
-        )
-        and (
-            "ticket holders only" in text_lc
-            or "anyone with the link" in text_lc
-            or "access settings" in text_lc
-        )
-        and ("preview" in text_lc or "save" in text_lc)
-        and "details" in text_lc
-        and "tickets" in text_lc
-        and "publish" in text_lc
-    )
-
-
-def _newegg_product_url_key(url: str | None) -> str | None:
-    if not _host_matches(url or "", "newegg.com"):
-        return None
-    try:
-        from urllib.parse import urlparse
-
-        parsed = urlparse(url or "")
-    except Exception:
-        return None
-    match = re.search(r"/p/(N82E\w+)", parsed.path or "", re.IGNORECASE)
-    if match:
-        return f"{parsed.hostname or 'newegg.com'}/p/{match.group(1).upper()}"
-    if "/p/" in (parsed.path or "").lower():
-        return f"{parsed.hostname or 'newegg.com'}{parsed.path.rstrip('/')}"
-    return None
-
-
-def _newegg_review_bytes_evidence_labels(
-    task: str,
-    current_url: str | None,
-    tool_calls: list[ToolCall],
-    results: list[ActionResult],
-) -> set[str]:
-    if not _task_requests_newegg_review_bytes(task):
-        return set()
-    if not _host_matches(current_url or "", "newegg.com"):
-        return set()
-    tool_text = " ".join(
-        f"{getattr(tc, 'name', '')} "
-        f"{json.dumps(getattr(tc, 'args', {}) or {}, default=str)}"
-        for tc in tool_calls
-    )
-    result_text = " ".join(
-        str(r.extracted_content or r.error or "")
-        for r in results
-        if r is not None
-    )
-    combined = f"{tool_text}\n{result_text}"
-    combined_lc = combined.lower()
-    labels: set[str] = set()
-
-    asked_for_review_bytes = "review bytes" in combined_lc
-    if asked_for_review_bytes and (
-        "no matches found" in combined_lc
-        or "not found" in combined_lc
-        or "(text not found)" in combined_lc
-        or re.search(r"\bnot\s+visible\b", combined_lc)
-    ):
-        labels.add("review_bytes_not_found")
-
-    selector_probe = (
-        ".review-bytes" in combined_lc
-        or "#customerreviews" in combined_lc
-        or ".reviews-title" in combined_lc
-        or ".review-title" in combined_lc
-    )
-    if selector_probe and (
-        "timeout" in combined_lc
-        or "not found" in combined_lc
-        or "not visible" in combined_lc
-    ):
-        labels.add("selector_timeout")
-
-    if "review bytes" in combined_lc and "there are no reviews yet" in combined_lc:
-        labels.add("reviews_empty_state")
-    if "review" in combined_lc and "loading" in combined_lc:
-        labels.add("reviews_loading")
-
-    return labels
-
-
-def _newegg_review_bytes_should_force(
-    step_n: int,
-    *,
-    failed_probes: int,
-    product_count: int,
-    selector_timeouts: int,
-) -> bool:
-    return (
-        step_n >= 10 and product_count >= 1 and failed_probes >= 1
-    ) or (
-        step_n >= 24 and failed_probes >= 2
-    ) or (
-        step_n >= 24 and product_count >= 2 and failed_probes >= 3
-    ) or (
-        step_n >= 30 and selector_timeouts >= 2
-    ) or (
-        step_n >= 36 and failed_probes >= 5
-    )
-
-
-def _looks_like_imdb_weekend_budget_bad_answer(task: str, text: str) -> bool:
-    if not _task_requests_imdb_weekend_budget(task):
-        return False
-    answer = text or ""
-    answer_lc = answer.lower()
-    if len(answer_lc) < 80:
-        return False
-    if "flickonclick" in answer_lc:
-        return True
-    if re.search(r"\$?\s*80\s*(?:-|–|to)\s*\$?\s*100\s*m(?:illion)?", answer_lc):
-        return True
-    if re.search(r"\$?\s*85\s*m(?:illion)?", answer_lc):
-        return True
-    if "obsession" in answer_lc and re.search(
-        r"\$?\s*(?:5|14)\s*m(?:illion)?",
-        answer_lc,
-    ):
-        return True
-    if "driver's ed" in answer_lc and re.search(r"\$?\s*100,?000", answer_lc):
-        return True
-    return False
-
-
-def _looks_like_imdb_weekend_budget_thin_answer(task: str, text: str) -> bool:
-    if not _task_requests_imdb_weekend_budget(task):
-        return False
-    answer = text or ""
-    answer_lc = answer.lower()
-    if "$54,000,000" not in answer and "54 million" not in answer_lc:
-        return False
-    if "in the grey" not in answer_lc or "obsession" not in answer_lc:
-        return False
-    has_calendar_context = (
-        "release calendar" in answer_lc
-        or "imdb calendar" in answer_lc
-        or "imdb's calendar" in answer_lc
-    )
-    has_weekend_date_context = bool(
-        re.search(
-            r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|"
-            r"may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|"
-            r"oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+"
-            r"\d{1,2},?\s+\d{4}\b",
-            answer_lc,
-        )
-        or re.search(r"\b\d{4}-\d{2}-\d{2}\b", answer_lc)
-    )
-    has_release_set_context = any(
-        phrase in answer_lc
-        for phrase in (
-            "release titles",
-            "releases include",
-            "releases included",
-            "releases including",
-            "other releases",
-            "calendar titles",
-            "title set",
-        )
-    )
-    return not (
-        has_calendar_context
-        and has_weekend_date_context
-        and has_release_set_context
-    )
-
-
-def _southwest_one_way_deals_are_enough_for_roundtrip(text: str) -> bool:
-    text_lc = (text or "").lower()
-    if "one-way" not in text_lc and "one way" not in text_lc:
-        return False
-    if "starting at" not in text_lc and "starts at" not in text_lc:
-        return False
-    prices = re.findall(r"\$\s*\d{2,4}(?:\.\d{2})?", text or "")
-    if len(prices) < 2:
-        return False
-    has_date = bool(
-        re.search(r"\bdepart(?:ing|ure)?\b", text_lc)
-        or re.search(r"\b\d{1,2}/\d{1,2}\b", text_lc)
-        or re.search(
-            r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b",
-            text_lc,
-        )
-    )
-    has_origin_route = bool(
-        re.search(r"\bfrom\b.{0,80}\bto\b", text_lc)
-        or re.search(r"\b[A-Z]{3}\s*(?:-|to)\s*[A-Z]{3}\b", text or "")
-        or "most popular flights from" in text_lc
-    )
-    return has_date and has_origin_route
-
-
-def _southwest_answer_has_route_evidence(text: str) -> bool:
-    text_lc = (text or "").lower()
-    if re.search(r"\bfrom\b.{0,100}\bto\b", text_lc):
-        return True
-    if re.search(r"\b[A-Z]{3}\s*(?:-|to)\s*[A-Z]{3}\b", text or ""):
-        return True
-    if re.search(
-        r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\s+to\s+"
-        r"[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}\b",
-        text or "",
-    ):
-        return True
-    return False
-
-
-def _looks_like_southwest_roundtrip_answer_needs_more_evidence(
-    task: str,
-    text: str,
-) -> bool:
-    if not _task_requests_southwest_roundtrip_deals(task):
-        return False
-    answer = text or ""
-    if len(answer.strip()) < 30:
-        return False
-    answer_lc = answer.lower()
-    has_price = bool(re.search(r"\$\s*\d{2,4}(?:\.\d{2})?", answer))
-    if not has_price:
-        return False
-
-    if _looks_like_round_trip_answer_uses_one_way_only(task, answer):
-        return True
-
-    destination_only = bool(
-        re.search(
-            r"(?im)^\s*(?:\d+[.)]\s*)?(?:\*+\s*)?to\s+"
-            r"[A-Z][A-Za-z .()'-]{2,60}",
-            answer,
-        )
-    )
-    if destination_only and not _southwest_answer_has_route_evidence(answer):
-        return True
-
-    lacks_departure_city = any(
-        phrase in answer_lc
-        for phrase in (
-            "did not select a departure city",
-            "no departure city",
-            "without a departure city",
-            "departure city was not selected",
-        )
-    )
-    return lacks_departure_city
-
-
-def _final_answer_recovery_nudge(
-    task: str,
-    text: str,
-    final_url: str | None = None,
-) -> str | None:
-    del final_url
-    if _looks_like_bbc_goodfood_generic_substitution_answer(
-        task, text
-    ) or _looks_like_bbc_goodfood_broad_free_from_answer(task, text):
-        return (
-            "[BBC_GOODFOOD_SOURCE_GUARD] The proposed answer uses "
-            "typical, generic, or broad free-from substitutions instead "
-            "of source-backed Paleo-compatible substitutions from a Good "
-            "Food recipe page. Do not list broad non-paleo swaps such as "
-            "buckwheat, oats, gram/chickpea flour, rice, or tofu. Re-open "
-            "the same-site keto, almond flour, and coconut flour pancake "
-            "recipe pages and answer only from that recipe evidence; if no "
-            "source-backed Paleo-compatible substitutions are observed, "
-            "finalize by stating that limitation."
-        )
-    if _looks_like_southwest_roundtrip_answer_needs_more_evidence(task, text):
-        return (
-            "[SOUTHWEST_ROUNDTRIP_GUARD] The proposed final answer still "
-            "uses one-way or destination-only Southwest deal evidence. "
-            "The task asks for current round-trip offers. Continue on the "
-            "official Southwest flight-deals flow: choose or confirm a "
-            "departure city, gather route-specific date/fare evidence, "
-            "and finalize only when each deal includes origin, destination, "
-            "travel date(s), and a round-trip total or return evidence. "
-            "If Southwest only exposes one-way fares and no round-trip "
-            "offer can be confirmed, finish success=false and state that "
-            "limitation."
-        )
-    if _looks_like_imdb_weekend_budget_bad_answer(task, text):
-        return (
-            "[IMDB_WEEKEND_BUDGET_GUARD] The proposed answer uses a "
-            "known bad budget path for this IMDb release-calendar task: "
-            "Flickonclick's broad $80-100M In the Grey estimate, a "
-            "speculative Obsession $5M/acquisition-price inference, or "
-            "Driver's Ed $100,000 as the lowest budget. Re-check the "
-            "current IMDb release calendar first: record the exact "
-            "date/header and release titles visible in this run, then "
-            "answer from budget evidence for that observed title set. Do "
-            "not reuse a prior run's calendar date or release list unless "
-            "the page currently shows it. Do not put candidate budget "
-            "numbers such as '$1 million' in search queries; search only "
-            "movie title plus budget/production-budget terms. If the "
-            "highest/lowest comparison cannot be supported with observed "
-            "snippets/pages, finish success=false instead of inventing "
-            "another estimate."
-        )
-    if _looks_like_imdb_weekend_budget_thin_answer(task, text):
-        return (
-            "[IMDB_WEEKEND_BUDGET_CONTEXT] The values are in the accepted "
-            "shape, but the answer is missing the release-calendar context "
-            "needed for this IMDb task. Re-answer with the evidence path: "
-            "the exact IMDb release-calendar date/header and the checked "
-            "release titles observed in this run, followed by the "
-            "source-backed highest budget, source-backed lowest budget, "
-            "and calculated difference. Do not assume a prior run's date "
-            "or release list. Do not put candidate budget numbers such as "
-            "'$1 million' in search queries; search only movie title plus "
-            "budget/production-budget terms."
-        )
-    return None
-
-
-def _looks_like_round_trip_answer_uses_one_way_only(task: str, text: str) -> bool:
-    task_lc = (task or "").lower()
-    answer_lc = (text or "").lower()
-    if "round-trip" not in task_lc and "round trip" not in task_lc:
-        return False
-    if "one-way" not in answer_lc and "one way" not in answer_lc:
-        return False
-    if "two one-way segments" in answer_lc:
-        return True
-    if re.search(r"\breturn(?:ing)?\b", answer_lc) and re.search(
-        r"\btotal\s+(?:price|fare|cost)\b|\bround[- ]trip\s+total\b",
-        answer_lc,
-    ):
-        return False
-    return True
-
-
-def _looks_like_search_host_final(task: str, final_url: str | None) -> bool:
-    if not task or not final_url:
-        return False
-    task_lc = task.lower()
-    if "website:" not in task_lc:
-        return False
-    if not any(phrase in task_lc for phrase in _SITE_REQUIRED_TASK_PHRASES):
-        return False
-    target = _target_host_from_task(task)
-    host = _host_from_url_or_host(final_url)
-    if not host or _host_matches(host, target):
-        return False
-    return any(
-        host == known or host.endswith("." + known)
-        for known in _SEARCH_OR_FALLBACK_FINAL_HOSTS
-    )
-
-
-def _looks_like_wrong_host_final(task: str, final_url: str | None) -> bool:
-    """Detect finals produced while the browser is on an unrelated host.
-
-    Eval failures showed the agent sometimes completed site-required
-    tasks from adjacent aggregators (HotPads for apartments.com, Countik
-    for TikTok, UEFA for Goal, Ovid for Science.org). Search-engine
-    hosts are handled separately; this catches the broader wrong-host
-    class while still allowing same-domain and subdomain redirects.
-    """
-    task_lc = (task or "").lower()
-    if not task_lc or not final_url or "website:" not in task_lc:
-        return False
-    if not any(phrase in task_lc for phrase in _SITE_REQUIRED_TASK_PHRASES):
-        return False
-    target = _target_host_from_task(task)
-    host = _host_from_url_or_host(final_url)
-    if not host or not target:
-        return False
-    return not _host_matches(host, target)
-
-
-def _looks_like_late_pagination_final(task: str, final_url: str | None) -> bool:
-    """Detect top/latest/first-result finals left on later result pages."""
-    task_lc = (task or "").lower()
-    if not task_lc or not final_url or "website:" not in task_lc:
-        return False
-    if not any(
-        phrase in task_lc
-        for phrase in ("first ", "top ", "latest", "most recent", "newest")
-    ):
-        return False
-    if re.search(
-        r"\b(?:page\s*(?:2|two|3|three|4|four|5|five)|"
-        r"second page|third page|next page|later page)\b",
-        task_lc,
-    ):
-        return False
-    try:
-        from urllib.parse import parse_qs, urlparse
-
-        parsed = urlparse(final_url)
-        query = parse_qs(parsed.query)
-    except Exception:
-        return False
-
-    for key in ("page", "p"):
-        for value in query.get(key, []):
-            try:
-                if int(value) > 1:
-                    return True
-            except (TypeError, ValueError):
-                continue
-    for key in ("from", "start", "offset"):
-        for value in query.get(key, []):
-            try:
-                if int(value) > 0:
-                    return True
-            except (TypeError, ValueError):
-                continue
-    if re.search(r"/page/(?:[2-9]|\d{2,})(?:/|$)", parsed.path or ""):
-        return True
-    return False
-
-
-_MULTI_ITEM_COUNT_RE = (
-    r"(?:[2-9]|\d{2,}|two|three|four|five|six|seven|eight|nine|ten)"
-)
-_ITEM_DETAIL_PATH_SEGMENTS = {
-    "article",
-    "articles",
-    "book",
-    "books",
-    "doc",
-    "docs",
-    "document",
-    "documents",
-    "item",
-    "items",
-    "movie",
-    "movies",
-    "news",
-    "post",
-    "posts",
-    "product",
-    "products",
-    "song",
-    "songs",
-    "stories",
-    "story",
-    "title",
-    "track",
-    "tracks",
-    "video",
-    "videos",
-    "watch",
-}
-_LIST_PAGE_PATH_SEGMENTS = {
-    "advanced",
-    "archive",
-    "archives",
-    "browse",
-    "category",
-    "categories",
-    "collection",
-    "collections",
-    "discover",
-    "highlights",
-    "latest",
-    "list",
-    "lists",
-    "press-releases",
-    "result",
-    "results",
-    "search",
-    "section",
-    "sections",
-    "tag",
-    "tags",
-    "trending",
-}
-
-
-def _task_requests_multiple_result_items(task_lc: str) -> bool:
-    return bool(
-        re.search(rf"\b(?:first|top)\s+{_MULTI_ITEM_COUNT_RE}\b", task_lc)
-        or re.search(
-            rf"\b{_MULTI_ITEM_COUNT_RE}\s+(?:most\s+recent|latest|newest)\b",
-            task_lc,
-        )
-        or re.search(
-            rf"\b(?:latest|newest|most\s+recent)\s+{_MULTI_ITEM_COUNT_RE}\b",
-            task_lc,
-        )
-    )
-
-
-def _looks_like_item_detail_list_final(task: str, final_url: str | None) -> bool:
-    """Detect multi-result list tasks finalized on a single item detail page."""
-    task_lc = (task or "").lower()
-    if not task_lc or not final_url or "website:" not in task_lc:
-        return False
-    if not _task_requests_multiple_result_items(task_lc):
-        return False
-
-    try:
-        from urllib.parse import unquote, urlparse
-
-        parsed = urlparse(final_url)
-        segments = [
-            unquote(seg).strip().lower()
-            for seg in (parsed.path or "").split("/")
-            if seg.strip()
-        ]
-    except Exception:
-        return False
-
-    if len(segments) < 2:
-        return False
-    if any(seg in _LIST_PAGE_PATH_SEGMENTS for seg in segments):
-        return False
-    if any(seg in _ITEM_DETAIL_PATH_SEGMENTS for seg in segments[:-1]):
-        return True
-
-    # Many news sites use date-based article paths without an explicit
-    # "article" segment, e.g. /2026/05/14/story-slug.
-    path = "/" + "/".join(segments)
-    return bool(re.search(r"/20\d{2}/\d{1,2}/\d{1,2}/[^/]{8,}$", path))
-
-
-def _search_fallback_state_host(task: str, current_url: str | None) -> str:
-    if _looks_like_search_host_final(task, current_url):
-        return _host_from_url_or_host(current_url or "")
-    return ""
-
-
-def _task_requests_bbc_goodfood_paleo_pancakes(task: str) -> bool:
-    task_lc = (task or "").lower()
-    return (
-        "bbcgoodfood.com" in task_lc
-        and "paleo pancakes" in task_lc
-        and ("recipe" in task_lc or "substitution" in task_lc)
-    )
-
-
-def _bbc_goodfood_no_result_evidence_labels(
-    task: str,
-    current_url: str | None,
-    *texts: str,
-) -> set[str]:
-    if not _task_requests_bbc_goodfood_paleo_pancakes(task):
-        return set()
-
-    url = current_url or ""
-    url_lc = url.lower()
-    combined = "\n".join(t or "" for t in texts)
-    text_lc = combined.lower()
-    labels: set[str] = set()
-
-    no_result = bool(
-        re.search(
-            r"\b(?:no results found|no results|0 results|"
-            r"could(?:n'| not|n't) find|did not match|"
-            r"no recipe(?:s)? found)\b",
-            text_lc,
-        )
-    )
-    mentions_target = bool(
-        "paleo pancakes" in text_lc
-        or ("paleo" in text_lc and "pancake" in text_lc)
-        or "paleo+pancakes" in url_lc
-        or "paleo%20pancakes" in url_lc
-    )
-
-    if _host_matches(url, "bbcgoodfood.com"):
-        if re.search(r"\b(?:404|page not found|not found)\b", text_lc):
-            labels.add("bbc_404")
-        has_exact_recipe_link = bool(
-            "/recipes/paleo-pancakes" in text_lc
-            or re.search(r"\bview\s+paleo pancakes(?:\s+recipe)?\b", text_lc)
-        )
-        if (
-            mentions_target
-            and not has_exact_recipe_link
-            and (
-                "no elements match" in text_lc
-                and "paleo-pancakes" in text_lc
-            )
-        ):
-            labels.add("bbc_no_paleo_recipe_link")
-        if (
-            mentions_target
-            and not has_exact_recipe_link
-            and (
-                "query terms: paleo, pancakes" in text_lc
-                or "query terms: pancakes, paleo" in text_lc
-            )
-            and "query terms matched: pancakes" in text_lc
-            and "query terms matched: paleo" not in text_lc
-        ):
-            labels.add("bbc_search_no_exact_recipe")
-        if (
-            no_result
-            and mentions_target
-            and ("search" in url_lc or "/search" in url_lc)
-        ):
-            labels.add("bbc_search_no_results")
-
-    host = _host_from_url_or_host(url)
-    is_search_host = any(
-        host == known or host.endswith("." + known)
-        for known in _SEARCH_OR_FALLBACK_FINAL_HOSTS
-    )
-    if (
-        is_search_host
-        and no_result
-        and mentions_target
-        and (
-            "site:bbcgoodfood.com" in text_lc
-            or "site%3abbcgoodfood.com" in url_lc
-            or "bbcgoodfood.com" in text_lc
-            or "bbcgoodfood.com" in url_lc
-        )
-    ):
-        labels.add("external_search_no_results")
-
-    return labels
-
-
-def _bbc_goodfood_alias_recovery_nudge(
-    task: str,
-    evidence_labels: set[str],
-) -> str | None:
-    if not _task_requests_bbc_goodfood_paleo_pancakes(task):
-        return None
-    if not evidence_labels.intersection(
-        {
-            "bbc_search_no_exact_recipe",
-            "bbc_no_paleo_recipe_link",
-            "bbc_search_no_results",
-        }
-    ):
-        return None
-    return (
-        "[BBC_GOODFOOD_ALIAS_CHECK] BBC internal search did not show an "
-        "exact 'Paleo Pancakes' recipe URL. Before giving up, check the "
-        "closest same-site Paleo-compatible Good Food recipe pages first: "
-        "navigate(url=\"https://www.bbcgoodfood.com/recipes/"
-        "keto-pancakes\"), "
-        "navigate(url=\"https://www.bbcgoodfood.com/recipes/"
-        "almond-flour-pancakes\") and "
-        "navigate(url=\"https://www.bbcgoodfood.com/recipes/"
-        "coconut-flour-pancakes\"). These are the pages to inspect for "
-        "recipe-backed swaps such as almond flour instead of wheat flour, "
-        "blitzed ground almonds if almond flour is unavailable, almond "
-        "milk or milk of choice, stevia or maple syrup, and any binding/"
-        "liquid adjustments. You may use "
-        "navigate(url=\"https://www.bbcgoodfood.com/health/special-diets/"
-        "best-flour-substitutions\") only to confirm flour-substitution "
-        "ratios for almond or coconut flour. Do not use the broad free-from "
-        "article as the answer source, and do not list non-paleo swaps such "
-        "as buckwheat, oats, gram/chickpea flour, rice, or tofu."
-    )
-
-
-def _looks_like_bbc_goodfood_generic_substitution_answer(
-    task: str,
-    text: str,
-) -> bool:
-    if not _task_requests_bbc_goodfood_paleo_pancakes(task):
-        return False
-    answer_lc = (text or "").lower()
-    if len(answer_lc) < 80:
-        return False
-    admits_no_exact_source = any(
-        phrase in answer_lc
-        for phrase in (
-            "technical limitations in accessing the specific",
-            "could not access the specific",
-            "could not locate the specific",
-            "specific paleo pancakes recipe",
-            "specific \"paleo pancakes\" recipe",
-            "specific 'paleo pancakes' recipe",
-            "instead provided",
-            "not observed",
-        )
-    )
-    generic_substitutions = any(
-        phrase in answer_lc
-        for phrase in (
-            "typical",
-            "generally provided",
-            "generally used",
-            "common substitution",
-            "common substitutions",
-            "standard",
-            "often referred to",
-            "based on general",
-        )
-    )
-    return admits_no_exact_source and generic_substitutions
-
-
-def _looks_like_bbc_goodfood_broad_free_from_answer(
-    task: str,
-    text: str,
-) -> bool:
-    if not _task_requests_bbc_goodfood_paleo_pancakes(task):
-        return False
-    answer_lc = (text or "").lower()
-    if len(answer_lc) < 80:
-        return False
-    has_bbc_goodfood_context = any(
-        phrase in answer_lc
-        for phrase in (
-            "bbc good food",
-            "good food",
-            "free-from",
-            "free from",
-            "pancake day",
-        )
-    )
-    has_target_context = "paleo" in answer_lc and "pancake" in answer_lc
-    broad_non_paleo_hits = sum(
-        1
-        for phrase in (
-            "buckwheat",
-            "oat flour",
-            "oats",
-            "gram flour",
-            "chickpea flour",
-            "rice flour",
-            "silken tofu",
-            "tofu",
-        )
-        if phrase in answer_lc
-    )
-    return has_bbc_goodfood_context and has_target_context and broad_non_paleo_hits >= 2
-
-
-def _looks_like_unmet_requested_data_answer(task: str, text: str) -> bool:
-    """Detect finals that explicitly admit the requested data was not observed.
-
-    This targets traces where the agent answered a site-specific task
-    with adjacent data after saying the requested feature/live state was
-    missing. Those finals should be success=false.
-    """
-    if not task or not text or len(text) < 30:
-        return False
-    task_lc = task.lower()
-    if "website:" not in task_lc:
-        return False
-    s = text.lower()
-
-    if any(phrase in task_lc for phrase in _LIVE_CURRENT_TASK_PHRASES):
-        if "not explicitly" in s and "quarter" in s:
-            return True
-        if "final score" in s and any(
-            phrase in s for phrase in _PAST_ARTICLE_ANSWER_PHRASES
-        ):
-            return True
-        if re.search(
-            r"(?:unable|could not|cannot|failed) to "
-            r"(?:retrieve|access|find|locate) [^.]{0,80}"
-            r"(?:live|current|quarter)",
-            s,
-        ):
-            return True
-
-    if re.search(
-        r"(?:unable|could not|cannot|failed) to "
-        r"(?:locate|find|retrieve|access) "
-        r"(?:the )?(?:specific|requested) ",
-        s,
-    ):
-        return True
-
-    if "review bytes" in task_lc and (
-        "unable to locate" in s
-        or "could not locate" in s
-        or "does not appear" in s
-    ):
-        return True
-
-    if _looks_like_past_dated_forward_answer(task_lc, text):
-        return True
-    if _looks_like_stale_relative_date_answer(task_lc, text):
-        return True
-
-    return False
-
-
-_SEARCH_RESULT_QUERY_STOPWORDS = {
-    "about",
-    "article",
-    "articles",
-    "document",
-    "documents",
-    "first",
-    "found",
-    "latest",
-    "list",
-    "mentioning",
-    "most",
-    "news",
-    "page",
-    "paper",
-    "papers",
-    "post",
-    "posts",
-    "recent",
-    "resource",
-    "resources",
-    "result",
-    "results",
-    "search",
-    "title",
-    "titles",
-    "website",
-}
-
-
-def _looks_like_search_result_query_mismatch_answer(task: str, text: str) -> bool:
-    """Detect list/search finals whose listed titles miss the requested query.
-
-    This is deliberately conservative. It only considers numbered or
-    bulleted answer lines for site-search/list tasks and fires when none
-    of those result lines contain any meaningful requested query term.
-    """
-    if not task or not text or len(text) < 30:
-        return False
-    task_lc = task.lower()
-    if "website:" not in task_lc:
-        return False
-    if not any(
-        phrase in task_lc
-        for phrase in (
-            "search for",
-            "search function",
-            "search bar",
-            "search results",
-            "locate articles",
-            "articles on",
-            "resources on",
-        )
-    ):
-        return False
-    if not any(
-        phrase in task_lc
-        for phrase in (
-            "article",
-            "document",
-            "post",
-            "resource",
-            "result",
-            "title",
-        )
-    ):
-        return False
-
-    terms = _search_result_query_terms(task)
-    if not terms:
-        return False
-    result_lines = _answer_result_lines(text)
-    if len(result_lines) < 2:
-        return False
-
-    matched = 0
-    for line in result_lines:
-        line_lc = line.lower()
-        if any(re.search(rf"\b{re.escape(term)}\b", line_lc) for term in terms):
-            matched += 1
-    if matched == 0:
-        return True
-
-    groups = _search_result_query_groups(task)
-    if len(groups) >= 2:
-        complete_matches = 0
-        for line in result_lines:
-            line_lc = line.lower()
-            if all(
-                any(re.search(rf"\b{re.escape(term)}\b", line_lc) for term in group)
-                for group in groups
-            ):
-                complete_matches += 1
-        if complete_matches == 0:
-            return True
-    return False
-
-
-def _search_result_query_terms(task: str) -> list[str]:
-    terms: list[str] = []
-    for group in _search_result_query_groups(task):
-        for token in group:
-            if token not in terms:
-                terms.append(token)
-    return terms[:8]
-
-
-def _search_result_query_groups(task: str) -> list[list[str]]:
-    task_body = re.sub(r"\s*website:\s*https?://\S+.*$", "", task, flags=re.I | re.S)
-    candidates = [m.strip() for m in re.findall(r'"([^"\n]{2,100})"', task_body)]
-    if not candidates:
-        for pattern in (
-            r"\b(?:articles|resources|documents|posts)\s+on\s+(.+?)(?:\s+within\b|[,.;]|\s+and\s+(?:list|provide|copy|record)\b|\s+then\b|$)",
-            r"\bmentioning\s+(.+?)(?:\s+and\s+(?:list|provide|copy|record)\b|[,.;]|\s+then\b|$)",
-            r"\bsearch(?:\s+function)?\s+to\s+locate\s+(.+?)(?:\s+then\b|[,.;]|\s+and\s+(?:list|provide|copy|record)\b|$)",
-        ):
-            m = re.search(pattern, task_body, re.I | re.S)
-            if m:
-                candidates.append(m.group(1).strip())
-                break
-
-    groups: list[list[str]] = []
-    for candidate in candidates:
-        group: list[str] = []
-        for raw in re.findall(r"[a-zA-Z][a-zA-Z0-9'-]{1,}", candidate.lower()):
-            token = raw.strip("'")
-            if len(token) < 3:
-                continue
-            if token in _SEARCH_RESULT_QUERY_STOPWORDS:
-                continue
-            if token not in group:
-                group.append(token)
-        if group:
-            groups.append(group[:6])
-    return groups[:4]
-
-
-def _answer_result_lines(text: str) -> list[str]:
-    lines: list[str] = []
-    for line in (text or "").splitlines():
-        m = re.match(r"\s*(?:\d+[.)]|[-*])\s+(.{3,240})", line)
-        if m:
-            lines.append(m.group(1).strip())
-    return lines[:20]
-
-
-def _looks_like_stale_relative_date_answer(
-    task_lc: str,
-    text: str,
-    *,
-    today: date | None = None,
-) -> bool:
-    """Detect impossible mixes like "Jan 2025 (3 hours ago)".
-
-    For latest/current tasks, relative recency labels are common page
-    text. When the final answer combines such a label with an absolute
-    date far before the run date, it usually means the agent synthesized
-    stale or contradictory evidence from a page card.
-    """
-    task_lc = (task_lc or "").lower()
-    if not any(phrase in task_lc for phrase in _RECENCY_TASK_PHRASES):
-        return False
-    s = (text or "").lower()
-    if not re.search(
-        r"\b(\d+\s+(?:minute|minutes|hour|hours)\s+ago|today|yesterday)\b",
-        s,
-    ):
-        return False
-    if today is None:
-        today = datetime.now().astimezone().date()
-    for mentioned in _extract_answer_dates(text, today=today):
-        if mentioned < today and (today - mentioned).days > 2:
-            return True
-    return False
-
-
-def _looks_like_past_dated_forward_answer(
-    task_lc: str,
-    text: str,
-    *,
-    today: date | None = None,
-) -> bool:
-    task_lc = (task_lc or "").lower()
-    if not any(phrase in task_lc for phrase in _FORWARD_LOOKING_TASK_PHRASES):
-        return False
-    if today is None:
-        today = datetime.now().astimezone().date()
-    for mentioned in _extract_answer_dates(text, today=today):
-        if mentioned < today:
-            return True
-    return False
-
-
-def _extract_answer_dates(text: str, *, today: date) -> list[date]:
-    """Extract simple dates that commonly appear in final answers."""
-    month_names = (
-        "january", "february", "march", "april", "may", "june",
-        "july", "august", "september", "october", "november", "december",
-    )
-    month_to_num = {name: i for i, name in enumerate(month_names, start=1)}
-    month_alt = "|".join(month_names)
-    found: list[date] = []
-    for m in re.finditer(
-        rf"\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday,\s+)?"
-        rf"({month_alt})\s+(\d{{1,2}})(?:st|nd|rd|th)?"
-        rf"(?:,\s*(\d{{4}}))?\b",
-        text,
-        re.IGNORECASE,
-    ):
-        month = month_to_num[m.group(1).lower()]
-        day = int(m.group(2))
-        year = int(m.group(3)) if m.group(3) else today.year
-        try:
-            found.append(date(year, month, day))
-        except ValueError:
-            continue
-    # "Wednesday, May 13" is covered above; this handles compact ISO-ish
-    # dates that appear in scraper output.
-    for m in re.finditer(r"\b(20\d{2})-(\d{1,2})-(\d{1,2})\b", text):
-        try:
-            found.append(date(int(m.group(1)), int(m.group(2)), int(m.group(3))))
-        except ValueError:
-            continue
-    return found
-
-
-def _looks_like_unsupported_final_answer(
-    task: str,
-    text: str,
-    final_url: str | None = None,
-) -> bool:
-    bounded_external_result = _looks_like_bounded_external_result_answer(
-        task,
-        text,
-        final_url,
-    )
-    return (
-        _looks_like_fabricated_blocked_answer(text)
-        or (
-            not bounded_external_result
-            and _looks_like_site_required_external_answer(task, text)
-        )
-        or _looks_like_unmet_requested_data_answer(task, text)
-        or _looks_like_search_result_query_mismatch_answer(task, text)
-        or (
-            not bounded_external_result
-            and _looks_like_wrong_host_final(task, final_url)
-        )
-        or (
-            not bounded_external_result
-            and _looks_like_search_host_final(task, final_url)
-        )
-        or _looks_like_late_pagination_final(task, final_url)
-        or _looks_like_item_detail_list_final(task, final_url)
-        or _looks_like_epa_aqs_airnow_answer(task, text, final_url)
-        or _looks_like_round_trip_answer_uses_one_way_only(task, text)
-        or _looks_like_southwest_roundtrip_answer_needs_more_evidence(task, text)
-        or _looks_like_imdb_weekend_budget_bad_answer(task, text)
-        or _looks_like_imdb_weekend_budget_thin_answer(task, text)
-        or _looks_like_bbc_goodfood_generic_substitution_answer(task, text)
-        or _looks_like_bbc_goodfood_broad_free_from_answer(task, text)
-    )
 
 
 _PENDING_ACTION_TOOL_NAMES = (

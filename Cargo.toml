@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.12.16"
+version = "0.12.17"
 edition = "2021"
 license = "MIT"
 authors = ["Saurav Panda <support@browser-use.com>"]
@@ -12,7 +12,9 @@ rust-version = "1.80"
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }
-tokio-tungstenite = "0.24"
+# rustls-tls-webpki-roots: Browser Use Cloud browsers expose wss:// CDP
+# endpoints; without a TLS feature, connect_async rejects them at dial time.
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
@@ -24,9 +26,9 @@ base64 = "0.22"
 pyo3 = { version = "0.24", features = ["abi3-py310"] }
 pyo3-async-runtimes = { version = "0.24", features = ["tokio-runtime"] }
 
-bu-cdp = { path = "crates/bu-cdp", version = "0.12.16" }
-bu-browser = { path = "crates/bu-browser", version = "0.12.16" }
-bu-dom = { path = "crates/bu-dom", version = "0.12.16" }
+bu-cdp = { path = "crates/bu-cdp", version = "0.12.17" }
+bu-browser = { path = "crates/bu-browser", version = "0.12.17" }
+bu-dom = { path = "crates/bu-dom", version = "0.12.17" }
 
 [profile.release]
 lto = "thin"

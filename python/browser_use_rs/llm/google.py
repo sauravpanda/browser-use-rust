@@ -270,12 +270,40 @@ class ChatGoogle(BaseChatModel):
     def set_media_resolution(self, value: Any) -> None:
         self.media_resolution = _normalize_media_resolution(value)
 
+    @staticmethod
+    def _map_tool_choice(tool_choice: str | dict | None) -> Any:
+        """Translate the provider-agnostic tool_choice into Gemini's
+        ToolConfig. Unknown values → None (auto)."""
+        if tool_choice in (None, "auto"):
+            return None
+        if tool_choice == "required":
+            return gtypes.ToolConfig(
+                function_calling_config=gtypes.FunctionCallingConfig(
+                    mode="ANY",
+                )
+            )
+        if tool_choice == "none":
+            return gtypes.ToolConfig(
+                function_calling_config=gtypes.FunctionCallingConfig(
+                    mode="NONE",
+                )
+            )
+        if isinstance(tool_choice, dict) and tool_choice.get("name"):
+            return gtypes.ToolConfig(
+                function_calling_config=gtypes.FunctionCallingConfig(
+                    mode="ANY",
+                    allowed_function_names=[tool_choice["name"]],
+                )
+            )
+        return None
+
     async def ainvoke(
         self,
         messages: list[Message],
         tools: list[Tool],
         *,
         system: str | None = None,
+        tool_choice: str | dict | None = None,
     ) -> ChatInvokeCompletion:
         gemini_tool = gtypes.Tool(
             function_declarations=[
@@ -288,6 +316,9 @@ class ChatGoogle(BaseChatModel):
             ]
         )
         config_kwargs: dict[str, Any] = {"tools": [gemini_tool]}
+        mapped_choice = self._map_tool_choice(tool_choice)
+        if mapped_choice is not None:
+            config_kwargs["tool_config"] = mapped_choice
         if system:
             config_kwargs["system_instruction"] = system
         if self.temperature is not None:

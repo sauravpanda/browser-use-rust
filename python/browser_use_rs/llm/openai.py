@@ -165,12 +165,28 @@ class ChatOpenAI(BaseChatModel):
                 kwargs["timeout"] = timeout
             self.client = AsyncOpenAI(**kwargs)
 
+    @staticmethod
+    def _map_tool_choice(tool_choice: str | dict | None) -> Any:
+        """Translate the provider-agnostic tool_choice into the OpenAI
+        chat-completions encoding. Unknown values → None (auto)."""
+        if tool_choice in (None, "auto"):
+            return None
+        if tool_choice in ("required", "none"):
+            return tool_choice
+        if isinstance(tool_choice, dict) and tool_choice.get("name"):
+            return {
+                "type": "function",
+                "function": {"name": tool_choice["name"]},
+            }
+        return None
+
     async def ainvoke(
         self,
         messages: list[Message],
         tools: list[Tool],
         *,
         system: str | None = None,
+        tool_choice: str | dict | None = None,
     ) -> ChatInvokeCompletion:
         openai_msgs = _to_openai_messages(messages, system)
         tool_defs = [
@@ -190,6 +206,9 @@ class ChatOpenAI(BaseChatModel):
             "messages": openai_msgs,
             "tools": tool_defs,
         }
+        mapped_choice = self._map_tool_choice(tool_choice)
+        if mapped_choice is not None:
+            kwargs["tool_choice"] = mapped_choice
         if self.temperature is not None:
             kwargs["temperature"] = self.temperature
         if self.max_tokens is not None:
