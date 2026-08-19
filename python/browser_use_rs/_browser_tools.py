@@ -10,6 +10,27 @@ from urllib.parse import urlparse
 
 from browser_use_rs.tools import tool
 
+# JS prelude defining `findByIdx(root, idx)`: resolve an element by its
+# data-bu-idx across same-origin iframes and open shadow roots.
+# `querySelector` alone sees neither, so tools that used it could not
+# act on framed/shadow elements the snapshot indexes (iframe-inception:
+# select_dropdown burned 10+ turns on "no element with index" for a
+# select that was right there in the snapshot). Mirrors bu-browser's
+# find_by_idx_js. v0.12.21.
+FIND_BY_IDX_JS = (
+    "const findByIdx = (root, idx) => {"
+    " const el = root.querySelector(`[data-bu-idx=\"${idx}\"]`);"
+    " if (el) return el;"
+    " for (const f of root.querySelectorAll('iframe')) {"
+    "   try { const sub = f.contentDocument;"
+    "     if (sub) { const r = findByIdx(sub, idx); if (r) return r; } } catch (e) {}"
+    " }"
+    " for (const h of root.querySelectorAll('*')) {"
+    "   try { if (h.shadowRoot) { const r = findByIdx(h.shadowRoot, idx); if (r) return r; } } catch (e) {}"
+    " }"
+    " return null; };"
+)
+
 
 MAX_SLEEP_SECONDS = 28.0
 MAX_SCROLL_SECONDS = 8.0
@@ -163,7 +184,7 @@ async def type_text(session, index: int, text: str, clear: bool = True) -> str:
         # Best-effort clear: select-all + delete via JS, then type.
         try:
             js = (
-                f"(() => {{ const el = document.querySelector(`[data-bu-idx=\"{int(index)}\"]`);"
+                f"(() => {{ {FIND_BY_IDX_JS} const el = findByIdx(document, {int(index)});"
                 " if (el) { el.value = ''; el.dispatchEvent(new Event('input', {bubbles:true})); }"
                 " return ''; })()"
             )
@@ -234,7 +255,7 @@ async def scroll(
         # Compute pixel delta from `dy` / `pages+direction`.
         try:
             ch_raw = await session.evaluate(
-                f"(() => {{ const el = document.querySelector('[data-bu-idx=\"{int(index)}\"]'); "
+                f"(() => {{ {FIND_BY_IDX_JS} const el = findByIdx(document, {int(index)}); "
                 f"return el ? String(el.clientHeight || el.offsetHeight || 600) : '0'; }})()"
             )
             container_h = float(ch_raw) if ch_raw and ch_raw != "0" else 600.0
@@ -249,7 +270,7 @@ async def scroll(
         try:
             result = await _bounded_scroll(
                 session.evaluate(
-                    f"(() => {{ const el = document.querySelector('[data-bu-idx=\"{int(index)}\"]'); "
+                    f"(() => {{ {FIND_BY_IDX_JS} const el = findByIdx(document, {int(index)}); "
                     f"if (!el) return 'no-element'; el.scrollBy({{top: {delta:.0f}, behavior: 'auto'}}); return 'ok'; }})()"
                 ),
                 "scroll-in-container",

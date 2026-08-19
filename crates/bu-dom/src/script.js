@@ -317,9 +317,28 @@
             }
 
             const style = getComputedStyle(el);
-            const intrinsic = isIntrinsic(el);
-            const cursorOnly = !intrinsic && style.cursor === 'pointer';
+            let intrinsic = isIntrinsic(el);
             const tag = el.tagName.toLowerCase();
+            // v0.12.21: a <label> whose bound control is invisible is
+            // the control's only clickable proxy (styled radios and
+            // checkboxes hide the native input under a styled label —
+            // the rich-text form's contact-method radios were
+            // unreachable). Index the label as interactive then.
+            if (!intrinsic && tag === 'label') {
+                try {
+                    const ctl = el.control
+                        || el.querySelector('input, select, textarea');
+                    if (ctl) {
+                        const cs = getComputedStyle(ctl);
+                        const cr = ctl.getBoundingClientRect();
+                        if (cs.display === 'none' || parseFloat(cs.opacity) === 0
+                            || cr.width < 1 || cr.height < 1) {
+                            intrinsic = true;
+                        }
+                    }
+                } catch (e) { /* defensive */ }
+            }
+            const cursorOnly = !intrinsic && style.cursor === 'pointer';
             const isStaticText = STATIC_TEXT_TAGS.has(tag);
 
             if (!intrinsic && !cursorOnly && !isStaticText) continue;

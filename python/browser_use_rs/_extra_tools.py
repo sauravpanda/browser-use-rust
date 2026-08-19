@@ -556,10 +556,13 @@ async def get_dropdown_options(session, index: int) -> str:
     Args:
         index: The [N] index of the dropdown element.
     """
+    from browser_use_rs._browser_tools import FIND_BY_IDX_JS
+
     js = (
         "(() => {"
         f" const idx = {int(index)};"
-        " const el = document.querySelector(`[data-bu-idx=\"${idx}\"]`);"
+        f" {FIND_BY_IDX_JS}"
+        " const el = findByIdx(document, idx);"
         " if (!el) return JSON.stringify({error: 'no element with index'});"
         " const tag = el.tagName.toLowerCase();"
         " const out = [];"
@@ -625,11 +628,14 @@ async def select_dropdown(
     want = (value or text or "").strip()
     if not want:
         return "(error: must pass `value` or `text` arg)"
+    from browser_use_rs._browser_tools import FIND_BY_IDX_JS
+
     js = (
         "(() => {"
         f" const idx = {int(index)};"
         f" const want = {json.dumps(want)};"
-        " const el = document.querySelector(`[data-bu-idx=\"${idx}\"]`);"
+        f" {FIND_BY_IDX_JS}"
+        " const el = findByIdx(document, idx);"
         " if (!el) return JSON.stringify({error: 'no element with index'});"
         " const wantLow = want.toLowerCase();"
         " function trySelect(element) {"
