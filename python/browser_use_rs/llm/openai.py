@@ -144,12 +144,21 @@ class ChatOpenAI(BaseChatModel):
         base_url: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        # Reasoning-model knobs (v0.12.17). Upstream browser_use's
+        # ChatOpenAI defaults reasoning models to effort='low' with
+        # max_completion_tokens=4096 and drops temperature; callers that
+        # want parity with it (eval harnesses) must set these explicitly
+        # — we default to None so the OpenAI server defaults apply.
+        reasoning_effort: str | None = None,
+        max_completion_tokens: int | None = None,
         timeout: float | None = None,
         client: AsyncOpenAI | None = None,
     ):
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.reasoning_effort = reasoning_effort
+        self.max_completion_tokens = max_completion_tokens
         self.timeout = timeout
         if client is not None:
             self.client = client
@@ -213,6 +222,10 @@ class ChatOpenAI(BaseChatModel):
             kwargs["temperature"] = self.temperature
         if self.max_tokens is not None:
             kwargs["max_tokens"] = self.max_tokens
+        if self.reasoning_effort is not None:
+            kwargs["reasoning_effort"] = self.reasoning_effort
+        if self.max_completion_tokens is not None:
+            kwargs["max_completion_tokens"] = self.max_completion_tokens
 
         from browser_use_rs.llm.base import with_retry
 
