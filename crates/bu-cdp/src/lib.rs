@@ -55,6 +55,14 @@ pub struct Connection {
 
 impl Connection {
     pub async fn connect(ws_url: &str) -> Result<Self> {
+        // rustls requires a process-level crypto provider before the first
+        // TLS dial (wss:// cloud browsers) and PANICS otherwise. Install
+        // ring exactly once; Err means another caller already installed
+        // one, which is fine.
+        static CRYPTO_PROVIDER: std::sync::Once = std::sync::Once::new();
+        CRYPTO_PROVIDER.call_once(|| {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+        });
         let (ws, _) = connect_async(ws_url).await?;
         let (mut sink, mut stream) = ws.split();
 
