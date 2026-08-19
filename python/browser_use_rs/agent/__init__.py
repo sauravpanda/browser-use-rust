@@ -286,6 +286,31 @@ EPHEMERAL_RESULT_TOOLS: frozenset[str] = frozenset({
     "extract_structured_data",
 })
 
+# v0.12.18 render-mode read retention. The 25KB threshold above was tuned
+# for transcript mode, where sub-threshold reads stayed native FOREVER
+# (the v0.5.1 read-exclusion). In render mode a tool result survives
+# exactly one rebuild, so sub-threshold reads fell through BOTH nets:
+# no native retention, no <read_state>, no spill file. The WebBench
+# gemini run showed the consequence at scale — the agent extracts the
+# right answer, loses it at the next rebuild, re-fetches, and either
+# grind-loops (13 tasks at 50-100 steps) or finalizes from its lossy
+# <memory> paraphrase (judge: synthetic-or-unsupported). Render mode
+# therefore routes essentially EVERY read-tool result through the
+# lifecycle: full content in <read_state> for EPHEMERAL_RESULT_WINDOW_STEPS
+# steps, durable copy on disk for read_file recovery, stub in the
+# native tool result. The FLASH prompt's read_state_lifecycle section
+# already documents exactly this contract.
+EPHEMERAL_RESULT_THRESHOLD_RENDER = 200
+# Render mode also covers the extract/search tools whose discarded
+# results drove the re-fetch loops (task 361: extract_result_cards and
+# extract_structured_data results thrown away and re-fetched 20+ times).
+EPHEMERAL_RESULT_TOOLS_RENDER: frozenset[str] = EPHEMERAL_RESULT_TOOLS | frozenset({
+    "extract_result_cards",
+    "search_page",
+    "find_elements",
+    "find_text",
+})
+
 # Windowing for the LLM-facing [AGENT_HISTORY] journal: first N + last M
 # lines with an "[X omitted]" marker between (upstream's
 # max_history_items pattern, v0.8.20). Shared by transcript-mode collapse
@@ -4066,13 +4091,20 @@ class Agent:
             outcome = "→ done"
         else:
             ec = result.extracted_content or ""
+            # v0.12.18: in render mode the journal is the ONLY long-term
+            # carrier of a read result's text (native turns last one
+            # rebuild), so read-tool outcomes keep more of it. Lifecycle
+            # stubs already carry the recovery path and stay short.
+            cap = 120
+            if self.context_mode == "render" and name in self._READ_ONLY_TOOLS:
+                cap = 500
             if ec.startswith("[SCRATCHPAD]") or "[SCRATCHPAD]" in ec[:200]:
                 outcome = "→ ok (long output spilled to scratchpad)"
             elif ec:
                 # Trim long extracts; the LLM doesn't need the full
-                # blob in history — it has the most recent results
-                # natively in context.
-                outcome = f"→ {ec[:120].replace(chr(10), ' ')}"
+                # blob in history — recent results are in <read_state>
+                # (render) or native context (transcript).
+                outcome = f"→ {ec[:cap].replace(chr(10), ' ')}"
             else:
                 outcome = "→ ok"
 
@@ -5651,9 +5683,15 @@ class Agent:
         # <read_state> block. Skips the scratchpad spill below since
         # the lifecycle already handled it.
         ephemeral_applied = False
-        if tc.name in EPHEMERAL_RESULT_TOOLS:
+        try:
+            from browser_use_rs._browser_tools import ALIAS_TO_CANONICAL
+
+            canonical_name = ALIAS_TO_CANONICAL.get(tc.name, tc.name)
+        except ImportError:
+            canonical_name = tc.name
+        if canonical_name in self._ephemeral_tools():
             new_parts, new_summary = self._apply_ephemeral_lifecycle(
-                tc.name, content_parts, summary_text,
+                canonical_name, content_parts, summary_text,
             )
             if new_parts is not content_parts:
                 ephemeral_applied = True
@@ -5829,6 +5867,25 @@ class Agent:
             )
         )
 
+    def _ephemeral_tools(self) -> frozenset[str]:
+        """Read tools whose results flow through the read_state lifecycle.
+        Render mode covers the extract/search family too (v0.12.18)."""
+        return (
+            EPHEMERAL_RESULT_TOOLS_RENDER
+            if self.context_mode == "render"
+            else EPHEMERAL_RESULT_TOOLS
+        )
+
+    def _ephemeral_threshold(self) -> int:
+        """Byte size above which a read result is routed through the
+        lifecycle. Render mode retains essentially everything because a
+        native tool result survives only one rebuild there (v0.12.18)."""
+        return (
+            EPHEMERAL_RESULT_THRESHOLD_RENDER
+            if self.context_mode == "render"
+            else EPHEMERAL_RESULT_THRESHOLD
+        )
+
     def _apply_ephemeral_lifecycle(
         self,
         tool_name: str,
@@ -5849,9 +5906,9 @@ class Agent:
         """
         if os.environ.get("BU_RS_DISABLE_EPHEMERAL_LIFECYCLE"):
             return content_parts, summary_text
-        if tool_name not in EPHEMERAL_RESULT_TOOLS:
+        if tool_name not in self._ephemeral_tools():
             return content_parts, summary_text
-        if not summary_text or len(summary_text) <= EPHEMERAL_RESULT_THRESHOLD:
+        if not summary_text or len(summary_text) <= self._ephemeral_threshold():
             return content_parts, summary_text
         if len(content_parts) != 1 or not isinstance(content_parts[0], TextPart):
             return content_parts, summary_text
@@ -5916,8 +5973,9 @@ class Agent:
         # ~200 chars instead of N,000.
         rel_path = f"results/{os.path.basename(file_path)}"
         stub = (
-            f"[Large result from {tool_name}: {len(summary_text):,} chars. "
-            f"Full text appears once in the next <read_state>; saved at "
+            f"[Result from {tool_name}: {len(summary_text):,} chars. "
+            f"Full text appears in <read_state> for the next "
+            f"{EPHEMERAL_RESULT_WINDOW_STEPS} steps; saved at "
             f"{rel_path} for read_file.]"
         )
         return [TextPart(text=stub)], stub

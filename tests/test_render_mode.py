@@ -296,7 +296,7 @@ class RenderModeShapeTests(unittest.TestCase):
         parts, summary = render_agent._apply_ephemeral_lifecycle(
             "page_text", [TextPart(text=big)], big
         )
-        self.assertTrue(summary.startswith("[Large result from page_text"))
+        self.assertTrue(summary.startswith("[Result from page_text"))
         self.assertEqual(1, len(render_agent._read_state_for_next_turn))
 
         transcript_agent = _make_agent(
@@ -306,6 +306,37 @@ class RenderModeShapeTests(unittest.TestCase):
             "page_text", [TextPart(text=big)], big
         )
         self.assertEqual(big, summary)  # durable bypass still applies
+        self.assertEqual(0, len(transcript_agent._read_state_for_next_turn))
+
+    def test_render_mode_retains_small_read_results(self):
+        # v0.12.18: sub-25KB extract/search results previously fell
+        # through both retention nets in render mode (not native beyond
+        # one rebuild, below the read_state threshold) — the task-361
+        # re-fetch-loop mechanism. Render mode now routes essentially
+        # every read result through <read_state> + spill file.
+        from browser_use_rs.llm.base import TextPart
+
+        small = "1. Digital Sky 2. Digital art 3. Summer Lushness I" * 10
+
+        render_agent = _make_agent(ScriptedLLM([]))
+        parts, summary = render_agent._apply_ephemeral_lifecycle(
+            "extract_result_cards", [TextPart(text=small)], small
+        )
+        self.assertTrue(summary.startswith("[Result from extract_result_cards"))
+        queue = render_agent._read_state_for_next_turn
+        self.assertEqual(1, len(queue))
+        self.assertEqual(small, queue[0]["content"])
+
+        # Transcript mode keeps the old contract: small reads stay
+        # inline (they remain native forever there) and the extract
+        # tools are not lifecycle-managed at all.
+        transcript_agent = _make_agent(
+            ScriptedLLM([]), context_mode="transcript"
+        )
+        parts, summary = transcript_agent._apply_ephemeral_lifecycle(
+            "extract_result_cards", [TextPart(text=small)], small
+        )
+        self.assertEqual(small, summary)
         self.assertEqual(0, len(transcript_agent._read_state_for_next_turn))
 
     def test_transcript_mode_escape_hatch(self):
