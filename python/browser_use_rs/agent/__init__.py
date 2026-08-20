@@ -67,6 +67,7 @@ from browser_use_rs.agent.prompts import (
     BLOCKED_SITE_POLICY,
     DEFAULT_SYSTEM_PROMPT,
     FLASH_SYSTEM_PROMPT,
+    RESEARCH_POLICY_OVERRIDE,
     _VALIDATION_CHECKLIST,
     _VALIDATION_PROMPT_DONE,
     _VALIDATION_PROMPT_TEXT,
@@ -579,14 +580,18 @@ class Agent:
         # override: BROWSER_USE_RS_RENDER_KEEP_NATIVE /
         # BU_RS_RENDER_KEEP_NATIVE.
         render_keep_native_turns: int | None = None,
-        # v0.12.27 policy probe: when False, the SEARCH_FALLBACK
-        # nudge/force-final and the BOT_BLOCKED force-final are
-        # disabled (the BOT_BLOCKED nudge and the stagnation guard
-        # stay). These clamps were tuned in the gemini-flash cost war
-        # and prohibit the search-ladder research pattern that wins
-        # deep-research tasks; this flag lets an eval variant measure
-        # that trade without touching default behavior.
-        search_clamps: bool = True,
+        # v0.12.28 policy profiles. The search clamps (SEARCH_FALLBACK
+        # nudge/force-final + BOT_BLOCKED force-final; the BOT_BLOCKED
+        # nudge and stagnation guard are never lifted) were tuned in
+        # the gemini-flash cost war and prohibit the search-ladder
+        # research pattern that wins deep-research tasks. None (default)
+        # auto-resolves from the model: strong reasoning models (gpt-5*
+        # at high/xhigh effort) run unclamped with the research-policy
+        # prompt appended — measured 74.2% → 81.8% on luna-xhigh —
+        # while everything else keeps the guards (unclamped
+        # gemini-flash probe: bottom-of-band accuracy with fatter step
+        # tails). Explicit True/False always wins over the auto rule.
+        search_clamps: bool | None = None,
         use_vision: bool = True,
         sensitive_data: dict[str, str] | None = None,
         system_prompt: str | None = None,
@@ -765,7 +770,14 @@ class Agent:
         # Only 0 and 1 are implementable: rebuilds drop everything older
         # than the last turn, so there is never a 2nd native turn to keep.
         self.render_keep_native_turns = max(0, min(1, int(_keep)))
-        self.search_clamps = bool(search_clamps)
+        if search_clamps is None:
+            model_id = str(getattr(llm, "model", "") or "")
+            effort = str(getattr(llm, "reasoning_effort", "") or "")
+            self.search_clamps = not (
+                model_id.startswith("gpt-5") and effort in ("high", "xhigh")
+            )
+        else:
+            self.search_clamps = bool(search_clamps)
         # Per-agent UUID stamped on scratchpad files so simultaneous
         # eval runs don't clobber each other.
         from browser_use_rs._scratchpad import new_agent_id
@@ -796,6 +808,14 @@ class Agent:
             if extend_system_message:
                 self.system_prompt = (
                     self.system_prompt.rstrip() + "\n\n" + extend_system_message
+                )
+            # Research profile: clamps off (auto or explicit) also lifts
+            # the recovery-move policy in the prompt — the two shipped
+            # and were validated together. Skipped when the caller sent
+            # the same override text via extend_system_message already.
+            if not self.search_clamps and RESEARCH_POLICY_OVERRIDE not in self.system_prompt:
+                self.system_prompt = (
+                    self.system_prompt.rstrip() + "\n\n" + RESEARCH_POLICY_OVERRIDE
                 )
             # Switch the completion contract when the controller declared a
             # structured output: the LLM must call done(...) with fields

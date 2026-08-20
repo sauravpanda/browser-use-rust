@@ -184,15 +184,75 @@ class BlockedSearchGuardTests(unittest.TestCase):
         self.assertLess(len(out), 600)
 
 
+class _ProfileLLM:
+    """Bare-attribute stub for policy-profile resolution tests."""
+
+    def __init__(self, model, reasoning_effort=None):
+        self.model = model
+        self.reasoning_effort = reasoning_effort
+
+    async def ainvoke(self, messages, tools, *, system=None, tool_choice=None):
+        raise AssertionError("profile tests never invoke the model")
+
+
 class SearchClampsFlagTests(unittest.TestCase):
-    def test_search_clamps_defaults_on(self):
+    @staticmethod
+    def _agent(llm, **kwargs):
+        from browser_use_rs.agent import Agent
+
+        kwargs.setdefault("browser_session", object())
+        kwargs.setdefault("auto_initial_navigation", False)
+        return Agent("look up a fact", llm, **kwargs)
+
+    def test_search_clamps_defaults_to_auto(self):
         import inspect
 
         from browser_use_rs.agent import Agent
 
         sig = inspect.signature(Agent.__init__)
         self.assertIn("search_clamps", sig.parameters)
-        self.assertIs(sig.parameters["search_clamps"].default, True)
+        self.assertIsNone(sig.parameters["search_clamps"].default)
+
+    def test_auto_profile_guards_flash_class_models(self):
+        from browser_use_rs.agent.prompts import RESEARCH_POLICY_OVERRIDE
+
+        agent = self._agent(_ProfileLLM("gemini-3-flash-preview"))
+        self.assertTrue(agent.search_clamps)
+        self.assertNotIn(RESEARCH_POLICY_OVERRIDE, agent.system_prompt)
+
+    def test_auto_profile_unclamps_strong_reasoning_models(self):
+        from browser_use_rs.agent.prompts import RESEARCH_POLICY_OVERRIDE
+
+        agent = self._agent(_ProfileLLM("gpt-5.6-luna", reasoning_effort="xhigh"))
+        self.assertFalse(agent.search_clamps)
+        self.assertIn(RESEARCH_POLICY_OVERRIDE, agent.system_prompt)
+        # Low effort on the same model keeps the guards — only
+        # high/xhigh were taken through the gate.
+        low = self._agent(_ProfileLLM("gpt-5.6-luna", reasoning_effort="low"))
+        self.assertTrue(low.search_clamps)
+
+    def test_explicit_flag_beats_auto_rule(self):
+        from browser_use_rs.agent.prompts import RESEARCH_POLICY_OVERRIDE
+
+        forced_off = self._agent(
+            _ProfileLLM("gemini-3-flash-preview"), search_clamps=False
+        )
+        self.assertFalse(forced_off.search_clamps)
+        self.assertIn(RESEARCH_POLICY_OVERRIDE, forced_off.system_prompt)
+        forced_on = self._agent(
+            _ProfileLLM("gpt-5.6-luna", reasoning_effort="xhigh"), search_clamps=True
+        )
+        self.assertTrue(forced_on.search_clamps)
+        self.assertNotIn(RESEARCH_POLICY_OVERRIDE, forced_on.system_prompt)
+
+    def test_probe_style_extend_message_is_not_duplicated(self):
+        from browser_use_rs.agent.prompts import RESEARCH_POLICY_OVERRIDE
+
+        agent = self._agent(
+            _ProfileLLM("gpt-5.6-luna", reasoning_effort="xhigh"),
+            extend_system_message=RESEARCH_POLICY_OVERRIDE,
+        )
+        self.assertEqual(agent.system_prompt.count(RESEARCH_POLICY_OVERRIDE), 1)
 
     def test_all_three_clamp_gates_check_the_flag(self):
         # The BOT_BLOCKED force, SEARCH_FALLBACK nudge, and SEARCH_FALLBACK

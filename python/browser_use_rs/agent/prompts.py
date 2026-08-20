@@ -30,6 +30,18 @@ that must be performed on the site, snippets are too stale or indirect; call
 `done(..., success=false)` if same-site evidence remains inaccessible."""
 
 
+# v0.12.28 research profile: appended to the system prompt when the
+# search clamps are off (strong reasoning models). Wording is kept
+# byte-identical to the extend_system_message used in the validated
+# luna-xhigh probe (74.2% → 81.8%) — do not "improve" it without a gate.
+RESEARCH_POLICY_OVERRIDE = """\
+POLICY OVERRIDE for this task: the limited-recovery-moves rule is lifted. When \
+a site blocks you or a search underdelivers, run extended search ladders — \
+reformulate the query with different phrasings, site: filters, and alternate \
+engines; visit multiple candidate results; synthesize URLs directly from known \
+site structures. Only conclude failure after genuinely exhausting these routes."""
+
+
 # Flash-mode prompt — terse variant matching upstream's
 # system_prompt_flash.md. Used when flash_mode=True is passed to the
 # Agent (eval framework default for many setups). Mirrors upstream's
