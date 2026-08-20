@@ -264,19 +264,20 @@ class ChatOpenAI(BaseChatModel):
             self.client = AsyncOpenAI(**kwargs)
 
     @staticmethod
-    def _chat_text(msg: Any) -> str | None:
-        """Extract the assistant text from a chat-completions message.
+    def _chat_text(msg: Any) -> tuple[str | None, str]:
+        """Extract (text, source) from a chat-completions message.
 
         OpenRouter (and DeepSeek-style OpenAI-compatible providers) return
         the model's thinking in a separate reasoning field and leave content
         empty on tool-call turns. Without the fallback every journal line
         renders with blank model_text, which destroys render-mode
         continuity — observed as qwen3.8 repeating one identical navigate
-        for 80+ steps. v0.12.29.
+        for 80+ steps. v0.12.29; source marker added in v0.12.30 so the
+        agent never commits recovered reasoning as a final answer.
         """
         text = msg.content or None
         if text:
-            return text
+            return text, "content"
         extra = getattr(msg, "model_extra", None) or {}
         reasoning = (
             getattr(msg, "reasoning", None)
@@ -285,8 +286,8 @@ class ChatOpenAI(BaseChatModel):
             or extra.get("reasoning_content")
         )
         if isinstance(reasoning, str) and reasoning.strip():
-            return reasoning.strip()[:2000]
-        return None
+            return reasoning.strip()[:2000], "reasoning"
+        return None, "content"
 
     @staticmethod
     def _map_tool_choice(tool_choice: str | dict | None) -> Any:
@@ -445,7 +446,7 @@ class ChatOpenAI(BaseChatModel):
         choice = response.choices[0]
         msg = choice.message
 
-        text = self._chat_text(msg)
+        text, text_source = self._chat_text(msg)
         tool_calls: list[ToolCall] = []
         if msg.tool_calls:
             import json as _json
@@ -470,5 +471,9 @@ class ChatOpenAI(BaseChatModel):
             or 0,
         )
         return ChatInvokeCompletion(
-            text=text, tool_calls=tool_calls, usage=usage, raw=response
+            text=text,
+            tool_calls=tool_calls,
+            usage=usage,
+            raw=response,
+            text_source=text_source,
         )

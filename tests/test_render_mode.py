@@ -526,10 +526,64 @@ class ChatTextFallbackTests(unittest.TestCase):
         from browser_use_rs.llm.openai import ChatOpenAI
 
         msg = SimpleNamespace(content=None, reasoning="I will click the menu.")
-        self.assertEqual("I will click the menu.", ChatOpenAI._chat_text(msg))
+        self.assertEqual(
+            ("I will click the menu.", "reasoning"), ChatOpenAI._chat_text(msg)
+        )
         msg2 = SimpleNamespace(content="", reasoning_content="thinking...")
-        self.assertEqual("thinking...", ChatOpenAI._chat_text(msg2))
-        # content wins when present; nothing → None.
+        self.assertEqual(("thinking...", "reasoning"), ChatOpenAI._chat_text(msg2))
+        # content wins when present; nothing → (None, "content").
         msg3 = SimpleNamespace(content="real text", reasoning="ignored")
-        self.assertEqual("real text", ChatOpenAI._chat_text(msg3))
-        self.assertIsNone(ChatOpenAI._chat_text(SimpleNamespace(content=None)))
+        self.assertEqual(("real text", "content"), ChatOpenAI._chat_text(msg3))
+        self.assertEqual(
+            (None, "content"), ChatOpenAI._chat_text(SimpleNamespace(content=None))
+        )
+
+
+class ReasoningTextAnswerGuardTests(unittest.TestCase):
+    def test_forced_final_prefers_done_args_over_reasoning_text(self):
+        # Drive the repeat-action force-final; the final completion has
+        # BOTH deliberation text and a clean done(...) call. The done
+        # args must win — committing the text is the chain-of-thought
+        # leak observed on 19/198 qwen tasks.
+        completions = [_poke_call(i) for i in range(1, 11)]
+        completions.append(
+            ChatInvokeCompletion(
+                text="Let me cross-check the evidence against the task...",
+                text_source="reasoning",
+                tool_calls=[
+                    ToolCall(
+                        id="done_1",
+                        name="done",
+                        args={"text": "clean final answer", "success": False},
+                    )
+                ],
+            )
+        )
+        llm = ScriptedToolChoiceLLM(completions)
+        agent = _make_agent(llm)
+        history = asyncio.run(agent.run())
+        self.assertEqual("clean final answer", history.final_result())
+
+    def test_reasoning_only_prose_turn_is_nudged_not_committed(self):
+        # A no-tool-call turn whose text was recovered from a reasoning
+        # field must not be committed as the final answer; the
+        # empty-output nudge fires and the next (real) answer wins.
+        llm = ScriptedToolChoiceLLM(
+            [
+                ChatInvokeCompletion(
+                    text="Hmm, let me think about the page...",
+                    text_source="reasoning",
+                ),
+                ChatInvokeCompletion(text="the answer is 42"),
+            ]
+        )
+        agent = _make_agent(llm)
+        history = asyncio.run(agent.run())
+        self.assertEqual(2, len(llm.calls))
+        self.assertEqual("the answer is 42", history.final_result())
+        self.assertTrue(
+            any(
+                "[EMPTY_MODEL_OUTPUT]" in t
+                for t in _texts(llm.calls[1]["messages"])
+            )
+        )

@@ -2031,6 +2031,18 @@ class Agent:
             # ActionResult so consumers can read final_result() / is_done().
             if not completion.tool_calls:
                 done_text = completion.text or ""
+                # v0.12.30: text recovered from a reasoning field is
+                # deliberation, not an answer — never commit it as done
+                # while the empty-output nudge (with tool_choice
+                # "required" enforcement) is still available. Once the
+                # nudges are exhausted it stays as a last resort, which
+                # beats an empty final.
+                if (
+                    getattr(completion, "text_source", "content") == "reasoning"
+                    and step_n < max_steps
+                    and self._empty_output_nudges < 2
+                ):
+                    done_text = ""
                 candidate_done_text = self._strip_state_tags_for_answer(done_text)
                 if (
                     not candidate_done_text.strip()
@@ -2881,16 +2893,20 @@ class Agent:
                 timeout=self.tool_timeout,
             )
             self._record_usage(step_n, completion.usage)
-            answer = (completion.text or "").strip()
+            # v0.12.30: the done tool-call args are the canonical answer
+            # channel and are read FIRST. With the reasoning-text
+            # fallback in the providers, completion.text can be the
+            # model's deliberation on a tool-call turn — committing it
+            # over a clean done(text=...) leaked chain-of-thought as
+            # the final answer on 19/198 qwen tasks (18 judge-fails).
+            answer = ""
+            for tc in completion.tool_calls:
+                if tc.name == "done" and isinstance(tc.args, dict):
+                    answer = str(tc.args.get("text") or "").strip()
+                    if answer:
+                        break
             if not answer:
-                # Forced-done (or a spontaneous done call): pull the
-                # answer from the tool-call args without executing the
-                # tool.
-                for tc in completion.tool_calls:
-                    if tc.name == "done" and isinstance(tc.args, dict):
-                        answer = str(tc.args.get("text") or "").strip()
-                        if answer:
-                            break
+                answer = (completion.text or "").strip()
             if not answer:
                 # LLM returned neither text nor a usable done call —
                 # nothing to commit. Fall through to the error result.

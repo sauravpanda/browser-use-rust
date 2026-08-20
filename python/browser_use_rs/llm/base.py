@@ -168,6 +168,12 @@ class ChatInvokeCompletion:
     tool_calls: list[ToolCall] = field(default_factory=list)
     usage: ChatInvokeUsage = field(default_factory=ChatInvokeUsage)
     raw: Any = None
+    # v0.12.30: where `text` came from. "content" = the model's actual
+    # message; "reasoning" = recovered from a reasoning/reasoning_content
+    # field (OpenRouter-style providers) because content was empty.
+    # Reasoning text is fine for the journal but must never be committed
+    # as a final answer when a real answer channel (done args) exists.
+    text_source: str = "content"
 
 
 class BaseChatModel(ABC):
