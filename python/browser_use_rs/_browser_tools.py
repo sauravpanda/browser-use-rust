@@ -192,7 +192,40 @@ async def type_text(session, index: int, text: str, clear: bool = True) -> str:
         except Exception:
             pass
     await session.type_index(index, text)
-    return f"typed into [{index}]"
+    # v0.12.23: read back what the field ACTUALLY holds. Typing can be
+    # silently reformatted (date masks: '2022-01-01' → '1/1/2022'),
+    # dropped entirely (controlled inputs, maxlength, disabled), or
+    # land in the wrong element — and the agent previously had no way
+    # to know (task 1800 failed 5/5 runs on filters whose dates never
+    # applied). Mirrors upstream's typed-value echo.
+    try:
+        js = (
+            f"(() => {{ {FIND_BY_IDX_JS} const el = findByIdx(document, {int(index)});"
+            " if (!el) return '\\u0000gone';"
+            " const v = (el.value !== undefined && el.value !== null)"
+            "   ? String(el.value)"
+            "   : (el.isContentEditable ? (el.innerText || '') : '\\u0000na');"
+            " return v.slice(0, 200); })()"
+        )
+        actual = await session.evaluate(js)
+    except Exception:
+        actual = None
+    if actual is None or actual == "\x00gone" or actual == "\x00na":
+        return f"typed into [{index}]"
+    if actual == "":
+        return (
+            f"typed into [{index}] ⚠️ but the field is EMPTY after typing — "
+            f"the value did not stick (masked/controlled input?). Try "
+            f"clicking the field first, typing a different format, or "
+            f"pressing keys instead."
+        )
+    if actual.strip() != text.strip():
+        return (
+            f"typed into [{index}] — field value is now {actual!r} "
+            f"(differs from the text you sent; the field reformatted or "
+            f"partially accepted it)"
+        )
+    return f"typed into [{index}] — field value is now {actual!r}"
 
 
 @tool
