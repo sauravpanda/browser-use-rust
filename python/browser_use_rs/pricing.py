@@ -55,6 +55,10 @@ _MODEL_PRICING: dict[str, tuple[float, float, float]] = {
     # llm_use gateway's table). Without this entry the prefix match
     # lands on "gpt-5" and overstates cost ~6x.
     "gpt-5.6-luna": (0.20, 1.20, 0.02),
+    # OpenRouter rates for Qwen3.8-27B (2026-08). OpenRouter publishes no
+    # cache-read discount for this model, so cached tokens bill at the full
+    # prompt rate — overstating cost is safer than understating it.
+    "qwen/qwen3.8-27b": (0.45, 3.20, 0.45),
     "o3-2025-04-16": (10.00, 40.00, 2.50),
     "o4-mini": (1.10, 4.40, 0.275),
     # ----- Anthropic Claude -----
