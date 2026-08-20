@@ -93,6 +93,29 @@
         return false;
     };
 
+    const FORM_FIELD_TAGS = new Set(['input', 'textarea', 'select']);
+    const isFormField = (el) =>
+        FORM_FIELD_TAGS.has(el.tagName.toLowerCase()) || el.isContentEditable;
+
+    // v0.12.24 "reach" elements: form controls and control-like roles
+    // are indexed PAGE-WIDE, not just in the viewport. The controls
+    // that decide filter/form tasks routinely sit below the fold
+    // (TMDB's filter panel, Newegg's review tabs) — the python agent
+    // indexes the whole document and reaches them directly, while we
+    // forced a scroll-hunt. Links and static text stay viewport-culled
+    // to protect the DOM byte budget; form controls are sparse.
+    const REACH_TAGS = new Set(['input', 'select', 'textarea', 'button', 'label']);
+    const REACH_ROLES = new Set([
+        'tab', 'combobox', 'checkbox', 'radio', 'switch', 'slider',
+        'searchbox', 'textbox', 'spinbutton',
+    ]);
+    const isReachElement = (el) => {
+        if (REACH_TAGS.has(el.tagName.toLowerCase())) return true;
+        if (el.isContentEditable) return true;
+        const role = (el.getAttribute('role') || '').toLowerCase();
+        return REACH_ROLES.has(role);
+    };
+
     const isVisibleInOwnerWindow = (el, style, doc) => {
         if (style.display === 'none' || style.visibility === 'hidden') return false;
         if (parseFloat(style.opacity) === 0) return false;
@@ -106,34 +129,33 @@
         // (iframe-inception: 4 of 13 fields indexed). Action dispatch
         // scrollIntoView()s at click time, so off-screen frame content
         // is still actionable.
-        if (doc !== document) return true;
+        // v0.12.24: form controls (reach elements) skip viewport
+        // culling everywhere.
+        if (doc !== document || isReachElement(el)) return true;
         const win = doc.defaultView || window;
         if (r.bottom < 0 || r.top > win.innerHeight) return false;
         if (r.right < 0 || r.left > win.innerWidth) return false;
         return true;
     };
 
-    const FORM_FIELD_TAGS = new Set(['input', 'textarea', 'select']);
-    const isFormField = (el) =>
-        FORM_FIELD_TAGS.has(el.tagName.toLowerCase()) || el.isContentEditable;
-
     const isTopAtCenter = (el, r, doc) => {
         const cx = r.left + r.width / 2;
         const cy = r.top + r.height / 2;
+        // v0.12.21/24: reach elements (form controls, tabs, control
+        // roles) are exempt from occlusion culling. Floating-label kits
+        // (Material UI's notched-outline fieldset) legitimately cover
+        // the input's center while the field stays focusable, and
+        // off-viewport reach elements can't be hit-tested at all.
+        // Truly invisible fields are still dropped by the
+        // display/opacity/size checks.
+        if (isReachElement(el)) return true;
         // elementFromPoint only answers inside the owner viewport; for
-        // points outside it (sub-frame content kept by the rule above)
-        // occlusion is unknowable here — keep the element.
+        // points outside it (sub-frame content kept by the visibility
+        // rule) occlusion is unknowable here — keep sub-frame content.
         const win = doc.defaultView || window;
         if (cx < 0 || cy < 0 || cx > win.innerWidth || cy > win.innerHeight) {
             return doc !== document;
         }
-        // v0.12.21: form fields are exempt from occlusion culling.
-        // Floating-label kits (Material UI's notched-outline fieldset,
-        // Wufoo-style overlaid labels) legitimately cover the input's
-        // center while the field stays fully focusable — MUI forms
-        // indexed 2 of 7 fields under the old rule. Truly invisible
-        // fields are still dropped by the display/opacity/size checks.
-        if (isFormField(el)) return true;
         const top = doc.elementFromPoint(cx, cy);
         if (!top) return false;
         return top === el || el.contains(top) || top.contains(el);
@@ -319,6 +341,22 @@
             const style = getComputedStyle(el);
             let intrinsic = isIntrinsic(el);
             const tag = el.tagName.toLowerCase();
+            // v0.12.24: tab chips. Review/section tabs are routinely
+            // bare <li> elements with JS listeners and no pointer
+            // cursor (Newegg's "Review Bytes → Performance" chips were
+            // visible as static text but unclickable — a deterministic
+            // task loss). An <li> inside a tablist-shaped container is
+            // interactive.
+            if (!intrinsic && tag === 'li') {
+                let p = el.parentElement, d = 0;
+                while (p && d++ < 3) {
+                    const role = (p.getAttribute && p.getAttribute('role') || '').toLowerCase();
+                    if (role === 'tablist') { intrinsic = true; break; }
+                    const cls = (p.className && String(p.className)) || '';
+                    if (/(^|[\s_-])tabs?([\s_-]|$)/i.test(cls)) { intrinsic = true; break; }
+                    p = p.parentElement;
+                }
+            }
             // v0.12.21: a <label> whose bound control is invisible is
             // the control's only clickable proxy (styled radios and
             // checkboxes hide the native input under a styled label —
