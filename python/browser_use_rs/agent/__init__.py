@@ -1083,6 +1083,13 @@ class Agent:
         self._last_page_fp: str | None = None
         self._page_fp_streak: int = 0
         self._stagnation_nudged_at_streak: int = 0
+        # Exact-repeat action guard (v0.12.29). Companion to the page
+        # fingerprint above: catches loops the fingerprint misses when
+        # the page churns (redirect bounce, rotating DOM noise) by
+        # keying on the model's own output instead.
+        self._last_action_sig: str | None = None
+        self._action_repeat_streak: int = 0
+        self._action_repeat_nudged_at: int = 0
         # Rolling bot-block detector. The same-page stagnation guard
         # catches one CAPTCHA/Cloudflare URL repeated forever, but the
         # expensive eval tail often hops target to Google sorry to Bing
@@ -2329,6 +2336,76 @@ class Agent:
             # collapse, validation) sees the capped batch consistently.
             completion.tool_calls = tool_calls
             output.tool_calls = tool_calls
+
+            # Exact-repeat action guard (v0.12.29). The page-fingerprint
+            # stagnation guard above misses loops where the fingerprint
+            # never holds still (redirect bounce, rotating DOM noise) —
+            # observed as qwen3.8 issuing one identical navigate for 80+
+            # steps. Identical (name, args) batches in a row are never
+            # productive regardless of what the page does, EXCEPT for
+            # deliberately repeatable motions (scrolling a long page,
+            # waiting, key presses), which are exempt.
+            _repeatable = all(
+                tc.name.startswith("scroll") or tc.name in ("wait", "send_keys")
+                for tc in tool_calls
+            )
+            if not tool_calls or _repeatable:
+                self._last_action_sig = None
+                self._action_repeat_streak = 0
+                self._action_repeat_nudged_at = 0
+            else:
+                try:
+                    _sig = json.dumps(
+                        [{"n": tc.name, "a": tc.args} for tc in tool_calls],
+                        sort_keys=True,
+                        default=str,
+                    )
+                except Exception:
+                    _sig = repr([(tc.name, tc.args) for tc in tool_calls])
+                if _sig == self._last_action_sig:
+                    self._action_repeat_streak += 1
+                else:
+                    self._last_action_sig = _sig
+                    self._action_repeat_streak = 1
+                    self._action_repeat_nudged_at = 0
+            if self._action_repeat_streak >= 5 and step_n >= 10:
+                logger.info(
+                    "agent: repeat-action force-final at step %d "
+                    "(identical batch %d times)",
+                    step_n,
+                    self._action_repeat_streak,
+                )
+                await self._force_final_answer(
+                    state_summary,
+                    step_n,
+                    reason=(
+                        f"the same action was repeated "
+                        f"{self._action_repeat_streak} times in a row "
+                        f"without progress (loop)"
+                    ),
+                )
+                return
+            if (
+                self._action_repeat_streak >= 3
+                and self._action_repeat_streak > self._action_repeat_nudged_at
+            ):
+                self._action_repeat_nudged_at = self._action_repeat_streak
+                self._messages.append(
+                    UserMessage(
+                        content=(
+                            f"[LOOP] You have issued the exact same action "
+                            f"{self._action_repeat_streak} times in a row and "
+                            f"it is not progressing. Do something different "
+                            f"now: pick another element, use a different URL "
+                            f"or search, or finish with what you have."
+                        )
+                    )
+                )
+                logger.info(
+                    "agent: repeat-action nudge at step %d (streak=%d)",
+                    step_n,
+                    self._action_repeat_streak,
+                )
 
             # Visibility for eval audits: how big is each batch? Stable
             # 1's mean multi_act isn't helping; consistent 3-4's mean the

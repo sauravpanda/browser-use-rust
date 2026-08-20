@@ -264,6 +264,31 @@ class ChatOpenAI(BaseChatModel):
             self.client = AsyncOpenAI(**kwargs)
 
     @staticmethod
+    def _chat_text(msg: Any) -> str | None:
+        """Extract the assistant text from a chat-completions message.
+
+        OpenRouter (and DeepSeek-style OpenAI-compatible providers) return
+        the model's thinking in a separate reasoning field and leave content
+        empty on tool-call turns. Without the fallback every journal line
+        renders with blank model_text, which destroys render-mode
+        continuity — observed as qwen3.8 repeating one identical navigate
+        for 80+ steps. v0.12.29.
+        """
+        text = msg.content or None
+        if text:
+            return text
+        extra = getattr(msg, "model_extra", None) or {}
+        reasoning = (
+            getattr(msg, "reasoning", None)
+            or getattr(msg, "reasoning_content", None)
+            or extra.get("reasoning")
+            or extra.get("reasoning_content")
+        )
+        if isinstance(reasoning, str) and reasoning.strip():
+            return reasoning.strip()[:2000]
+        return None
+
+    @staticmethod
     def _map_tool_choice(tool_choice: str | dict | None) -> Any:
         """Translate the provider-agnostic tool_choice into the OpenAI
         chat-completions encoding. Unknown values → None (auto)."""
@@ -420,7 +445,7 @@ class ChatOpenAI(BaseChatModel):
         choice = response.choices[0]
         msg = choice.message
 
-        text = msg.content or None
+        text = self._chat_text(msg)
         tool_calls: list[ToolCall] = []
         if msg.tool_calls:
             import json as _json

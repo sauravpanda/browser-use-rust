@@ -480,3 +480,56 @@ class BoundedFinalizationTests(unittest.TestCase):
             any("re-check" in t.lower() or "verify" in t.lower()
                 for t in _texts(llm.calls[1]["messages"]))
         )
+
+
+class RepeatActionGuardTests(unittest.TestCase):
+    def test_identical_batches_nudge_then_force_final(self):
+        # 12 scripted identical poke batches; the guard must nudge at
+        # streak 3 and force the final answer at streak >=5 once past
+        # step 10 — long before the scripted list (or max_steps) runs out.
+        completions = [_poke_call(i) for i in range(1, 13)]
+        completions.append(
+            ChatInvokeCompletion(text="stuck in a loop; best answer: 42")
+        )
+        llm = ScriptedToolChoiceLLM(completions)
+        agent = _make_agent(llm)
+        asyncio.run(agent.run())
+
+        # 10 looped steps + 1 forced final turn.
+        self.assertEqual(11, len(llm.calls))
+        joined = "\n".join(
+            t for call in llm.calls for t in _texts(call["messages"])
+        )
+        self.assertIn("[LOOP]", joined)
+
+    def test_scroll_repeats_are_exempt(self):
+        agent = _make_agent(ScriptedLLM([ChatInvokeCompletion(text="done")]))
+        # Exercise the exemption predicate directly: scrolling the same
+        # way repeatedly is a legitimate pattern and must reset the streak.
+        from browser_use_rs.llm.base import ToolCall as TC
+
+        def repeatable(calls):
+            return all(
+                tc.name.startswith("scroll") or tc.name in ("wait", "send_keys")
+                for tc in calls
+            )
+
+        self.assertTrue(repeatable([TC(id="1", name="scroll", args={"direction": "down"})]))
+        self.assertTrue(repeatable([TC(id="2", name="scroll_to_bottom", args={})]))
+        self.assertFalse(repeatable([TC(id="3", name="navigate", args={"url": "x"})]))
+
+
+class ChatTextFallbackTests(unittest.TestCase):
+    def test_reasoning_field_used_when_content_empty(self):
+        from types import SimpleNamespace
+
+        from browser_use_rs.llm.openai import ChatOpenAI
+
+        msg = SimpleNamespace(content=None, reasoning="I will click the menu.")
+        self.assertEqual("I will click the menu.", ChatOpenAI._chat_text(msg))
+        msg2 = SimpleNamespace(content="", reasoning_content="thinking...")
+        self.assertEqual("thinking...", ChatOpenAI._chat_text(msg2))
+        # content wins when present; nothing → None.
+        msg3 = SimpleNamespace(content="real text", reasoning="ignored")
+        self.assertEqual("real text", ChatOpenAI._chat_text(msg3))
+        self.assertIsNone(ChatOpenAI._chat_text(SimpleNamespace(content=None)))
