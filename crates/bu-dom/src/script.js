@@ -104,14 +104,31 @@
     // indexes the whole document and reaches them directly, while we
     // forced a scroll-hunt. Links and static text stay viewport-culled
     // to protect the DOM byte budget; form controls are sparse.
-    const REACH_TAGS = new Set(['input', 'select', 'textarea', 'button', 'label']);
+    // v0.12.25 reach diet: the first reach ship cost +15%/task because
+    // page-wide labels (cookie banners, hidden-checkbox menus) and
+    // buttons (news-site share/player chrome — nytimes carries 25
+    // off-viewport buttons) multiplied across every re-rendered step.
+    // Labels keep their in-viewport proxy path only; buttons join reach
+    // only when their accessible name looks like a form action (the
+    // apply/search/filter buttons that pair with below-fold filter
+    // panels — TMDB's sits in no <form>, so ancestry can't gate it).
+    const REACH_TAGS = new Set(['input', 'select', 'textarea']);
     const REACH_ROLES = new Set([
         'tab', 'combobox', 'checkbox', 'radio', 'switch', 'slider',
         'searchbox', 'textbox', 'spinbutton',
     ]);
+    const REACH_BUTTON_NAME =
+        /(search|apply|filter|submit|save|sort|show|load|next|continue|update|confirm)\b/i;
     const isReachElement = (el) => {
-        if (REACH_TAGS.has(el.tagName.toLowerCase())) return true;
+        const tag = el.tagName.toLowerCase();
+        if (REACH_TAGS.has(tag)) return true;
         if (el.isContentEditable) return true;
+        if (tag === 'button') {
+            const name = ((el.innerText || '') + ' '
+                + (el.getAttribute('aria-label') || '') + ' '
+                + (el.getAttribute('type') || '')).trim();
+            return REACH_BUTTON_NAME.test(name);
+        }
         const role = (el.getAttribute('role') || '').toLowerCase();
         return REACH_ROLES.has(role);
     };
