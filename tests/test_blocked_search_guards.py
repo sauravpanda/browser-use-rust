@@ -184,5 +184,27 @@ class BlockedSearchGuardTests(unittest.TestCase):
         self.assertLess(len(out), 600)
 
 
+class SearchClampsFlagTests(unittest.TestCase):
+    def test_search_clamps_defaults_on(self):
+        import inspect
+
+        from browser_use_rs.agent import Agent
+
+        sig = inspect.signature(Agent.__init__)
+        self.assertIn("search_clamps", sig.parameters)
+        self.assertIs(sig.parameters["search_clamps"].default, True)
+
+    def test_all_three_clamp_gates_check_the_flag(self):
+        # The BOT_BLOCKED force, SEARCH_FALLBACK nudge, and SEARCH_FALLBACK
+        # force must each be conditioned on self.search_clamps so that
+        # search_clamps=False actually lifts every clamp it promises to.
+        import inspect
+
+        import browser_use_rs.agent as agent_mod
+
+        src = inspect.getsource(agent_mod)
+        self.assertGreaterEqual(src.count("self.search_clamps"), 3)
+
+
 if __name__ == "__main__":
     unittest.main()

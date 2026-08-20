@@ -579,6 +579,14 @@ class Agent:
         # override: BROWSER_USE_RS_RENDER_KEEP_NATIVE /
         # BU_RS_RENDER_KEEP_NATIVE.
         render_keep_native_turns: int | None = None,
+        # v0.12.27 policy probe: when False, the SEARCH_FALLBACK
+        # nudge/force-final and the BOT_BLOCKED force-final are
+        # disabled (the BOT_BLOCKED nudge and the stagnation guard
+        # stay). These clamps were tuned in the gemini-flash cost war
+        # and prohibit the search-ladder research pattern that wins
+        # deep-research tasks; this flag lets an eval variant measure
+        # that trade without touching default behavior.
+        search_clamps: bool = True,
         use_vision: bool = True,
         sensitive_data: dict[str, str] | None = None,
         system_prompt: str | None = None,
@@ -757,6 +765,7 @@ class Agent:
         # Only 0 and 1 are implementable: rebuilds drop everything older
         # than the last turn, so there is never a 2nd native turn to keep.
         self.render_keep_native_turns = max(0, min(1, int(_keep)))
+        self.search_clamps = bool(search_clamps)
         # Per-agent UUID stamped on scratchpad files so simultaneous
         # eval runs don't clobber each other.
         from browser_use_rs._scratchpad import new_agent_id
@@ -1599,7 +1608,8 @@ class Agent:
                         examples,
                     )
                 if (
-                    blocked_count >= BLOCKED_STATE_FORCE_COUNT
+                    self.search_clamps
+                    and blocked_count >= BLOCKED_STATE_FORCE_COUNT
                     and step_n >= BLOCKED_STATE_FORCE_MIN_STEP
                 ):
                     logger.info(
@@ -1672,7 +1682,8 @@ class Agent:
                     1 for h in self._recent_search_fallback_hosts if h
                 )
                 if (
-                    fallback_count >= SEARCH_FALLBACK_NUDGE_COUNT
+                    self.search_clamps
+                    and fallback_count >= SEARCH_FALLBACK_NUDGE_COUNT
                     and step_n >= SEARCH_FALLBACK_NUDGE_MIN_STEP
                     and fallback_count > self._search_fallback_nudged_at_count
                 ):
@@ -1703,7 +1714,8 @@ class Agent:
                         examples,
                     )
                 if (
-                    fallback_count >= SEARCH_FALLBACK_FORCE_COUNT
+                    self.search_clamps
+                    and fallback_count >= SEARCH_FALLBACK_FORCE_COUNT
                     and step_n >= SEARCH_FALLBACK_FORCE_MIN_STEP
                 ):
                     logger.info(
