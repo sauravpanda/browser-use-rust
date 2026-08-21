@@ -587,3 +587,95 @@ class ReasoningTextAnswerGuardTests(unittest.TestCase):
                 for t in _texts(llm.calls[1]["messages"])
             )
         )
+
+
+@tool
+async def find_text(session, query: str) -> str:
+    """Read-only search over the page (test double for the real tool)."""
+    return f"no match for {query}"
+
+
+class WatchdogReformTests(unittest.TestCase):
+    def test_read_only_steps_freeze_stagnation_streak(self):
+        # 18 read-only find_text calls with VARYING args (so the
+        # repeat-action guard stays out of the way) against a page whose
+        # fingerprint never changes. Old behavior: stagnation force-final
+        # at step 15 (streak>=5, step>=15). New behavior: read-only steps
+        # freeze the streak, so the loop runs the full script.
+        completions = [
+            ChatInvokeCompletion(
+                text=f"<memory>probe {i}</memory>",
+                tool_calls=[
+                    ToolCall(id=f"c{i}", name="find_text", args={"query": f"q{i}"})
+                ],
+            )
+            for i in range(1, 19)
+        ]
+        completions.append(ChatInvokeCompletion(text="answer: nothing found"))
+        llm = ScriptedLLM(completions)
+        agent = _make_agent(llm, tools=[find_text])
+        history = asyncio.run(agent.run())
+        self.assertEqual(19, len(llm.calls))
+        self.assertEqual("answer: nothing found", history.final_result())
+
+
+class DeadlineTests(unittest.TestCase):
+    def test_deadline_forces_final_before_first_llm_step(self):
+        llm = ScriptedToolChoiceLLM(
+            [ChatInvokeCompletion(text="partial: ran out of time")]
+        )
+        agent = _make_agent(llm, deadline_seconds=1.0)
+        history = asyncio.run(agent.run())
+        # The only LLM call is the forced final.
+        self.assertEqual(1, len(llm.calls))
+        self.assertEqual("partial: ran out of time", history.final_result())
+        joined = "\n".join(_texts(llm.calls[0]["messages"]))
+        self.assertIn("FORCE FINAL ANSWER", joined)
+
+    def test_forced_final_retries_when_provider_returns_reasoning_only(self):
+        # First forced-final response: reasoning text, no tool call (a
+        # provider that dropped tool_choice). The agent must retry once
+        # and take the done args from the second response.
+        llm = ScriptedToolChoiceLLM(
+            [
+                ChatInvokeCompletion(
+                    text="Okay, let me think about what I saw...",
+                    text_source="reasoning",
+                ),
+                ChatInvokeCompletion(
+                    text="",
+                    tool_calls=[
+                        ToolCall(
+                            id="d1",
+                            name="done",
+                            args={"text": "the answer", "success": False},
+                        )
+                    ],
+                ),
+            ]
+        )
+        agent = _make_agent(llm, deadline_seconds=1.0)
+        history = asyncio.run(agent.run())
+        self.assertEqual(2, len(llm.calls))
+        self.assertEqual("the answer", history.final_result())
+
+
+class RetryClassifierTests(unittest.TestCase):
+    def test_status_code_and_new_phrases_are_retryable(self):
+        from browser_use_rs.llm.base import _is_retryable
+
+        class FakeStatusError(Exception):
+            status_code = 502
+
+        self.assertTrue(_is_retryable(FakeStatusError("boom")))
+        self.assertTrue(_is_retryable(Exception("Request timed out.")))
+        self.assertTrue(_is_retryable(Exception("Bad gateway")))
+        self.assertTrue(_is_retryable(Exception("empty choices from provider: x")))
+        self.assertFalse(_is_retryable(Exception("invalid api key")))
+
+    def test_chat_openai_stores_extra_body(self):
+        from browser_use_rs.llm.openai import ChatOpenAI
+
+        body = {"provider": {"ignore": ["io-net"]}}
+        llm = ChatOpenAI(model="qwen/x", api_key="test", extra_body=body)
+        self.assertEqual(body, llm.extra_body)

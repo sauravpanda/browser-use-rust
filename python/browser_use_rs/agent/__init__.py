@@ -321,6 +321,41 @@ JOURNAL_LAST_M = 12
 
 BLOCKED_STATE_WINDOW = 8
 BLOCKED_STATE_NUDGE_COUNT = 3
+# v0.12.31: tools that read the page/scratchpad without mutating the
+# visible page. Steps composed only of these legitimately leave the page
+# fingerprint unchanged, so they freeze (never feed) the stagnation
+# streak. evaluate_js CAN mutate but is overwhelmingly used for data
+# pulls; the exact-repeat action guard still covers a mutating
+# evaluate_js stuck in a loop.
+READ_ONLY_TOOLS = frozenset(
+    {
+        "dom_snapshot",
+        "screenshot",
+        "save_pdf",
+        "get_text",
+        "page_text",
+        "get_links",
+        "sleep",
+        "wait_for",
+        "wait_for_navigation",
+        "list_tabs",
+        "get_cookies",
+        "list_downloads",
+        "grep_scratchpad",
+        "read_scratchpad",
+        "read_file",
+        "read_state",
+        "search_page",
+        "find_elements",
+        "extract_result_cards",
+        "find_text",
+        "get_dropdown_options",
+        "extract_links",
+        "extract_images",
+        "evaluate_js",
+    }
+)
+
 BLOCKED_STATE_FORCE_COUNT = 5
 BLOCKED_STATE_FORCE_MIN_STEP = 15
 SEARCH_FALLBACK_WINDOW = 8
@@ -592,6 +627,11 @@ class Agent:
         # gemini-flash probe: bottom-of-band accuracy with fatter step
         # tails). Explicit True/False always wins over the auto rule.
         search_clamps: bool | None = None,
+        # v0.12.31: wall-clock budget in seconds from Agent construction.
+        # When the remaining time falls below ~2 expected steps the agent
+        # forces its final answer instead of being killed mid-flight by
+        # an external per-task timeout. None = no deadline (default).
+        deadline_seconds: float | None = None,
         use_vision: bool = True,
         sensitive_data: dict[str, str] | None = None,
         system_prompt: str | None = None,
@@ -1090,6 +1130,29 @@ class Agent:
         self._last_action_sig: str | None = None
         self._action_repeat_streak: int = 0
         self._action_repeat_nudged_at: int = 0
+        # v0.12.31: whether the previous step executed any page-mutating
+        # tool. Read-only steps (extracts, finds, page_text, evaluate_js
+        # data pulls) leave the page unchanged BY DESIGN, so they must
+        # freeze the stagnation streak instead of feeding it — the
+        # watchdog was killing slow models mid-synthesis (qwen forensics:
+        # 6/21 gap tasks were stagnation kills during read-only grinding
+        # that the same model behind the python stack converted to
+        # passes). Starts True so the guard behaves as before until the
+        # first batch runs.
+        self._last_step_had_mutation: bool = True
+        # v0.12.31: wall-clock soft deadline. When set, the loop tracks
+        # an EWMA of step duration and forces the final answer while
+        # there is still time to land it, instead of letting the eval
+        # platform's hard timeout kill the process with no result (five
+        # guaranteed-zero "runner-no-result" deaths on the 45-min qwen
+        # run).
+        self._deadline_at: float | None = (
+            time.monotonic() + float(deadline_seconds)
+            if deadline_seconds
+            else None
+        )
+        self._step_ewma_s: float = 0.0
+        self._last_step_started: float | None = None
         # Rolling bot-block detector. The same-page stagnation guard
         # catches one CAPTCHA/Cloudflare URL repeated forever, but the
         # expensive eval tail often hops target to Google sorry to Bing
@@ -1772,6 +1835,38 @@ class Agent:
             ):
                 return
 
+            # v0.12.31: wall-clock soft deadline. Update the step-time
+            # EWMA and force the final answer while there is still room
+            # to land it — a killed process scores zero, a partial
+            # answer often doesn't.
+            _now = time.monotonic()
+            if self._last_step_started is not None:
+                _dur = _now - self._last_step_started
+                self._step_ewma_s = (
+                    _dur
+                    if not self._step_ewma_s
+                    else 0.5 * self._step_ewma_s + 0.5 * _dur
+                )
+            self._last_step_started = _now
+            if self._deadline_at is not None:
+                _remaining = self._deadline_at - _now
+                _threshold = max(2.0 * self._step_ewma_s, 90.0)
+                if _remaining < _threshold:
+                    logger.info(
+                        "agent: deadline force-final at step %d "
+                        "(remaining=%.0fs, ewma=%.1fs)",
+                        step_n, _remaining, self._step_ewma_s,
+                    )
+                    await self._force_final_answer(
+                        state_summary, step_n,
+                        reason=(
+                            f"wall-clock deadline approaching "
+                            f"({_remaining:.0f}s remain at "
+                            f"~{self._step_ewma_s:.0f}s/step)"
+                        ),
+                    )
+                    return
+
             # Page-stagnation nudge (v0.6.3). Hash the (url, element
             # count, head of DOM text) and compare to the prior step.
             # If 3 in a row are identical, the agent is stuck — its
@@ -1785,7 +1880,13 @@ class Agent:
                     f"{hash(_dom_head)}"
                 )
                 if _fp == self._last_page_fp:
-                    self._page_fp_streak += 1
+                    # v0.12.31: only count the unchanged fingerprint when
+                    # the previous step actually TRIED to change the page.
+                    # After a read-only step an unchanged page is the
+                    # expected outcome, not stagnation — the watchdog was
+                    # killing slow models mid read-only synthesis.
+                    if self._last_step_had_mutation:
+                        self._page_fp_streak += 1
                 else:
                     self._last_page_fp = _fp
                     self._page_fp_streak = 1
@@ -2349,6 +2450,14 @@ class Agent:
             completion.tool_calls = tool_calls
             output.tool_calls = tool_calls
 
+            # v0.12.31: record whether this batch mutates the page — the
+            # next iteration's stagnation check uses it to distinguish
+            # "tried to change the page, nothing happened" (stuck) from
+            # "read-only step, unchanged is expected" (working).
+            self._last_step_had_mutation = any(
+                tc.name not in READ_ONLY_TOOLS for tc in tool_calls
+            ) if tool_calls else False
+
             # Exact-repeat action guard (v0.12.29). The page-fingerprint
             # stagnation guard above misses loops where the fingerprint
             # never holds still (redirect bounce, rotating DOM noise) —
@@ -2885,26 +2994,60 @@ class Agent:
             ff_kwargs: dict[str, Any] = {"system": self.system_prompt}
             if force_done:
                 ff_kwargs["tool_choice"] = {"name": "done"}
+
+            def _answer_from(c: Any) -> str:
+                # v0.12.30: the done tool-call args are the canonical
+                # answer channel and are read FIRST — completion.text can
+                # be recovered deliberation on a tool-call turn.
+                for tc in c.tool_calls:
+                    if tc.name == "done" and isinstance(tc.args, dict):
+                        a = str(tc.args.get("text") or "").strip()
+                        if a:
+                            return a
+                return ""
+
             completion = await asyncio.wait_for(
-                self.llm.ainvoke(
-                    self._messages, self.tools,
-                    **ff_kwargs,
-                ),
+                self.llm.ainvoke(self._messages, self.tools, **ff_kwargs),
                 timeout=self.tool_timeout,
             )
             self._record_usage(step_n, completion.usage)
-            # v0.12.30: the done tool-call args are the canonical answer
-            # channel and are read FIRST. With the reasoning-text
-            # fallback in the providers, completion.text can be the
-            # model's deliberation on a tool-call turn — committing it
-            # over a clean done(text=...) leaked chain-of-thought as
-            # the final answer on 19/198 qwen tasks (18 judge-fails).
-            answer = ""
-            for tc in completion.tool_calls:
-                if tc.name == "done" and isinstance(tc.args, dict):
-                    answer = str(tc.args.get("text") or "").strip()
-                    if answer:
-                        break
+            answer = _answer_from(completion)
+            if (
+                not answer
+                and force_done
+                and getattr(completion, "text_source", "content") == "reasoning"
+            ):
+                # v0.12.31: the provider ignored tool_choice (some
+                # OpenRouter backends silently drop it) and all we got
+                # back is thinking. One bounded retry with an explicit
+                # instruction; if it fails too, the reasoning text below
+                # remains the last resort.
+                logger.info(
+                    "agent: force-final got reasoning-only output; "
+                    "retrying once with explicit done instruction"
+                )
+                self._messages.append(
+                    AssistantMessage(text=completion.text, tool_calls=[])
+                )
+                self._messages.append(
+                    UserMessage(
+                        content=(
+                            "That output was your reasoning, not an "
+                            "answer. Call done(text=...) RIGHT NOW. The "
+                            "text argument must contain ONLY the final "
+                            "user-facing answer to the task — no "
+                            "deliberation, no planning."
+                        )
+                    )
+                )
+                retry = await asyncio.wait_for(
+                    self.llm.ainvoke(self._messages, self.tools, **ff_kwargs),
+                    timeout=self.tool_timeout,
+                )
+                self._record_usage(step_n, retry.usage)
+                answer = _answer_from(retry)
+                if not answer and getattr(retry, "text_source", "") == "content":
+                    answer = (retry.text or "").strip()
             if not answer:
                 answer = (completion.text or "").strip()
             if not answer:

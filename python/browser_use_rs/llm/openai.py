@@ -240,6 +240,13 @@ class ChatOpenAI(BaseChatModel):
         # with reasoning_effort are not supported ... use /v1/responses").
         use_responses_api: bool = False,
         timeout: float | None = None,
+        # v0.12.31: provider-specific request-body extras, passed through
+        # verbatim on every call (openai SDK `extra_body`). Used for
+        # OpenRouter provider routing: {"provider": {"ignore": [...],
+        # "order": [...], "require_parameters": true}} — some OpenRouter
+        # backends silently drop tool_choice, which breaks every forced-
+        # finalization path in the agent.
+        extra_body: dict | None = None,
         client: AsyncOpenAI | None = None,
     ):
         self.model = model
@@ -249,6 +256,7 @@ class ChatOpenAI(BaseChatModel):
         self.max_completion_tokens = max_completion_tokens
         self.use_responses_api = use_responses_api
         self.timeout = timeout
+        self.extra_body = extra_body
         if client is not None:
             self.client = client
         else:
@@ -436,11 +444,21 @@ class ChatOpenAI(BaseChatModel):
             kwargs["reasoning_effort"] = self.reasoning_effort
         if self.max_completion_tokens is not None:
             kwargs["max_completion_tokens"] = self.max_completion_tokens
+        if self.extra_body is not None:
+            kwargs["extra_body"] = self.extra_body
 
         from browser_use_rs.llm.base import with_retry
 
         async def _call():
-            return await self.client.chat.completions.create(**kwargs)
+            resp = await self.client.chat.completions.create(**kwargs)
+            # OpenRouter can return HTTP 200 with an error body / no
+            # choices when the routed provider fails mid-request. Raise
+            # with a retryable marker so with_retry re-routes instead of
+            # crashing on response.choices[0]. v0.12.31.
+            if not getattr(resp, "choices", None):
+                err = getattr(resp, "error", None) or getattr(resp, "model_extra", {})
+                raise RuntimeError(f"empty choices from provider: {err}")
+            return resp
 
         response = await with_retry(_call, label=f"openai({self.model})")
         choice = response.choices[0]

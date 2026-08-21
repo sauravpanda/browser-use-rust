@@ -227,7 +227,22 @@ _RETRY_PHRASES = (
     "internal error",
     "temporarily",
     "deadline exceeded",
+    # v0.12.31: OpenRouter/proxy fleet errors. OpenAI SDK exceptions
+    # (APITimeoutError, APIConnectionError) are NOT stdlib
+    # TimeoutError/ConnectionError subclasses, so the isinstance
+    # fallback below never matched them — string-match instead.
+    "502",
+    "bad gateway",
+    "timed out",
+    "timeout",
+    "connection error",
+    "connection reset",
+    "empty choices",
 )
+
+# HTTP statuses that are always worth a retry when a provider SDK
+# exposes one on the exception (openai's APIStatusError.status_code).
+_RETRY_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 
 
 def _is_retryable(exc: BaseException) -> bool:
@@ -235,6 +250,9 @@ def _is_retryable(exc: BaseException) -> bool:
     marker. We pattern-match on stringified exceptions because each
     provider SDK raises its own typed exception, and they're all
     convertible-to-string with the upstream HTTP status / message body."""
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int) and status in _RETRY_STATUS_CODES:
+        return True
     msg = str(exc).lower()
     if any(p in msg for p in _RETRY_PHRASES):
         return True
