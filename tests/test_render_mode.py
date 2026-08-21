@@ -679,3 +679,45 @@ class RetryClassifierTests(unittest.TestCase):
         body = {"provider": {"ignore": ["io-net"]}}
         llm = ChatOpenAI(model="qwen/x", api_key="test", extra_body=body)
         self.assertEqual(body, llm.extra_body)
+
+
+class SettleBeforeCaptureTests(unittest.TestCase):
+    def test_busy_page_gets_capped_settle(self):
+        class BusySession:
+            def __init__(self):
+                self.probes = 0
+
+            async def evaluate(self, js):
+                self.probes += 1
+                return "loading:3"
+
+        agent = _make_agent(ScriptedLLM([]), browser_session=BusySession())
+        sleeps: list[float] = []
+        real_sleep = asyncio.sleep
+
+        async def fake_sleep(s):
+            sleeps.append(s)
+            await real_sleep(0)
+
+        import browser_use_rs.agent as agent_mod
+
+        orig = agent_mod.asyncio.sleep
+        agent_mod.asyncio.sleep = fake_sleep
+        try:
+            asyncio.run(agent._settle_before_capture())
+        finally:
+            agent_mod.asyncio.sleep = orig
+        # Two probes, two capped waits, then capture proceeds regardless.
+        self.assertEqual(2, agent.browser_session.probes if hasattr(agent, 'browser_session') else agent.session.probes)
+        self.assertEqual([0.25, 0.25], sleeps)
+
+    def test_idle_page_skips_settle_and_errors_are_swallowed(self):
+        class IdleSession:
+            async def evaluate(self, js):
+                return "ok:0"
+
+        agent = _make_agent(ScriptedLLM([]), browser_session=IdleSession())
+        asyncio.run(agent._settle_before_capture())  # returns immediately
+        # No evaluate at all (object() session) must not raise either.
+        bare = _make_agent(ScriptedLLM([]))
+        asyncio.run(bare._settle_before_capture())

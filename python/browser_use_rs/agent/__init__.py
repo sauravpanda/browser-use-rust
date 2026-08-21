@@ -4551,6 +4551,43 @@ class Agent:
             return "site technical error"
         return ""
 
+    async def _settle_before_capture(self) -> None:
+        """v0.12.34 (roadmap rank 5): capped settle probe before state capture.
+
+        Python's dom_watchdog runs a readiness probe before every DOM
+        capture; bu-rs captured with zero readiness check, which is the
+        confirmed mechanism behind stale post-mutation reads (task 1508:
+        answered from the pre-filter listing). Probe: readyState +
+        recently-started in-flight resource requests (old long-pollers
+        excluded via the 1.5s recency window). If busy, sleep 0.25s and
+        re-probe once — worst case +0.5s, typical cost ~10-20ms, and we
+        ALWAYS capture afterwards. Deliberately NOT ported: python's
+        per-click sleeps and wait_between_actions (bu-rs's batch
+        index-invalidation guards cover what those protect).
+        """
+        probe_js = (
+            "(() => { const now = performance.now();"
+            " const pending = performance.getEntriesByType('resource')"
+            ".filter(r => !r.responseEnd && now - r.startTime < 1500).length;"
+            " return (document.readyState === 'complete' ? 'ok' : 'loading')"
+            " + ':' + pending; })()"
+        )
+        try:
+            for _ in range(2):
+                verdict = str(
+                    await asyncio.wait_for(
+                        self.session.evaluate(probe_js), timeout=2.0
+                    )
+                    or ""
+                )
+                state_str, _, pending_str = verdict.partition(":")
+                busy = state_str != "ok" or (pending_str.isdigit() and int(pending_str) > 0)
+                if not busy:
+                    return
+                await asyncio.sleep(0.25)
+        except Exception:  # noqa: BLE001 - settle is best-effort; capture regardless
+            return
+
     async def _capture_state(self) -> BrowserStateSummary:
         """Pre-step snapshot stored in history for the judge / callbacks.
 
@@ -4565,6 +4602,8 @@ class Agent:
         `_inject_page_state` can prepend it to the next LLM call without
         a second snapshot round trip.
         """
+        # v0.12.34: let the page settle before snapping it (capped 0.5s).
+        await self._settle_before_capture()
         # All three CDP roundtrips run in parallel — they don't depend on
         # each other. Sequentially they were ~150-300ms of fixed overhead
         # per step (current_url + screenshot + dom_snapshot); together
@@ -5360,6 +5399,14 @@ class Agent:
             and self._cached_page_state_step > 0
             and not self._last_page_state_had_read_state
             and self._state_cache_reuse_count < self.state_cache_max_reuse_steps
+            # v0.12.34: a mutating action ran since the cached state was
+            # taken — never tell the model "[STATE_UNCHANGED] reuse that
+            # PAGE_STATE" across a mutation, even when the fingerprint
+            # happens to match (the capture may have raced the
+            # re-render; task 1508 answered from the pre-filter list).
+            # getattr: prompt-metrics tests build stub agents via
+            # Agent.__new__ without the loop attrs.
+            and not getattr(self, "_indices_invalidated", False)
         )
         if can_reuse_state:
             self._messages = [
