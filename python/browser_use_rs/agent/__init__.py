@@ -758,11 +758,12 @@ class Agent:
         self.tools = tools
         self.tools_by_name: dict[str, Tool] = {t.name: t for t in tools}
         # v0.12.32: answer-contract profile resolution (see kwarg doc).
-        if answer_contract is None:
-            _m = str(getattr(llm, "model", "") or "")
-            self.answer_contract = _m.startswith("qwen")
-        else:
-            self.answer_contract = bool(answer_contract)
+        # v0.12.33: auto-rule REVERTED to always-off after two full-set
+        # qwen gates printed below the Wave-1 baseline (73.2/72.7 vs
+        # 76.8 — forcing done-only finalization suppressed honest prose
+        # finals for less than the deliberation-leak class it
+        # recovered). The mechanism stays opt-in for future variants.
+        self.answer_contract = bool(answer_contract) if answer_contract is not None else False
         if self.answer_contract:
             # Phantom-tool aliases: registered for DISPATCH only (in
             # tools_by_name, not in self.tools), so they are never
