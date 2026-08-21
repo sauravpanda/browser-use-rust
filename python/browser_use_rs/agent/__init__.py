@@ -67,6 +67,7 @@ from browser_use_rs.agent.prompts import (
     BLOCKED_SITE_POLICY,
     DEFAULT_SYSTEM_PROMPT,
     FLASH_SYSTEM_PROMPT,
+    ANSWER_CONTRACT_OVERRIDE,
     RESEARCH_POLICY_OVERRIDE,
     _VALIDATION_CHECKLIST,
     _VALIDATION_PROMPT_DONE,
@@ -632,6 +633,18 @@ class Agent:
         # forces its final answer instead of being killed mid-flight by
         # an external per-task timeout. None = no deadline (default).
         deadline_seconds: float | None = None,
+        # v0.12.32 answer-contract profile. None (default) auto-resolves:
+        # ON for models whose serving route returns reasoning in a
+        # separate channel with empty content on tool turns (qwen/*),
+        # where plain-text finals surface as leaked deliberation. When
+        # on: the ANSWER_CONTRACT_OVERRIDE is appended to the system
+        # prompt, done(text=...) becomes the only finalization channel
+        # (prose turns route through the EMPTY_MODEL_OUTPUT nudge), the
+        # validation/final-turn wording says re-call done instead of
+        # "plain text", and qwen's training-prior phantom tools
+        # (memory / evaluation_previous_goal) resolve to hidden no-ops
+        # instead of unknown-tool error turns.
+        answer_contract: bool | None = None,
         use_vision: bool = True,
         sensitive_data: dict[str, str] | None = None,
         system_prompt: str | None = None,
@@ -744,6 +757,32 @@ class Agent:
                 tools.append(t)
         self.tools = tools
         self.tools_by_name: dict[str, Tool] = {t.name: t for t in tools}
+        # v0.12.32: answer-contract profile resolution (see kwarg doc).
+        if answer_contract is None:
+            _m = str(getattr(llm, "model", "") or "")
+            self.answer_contract = _m.startswith("qwen")
+        else:
+            self.answer_contract = bool(answer_contract)
+        if self.answer_contract:
+            # Phantom-tool aliases: registered for DISPATCH only (in
+            # tools_by_name, not in self.tools), so they are never
+            # advertised in the schema but a hallucinated call becomes a
+            # cheap no-op turn instead of an unknown-tool error turn
+            # (48 occurrences across 33/198 qwen runs).
+            from browser_use_rs.tools import tool as _tool
+
+            @_tool
+            async def memory(session, content: str = "") -> str:
+                """No-op notepad; acknowledges a memory note."""
+                return "noted"
+
+            @_tool
+            async def evaluation_previous_goal(session, content: str = "") -> str:
+                """No-op; acknowledges a self-evaluation note."""
+                return "noted"
+
+            for _alias in (memory, evaluation_previous_goal):
+                self.tools_by_name.setdefault(_alias.name, _alias)
         # Alias-aware guard sets (v0.7.2). Resolve every tool name +
         # registered alias to its canonical name via ALIAS_TO_CANONICAL,
         # then include in the guard set if the canonical is in the
@@ -856,6 +895,13 @@ class Agent:
             if not self.search_clamps and RESEARCH_POLICY_OVERRIDE not in self.system_prompt:
                 self.system_prompt = (
                     self.system_prompt.rstrip() + "\n\n" + RESEARCH_POLICY_OVERRIDE
+                )
+            # v0.12.32: answer-contract profile appends the done-only
+            # finalization contract. Gemini-class defaults are
+            # byte-identical (profile off).
+            if self.answer_contract and ANSWER_CONTRACT_OVERRIDE not in self.system_prompt:
+                self.system_prompt = (
+                    self.system_prompt.rstrip() + "\n\n" + ANSWER_CONTRACT_OVERRIDE
                 )
             # Switch the completion contract when the controller declared a
             # structured output: the LLM must call done(...) with fields
@@ -1989,10 +2035,17 @@ class Agent:
                 else:
                     final_turn_msg = (
                         "[FINAL TURN] You have reached max_steps and "
-                        "this is your last possible action. Do NOT "
-                        "call any more tools. Reply with your best "
-                        "final answer in plain text RIGHT NOW based "
-                        "on what you have seen so far. If you cannot "
+                        "this is your last possible action. "
+                        + (
+                            "Call done(text=...) RIGHT NOW with your "
+                            "best final answer — no other tools. "
+                            if self.answer_contract
+                            else "Do NOT call any more tools. Reply "
+                            "with your best final answer in plain "
+                            "text RIGHT NOW based on what you have "
+                            "seen so far. "
+                        )
+                        + "If you cannot "
                         "fully answer, give your best partial answer "
                         "and explicitly note what is unverified. A "
                         "partial answer is far better than no answer."
@@ -2139,7 +2192,13 @@ class Agent:
                 # nudges are exhausted it stays as a last resort, which
                 # beats an empty final.
                 if (
-                    getattr(completion, "text_source", "content") == "reasoning"
+                    (
+                        getattr(completion, "text_source", "content") == "reasoning"
+                        # v0.12.32: under the answer contract, prose is
+                        # never a valid final — route it through the
+                        # nudge toward done(text=...) as well.
+                        or self.answer_contract
+                    )
                     and step_n < max_steps
                     and self._empty_output_nudges < 2
                 ):
@@ -2315,7 +2374,19 @@ class Agent:
                         AssistantMessage(text=done_text, tool_calls=[])
                     )
                     self._messages.append(
-                        UserMessage(content=_VALIDATION_PROMPT_TEXT)
+                        UserMessage(
+                            content=(
+                                _VALIDATION_PROMPT_TEXT.replace(
+                                    "repeat your answer in plain text to "
+                                    "confirm — that turn will be your final.",
+                                    "re-call done(text=...) with your "
+                                    "confirmed answer — that will be your "
+                                    "final.",
+                                )
+                                if self.answer_contract
+                                else _VALIDATION_PROMPT_TEXT
+                            )
+                        )
                     )
                     self._force_done_next_call()
                     # Record this step in history so the budget is
@@ -4840,9 +4911,19 @@ class Agent:
 
         Idempotent and safe on text without tags.
         """
-        if not text or "<" not in text:
+        if not text:
             return text
         import re as _re
+        # v0.12.32: strip leaked deliberation framing — <think> blocks
+        # (reasoning-channel models) and "(Thinking)"/"Thinking:" lead-ins
+        # observed verbatim in qwen finals.
+        text = _re.sub(
+            r"<think>.*?</think>\s*", "", text, flags=_re.DOTALL | _re.IGNORECASE
+        )
+        text = _re.sub(r"^\s*\(thinking\)[:\s]*", "", text, flags=_re.IGNORECASE)
+        text = _re.sub(r"^\s*thinking:\s*", "", text, flags=_re.IGNORECASE)
+        if "<" not in text:
+            return text
         # Drop the meta tags entirely.
         for tag in ("evaluation_previous_goal", "next_goal"):
             text = _re.sub(

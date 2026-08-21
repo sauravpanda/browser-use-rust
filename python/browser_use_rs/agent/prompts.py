@@ -42,6 +42,23 @@ engines; visit multiple candidate results; synthesize URLs directly from known \
 site structures. Only conclude failure after genuinely exhausting these routes."""
 
 
+# v0.12.32 answer-contract profile: appended for models whose serving
+# route carries reasoning in a separate channel (qwen via OpenRouter).
+# Their content channel is empty on tool-call turns, so the XML
+# state-tag contract is unfulfillable and plain-text finals come out as
+# leaked deliberation. done(text=...) becomes the only exit.
+ANSWER_CONTRACT_OVERRIDE = """\
+ANSWER CONTRACT for this run: the ONLY way to finish is calling \
+done(text=..., success=...). Never finish with a plain-text message. The done \
+text argument must contain ONLY the final user-facing answer: start directly \
+with the answer itself, match the exact format the task asks for (list, \
+count, names, values), and include no planning, no deliberation, and no \
+narration of what you did. Do not emit <memory>, <next_goal>, or \
+<evaluation_previous_goal> tags in any turn — keep working notes in your own \
+reasoning. Ground every reported value in what you actually observed on the \
+page; never fill gaps from general knowledge."""
+
+
 # Flash-mode prompt — terse variant matching upstream's
 # system_prompt_flash.md. Used when flash_mode=True is passed to the
 # Agent (eval framework default for many setups). Mirrors upstream's

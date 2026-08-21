@@ -268,3 +268,49 @@ class SearchClampsFlagTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AnswerContractProfileTests(unittest.TestCase):
+    @staticmethod
+    def _agent(llm, **kwargs):
+        from browser_use_rs.agent import Agent
+
+        kwargs.setdefault("browser_session", object())
+        kwargs.setdefault("auto_initial_navigation", False)
+        return Agent("look up a fact", llm, **kwargs)
+
+    def test_auto_on_for_qwen_off_for_gemini(self):
+        from browser_use_rs.agent.prompts import ANSWER_CONTRACT_OVERRIDE
+
+        q = self._agent(_ProfileLLM("qwen/qwen3.8-27b"))
+        self.assertTrue(q.answer_contract)
+        self.assertIn(ANSWER_CONTRACT_OVERRIDE, q.system_prompt)
+        g = self._agent(_ProfileLLM("gemini-3-flash-preview"))
+        self.assertFalse(g.answer_contract)
+        self.assertNotIn(ANSWER_CONTRACT_OVERRIDE, g.system_prompt)
+        forced = self._agent(
+            _ProfileLLM("gemini-3-flash-preview"), answer_contract=True
+        )
+        self.assertTrue(forced.answer_contract)
+
+    def test_phantom_tools_dispatchable_but_not_advertised(self):
+        q = self._agent(_ProfileLLM("qwen/qwen3.8-27b"))
+        self.assertIn("memory", q.tools_by_name)
+        self.assertIn("evaluation_previous_goal", q.tools_by_name)
+        advertised = {t.name for t in q.tools}
+        self.assertNotIn("memory", advertised)
+        self.assertNotIn("evaluation_previous_goal", advertised)
+        g = self._agent(_ProfileLLM("gemini-3-flash-preview"))
+        self.assertNotIn("memory", g.tools_by_name)
+
+    def test_think_blocks_stripped_from_answers(self):
+        from browser_use_rs.agent import Agent
+
+        s = Agent._strip_state_tags_for_answer
+        self.assertEqual(
+            "The answer is 42.",
+            s("<think>let me reason about this</think>The answer is 42."),
+        )
+        self.assertEqual("The answer is 42.", s("(Thinking) The answer is 42."))
+        self.assertEqual("The answer is 42.", s("Thinking: The answer is 42."))
+        self.assertEqual("plain already", s("plain already"))
