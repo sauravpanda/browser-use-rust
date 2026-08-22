@@ -216,8 +216,9 @@ impl BrowserSession {
             let s = guard
                 .as_ref()
                 .ok_or_else(|| map_err("session not started — call start() first"))?;
-            s.navigate(&url).await.map_err(map_err)?;
-            Ok(())
+            // v0.12.36: returns whether load was confirmed (bool).
+            let confirmed = s.navigate(&url).await.map_err(map_err)?;
+            Ok(confirmed)
         })
     }
 

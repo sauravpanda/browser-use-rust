@@ -64,7 +64,34 @@ async def navigate(session, url: str) -> str:
     Args:
         url: The full URL to load (must include https:// or http://).
     """
-    await session.navigate(url)
+    try:
+        confirmed = await session.navigate(url)
+    except Exception as exc:  # noqa: BLE001 - surface net errors honestly
+        msg = str(exc)
+        if "net::" in msg or "ERR_" in msg:
+            return (
+                f"(navigation to {url} failed: {msg.split(':', 1)[-1].strip()[:160]} — "
+                f"check the URL, or search for the page instead)"
+            )
+        raise
+    # v0.12.36: empty-DOM recheck after navigation (mirrors browser-use's
+    # tools/service.py guard). An http(s) page with zero interactive
+    # elements right after load is usually an SPA still hydrating — give
+    # it one 2s grace period before the model snapshots a blank shell.
+    try:
+        if url.startswith(("http://", "https://")):
+            count = await session.evaluate(
+                "document.querySelectorAll('a,button,input,select,textarea,[role]').length"
+            )
+            if str(count).strip() in ("0", "0.0", ""):
+                await asyncio.sleep(2.0)
+    except Exception:  # noqa: BLE001 - best-effort
+        pass
+    if confirmed is False:
+        return (
+            f"opened {url} — page load not confirmed within 10s; content may "
+            f"be incomplete. If the page looks empty, wait briefly and read again."
+        )
     return f"loaded {url}"
 
 

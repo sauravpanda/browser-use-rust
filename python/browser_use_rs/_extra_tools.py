@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import tempfile
@@ -30,6 +31,8 @@ from typing import Any
 
 from browser_use_rs.tools import tool
 
+
+logger = logging.getLogger(__name__)
 
 MAX_EXTRACT_CHARS = 60_000
 
@@ -789,7 +792,16 @@ async def go_back(session) -> str:
     """Navigate the browser history back one step. Equivalent to the
     browser's back button."""
     await session.evaluate("(() => { history.back(); return ''; })()")
-    return "navigated back"
+    # v0.12.36: wait on the navigation signal (≤1.5s) instead of
+    # returning before the previous document has even started loading.
+    try:
+        await session.wait_for_navigation(1500)
+    except Exception:  # noqa: BLE001 - best-effort; the settle probe covers the rest
+        pass
+    try:
+        return f"navigated back to {await session.current_url()}"
+    except Exception:  # noqa: BLE001
+        return "navigated back"
 
 
 @tool
@@ -1482,7 +1494,11 @@ def make_extra_tools(agent: Any) -> list:
                 "grounded page data yet. Wait for navigation to complete or "
                 "navigate to a real page, then retry extraction.)"
             )
-        cache_key = (
+        # v0.12.36: the dedup key is computed AFTER the page pull (below)
+        # and includes a content fingerprint. The old URL-keyed key was a
+        # deterministic stale-evidence path on SPAs: same URL, new
+        # content after a filter/tab click → "(cached)" pre-mutation text.
+        cache_base = (
             url,
             query.strip(),
             start_from_char,
@@ -1492,8 +1508,6 @@ def make_extra_tools(agent: Any) -> list:
             bool(extract_images),
             (already_collected or "").strip()[:2000],
         )
-        if cache_key in extract_cache:
-            return f"(cached) {extract_cache[cache_key]}"
 
         # Markdown extraction (v0.7.1): pull the page DOM and convert
         # to a cleaned markdown-style text. Drops scripts/styles/nav/
@@ -1546,6 +1560,15 @@ def make_extra_tools(agent: Any) -> list:
             page = page[start_from_char : start_from_char + max_chars]
         elif len(page) > max_chars:
             page = page[:max_chars]
+
+        import hashlib as _hashlib
+
+        cache_key = cache_base + (
+            len(page),
+            _hashlib.sha1(page[:4096].encode("utf-8", "ignore")).hexdigest()[:12],
+        )
+        if cache_key in extract_cache:
+            return f"(cached) {extract_cache[cache_key]}"
 
         schema_clause = ""
         if output_schema_hint and output_schema_hint.strip():
@@ -1671,10 +1694,36 @@ def make_extra_tools(agent: Any) -> list:
             # upstream's separate cheap-extraction-LLM pattern). Falls
             # back to the agent's main LLM. v0.7.0.
             extract_llm = getattr(agent, "page_extraction_llm", None) or agent.llm
-            completion = await asyncio.wait_for(
-                extract_llm.ainvoke(messages, [], system=extraction_system),
-                timeout=getattr(agent, "tool_timeout", 60.0),
-            )
+            # v0.12.36: this is an LLM sub-call over up to 30k chars; on
+            # slow serving routes (qwen via OpenRouter ≈18s/step) the
+            # tool_timeout floor fired and the error string pushed the
+            # model into read_file/evaluate_js fallback loops that seeded
+            # watchdog kills. Floor the budget at 120s and, on timeout,
+            # retry ONCE with the first half of the page instead of
+            # failing outright.
+            _budget = max(float(getattr(agent, "tool_timeout", 60.0) or 60.0), 120.0)
+            try:
+                completion = await asyncio.wait_for(
+                    extract_llm.ainvoke(messages, [], system=extraction_system),
+                    timeout=_budget,
+                )
+            except asyncio.TimeoutError:
+                half = page[: max(1_000, len(page) // 2)]
+                retry_user = extraction_user.replace(
+                    f"<webpage_content>\n{page}{extras}\n</webpage_content>",
+                    f"<webpage_content>\n{half}\n</webpage_content>",
+                )
+                completion = await asyncio.wait_for(
+                    extract_llm.ainvoke(
+                        [UserMessage(content=retry_user)], [], system=extraction_system
+                    ),
+                    timeout=_budget,
+                )
+                logger.info(
+                    "extract_structured_data: timed out on %d chars; "
+                    "succeeded on first half (%d chars)",
+                    len(page), len(half),
+                )
             # v0.8.15: account for the extractor LLM call. Without this,
             # 5-15K input tokens × N extracts/task were silently missing
             # from usage_log → step_metadata.input_tokens → eval framework's
@@ -1737,7 +1786,11 @@ def make_extra_tools(agent: Any) -> list:
             extract_cache[cache_key] = text  # cache for dedup
             return text
         except asyncio.TimeoutError:
-            return "(extractor timed out — try a narrower query)"
+            return (
+                "(extractor timed out twice — the page is large; narrow the "
+                "query, or use search_page/find_text to locate the section "
+                "and extract with start_from_char)"
+            )
         except Exception as e:
             return f"(extractor failed: {type(e).__name__}: {e})"
 

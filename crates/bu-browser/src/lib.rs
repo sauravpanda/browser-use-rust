@@ -752,23 +752,79 @@ impl BrowserSession {
     /// Enforces the navigation policy (allowed_domains / prohibited_domains)
     /// configured on this session — returns NavigationBlocked without
     /// touching the browser if the URL isn't permitted.
-    pub async fn navigate(&self, url: &str) -> Result<()> {
+    /// Navigate and wait for the NEW document to load. Returns `true` when
+    /// readiness was confirmed, `false` when the wait timed out (the page
+    /// may still be loading — callers should say so instead of claiming
+    /// "loaded").
+    ///
+    /// v0.12.36: readiness is matched on the `loaderId` returned by
+    /// Page.navigate via Page.lifecycleEvent (`load` or `networkIdle`),
+    /// mirroring browser-use's session.py. Before this, a late
+    /// loadEventFired from the PREVIOUS document could unblock the wait and
+    /// the next snapshot captured the stale page. Cap 10s (was 30s — SPAs
+    /// whose load event never fires stalled every navigate for 30s).
+    pub async fn navigate(&self, url: &str) -> Result<bool> {
         self.check_navigation_allowed(url)?;
-        let mut events = self.conn.events();
         let sid = self.session_id().await;
+        // Idempotent; needed for Page.lifecycleEvent to be emitted.
+        let _ = self
+            .conn
+            .send(
+                "Page.setLifecycleEventsEnabled",
+                json!({ "enabled": true }),
+                Some(&sid),
+            )
+            .await;
+        let mut events = self.conn.events();
 
-        self.conn
+        let resp = self
+            .conn
             .send("Page.navigate", json!({ "url": url }), Some(&sid))
             .await?;
+        if let Some(err) = resp.get("errorText").and_then(Value::as_str) {
+            // ERR_ABORTED = navigation superseded (redirect chain, download
+            // trigger) — not a failure of the request itself.
+            if !err.contains("ERR_ABORTED") {
+                return Err(BrowserError::BadResponse {
+                    method: "navigate",
+                    detail: format!("{url}: {err}"),
+                });
+            }
+        }
+        let loader_id = resp
+            .get("loaderId")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
 
         let target = sid.clone();
         let wait = async move {
             loop {
                 match events.recv().await {
                     Ok(event) => {
-                        if event.method == "Page.loadEventFired"
-                            && event.session_id.as_deref() == Some(&target)
-                        {
+                        if event.session_id.as_deref() != Some(&target) {
+                            continue;
+                        }
+                        if event.method == "Page.lifecycleEvent" {
+                            let name = event
+                                .params
+                                .get("name")
+                                .and_then(Value::as_str)
+                                .unwrap_or("");
+                            let lid = event
+                                .params
+                                .get("loaderId")
+                                .and_then(Value::as_str);
+                            let same_loader = match (&loader_id, lid) {
+                                (Some(want), Some(got)) => want == got,
+                                (None, _) => true,
+                                (Some(_), None) => false,
+                            };
+                            if same_loader && (name == "load" || name == "networkIdle") {
+                                return Ok::<(), BrowserError>(());
+                            }
+                        } else if loader_id.is_none() && event.method == "Page.loadEventFired" {
+                            // No loaderId to match on (older Chrome) — fall
+                            // back to the session-scoped load event.
                             return Ok::<(), BrowserError>(());
                         }
                     }
@@ -780,10 +836,10 @@ impl BrowserSession {
             }
         };
 
-        match tokio::time::timeout(Duration::from_secs(30), wait).await {
-            Ok(Ok(())) => Ok(()),
+        match tokio::time::timeout(Duration::from_secs(10), wait).await {
+            Ok(Ok(())) => Ok(true),
             Ok(Err(e)) => Err(e),
-            Err(_) => Ok(()),
+            Err(_) => Ok(false),
         }
     }
 
@@ -880,7 +936,7 @@ impl BrowserSession {
     /// viewport, and return its current center in the top window's
     /// coordinate space. Walks into same-origin iframes if necessary.
     /// None if the element no longer exists.
-    async fn fresh_center(&self, index: u32) -> Result<Option<(f64, f64)>> {
+    async fn fresh_center(&self, index: u32) -> Result<Option<(f64, f64, bool)>> {
         let _ = self.lookup(index).await?;
         let sid = self.session_id().await;
         let script = format!(
@@ -900,7 +956,15 @@ impl BrowserSession {
                     y += frR.top;
                     win = win.parent;
                 }}
-                return {{ x: x + r.width / 2, y: y + r.height / 2 }};
+                // v0.12.36: occlusion check in the element's own document
+                // (sticky headers / overlays after scrollIntoView). Mirrors
+                // python's default_action_watchdog fallback.
+                let occluded = false;
+                try {{
+                    const hit = el.ownerDocument.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+                    occluded = !(hit && (hit === el || el.contains(hit) || hit.contains(el)));
+                }} catch (e) {{}}
+                return {{ x: x + r.width / 2, y: y + r.height / 2, occluded }};
             }})()"#,
             finder = find_by_idx_js(index)
         );
@@ -918,17 +982,51 @@ impl BrowserSession {
             Some(Value::Object(o)) => {
                 let x = o.get("x").and_then(Value::as_f64).unwrap_or(0.0);
                 let y = o.get("y").and_then(Value::as_f64).unwrap_or(0.0);
-                Ok(Some((x, y)))
+                let occluded = o.get("occluded").and_then(Value::as_bool).unwrap_or(false);
+                Ok(Some((x, y, occluded)))
             }
             _ => Ok(None),
         }
     }
 
+    /// JS `element.click()` on the indexed element — the fallback when the
+    /// trusted coordinate click would land on an overlay instead. v0.12.36.
+    async fn js_click_index(&self, index: u32) -> Result<()> {
+        let sid = self.session_id().await;
+        let script = format!(
+            r#"(() => {{ {finder} const el = findByIdx(document); if (!el) return false; el.click(); return true; }})()"#,
+            finder = find_by_idx_js(index)
+        );
+        let r = self
+            .conn
+            .send(
+                "Runtime.evaluate",
+                json!({ "expression": script, "returnByValue": true }),
+                Some(&sid),
+            )
+            .await?;
+        let ok = r
+            .get("result")
+            .and_then(|x| x.get("value"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if ok {
+            Ok(())
+        } else {
+            Err(BrowserError::ElementGone(index))
+        }
+    }
+
     pub async fn click_index(&self, index: u32) -> Result<()> {
-        let (cx, cy) = self
+        let (cx, cy, occluded) = self
             .fresh_center(index)
             .await?
             .ok_or(BrowserError::ElementGone(index))?;
+        if occluded {
+            // Trusted path would hit the overlay; element.click() reaches
+            // the element's own listeners regardless of stacking.
+            return self.js_click_index(index).await;
+        }
         self.dispatch_click(cx, cy).await
     }
 
