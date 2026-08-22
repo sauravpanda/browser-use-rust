@@ -531,7 +531,17 @@ async def find_text(session, text: str) -> str:
         "   const v = (node.nodeValue || '').toLowerCase();"
         "   if (v.includes(needle)) {"
         "     const p = node.parentElement;"
-        "     if (p) { p.scrollIntoView({block: 'center'}); return JSON.stringify({found: true, y: window.scrollY}); }"
+        "     if (p) {"
+        "       p.scrollIntoView({block: 'center'});"
+        # v0.12.35: report whether the match lives in an indexed element.
+        # Short text inside a non-indexed leaf is the signature of a chip
+        # or tab bu-dom could not classify; surface the dedicated tool
+        # right here (inline knowledge in the action result, zero
+        # ambient cost) instead of hoping the model recalls it.
+        "       const own = (p.innerText || '').replace(/\\s+/g, ' ').trim();"
+        "       const indexed = !!(p.closest('[data-bu-idx]'));"
+        "       return JSON.stringify({found: true, y: window.scrollY, indexed, short: own.length <= 40, tag: p.tagName.toLowerCase()});"
+        "     }"
         "   }"
         " }"
         " return JSON.stringify({found: false});"
@@ -543,7 +553,13 @@ async def find_text(session, text: str) -> str:
     except json.JSONDecodeError:
         return f"(unparseable: {raw[:120]})"
     if data.get("found"):
-        return f"scrolled to {text!r} at y={data.get('y', '?')}"
+        out = f"scrolled to {text!r} at y={data.get('y', '?')}"
+        if data.get("short") and not data.get("indexed", True):
+            out += (
+                f" — it sits in a <{data.get('tag', '?')}> with no [index]; if it is a "
+                f"tab/chip/filter you need to click, use activate_control(text={text!r})"
+            )
+        return out
     return "(text not found)"
 
 
