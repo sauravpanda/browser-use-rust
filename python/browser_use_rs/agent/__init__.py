@@ -1187,6 +1187,9 @@ class Agent:
         # passes). Starts True so the guard behaves as before until the
         # first batch runs.
         self._last_step_had_mutation: bool = True
+        # v0.12.38 batch retargeting stats (logged; visible in results).
+        self._batch_retargets: int = 0
+        self._batch_skips: int = 0
         # v0.12.31: wall-clock soft deadline. When set, the loop tracks
         # an EWMA of step duration and forces the final answer while
         # there is still time to land it, instead of letting the eval
@@ -5567,6 +5570,81 @@ class Agent:
         # tools regardless of URL change.
         indices_invalidated = False
 
+        # v0.12.38 proactive retargeting. Capture each queued indexed
+        # call's target IDENTITY at plan time — its semantic selector
+        # (id / data-testid / role+name / tag+text) and its ordinal among
+        # same-selector elements — so that after an earlier action
+        # mutates the page we can re-snapshot and re-resolve the index
+        # instead of skipping the call. This is what lets [type, click]
+        # batches run safely: python batches ~1.27 actions per LLM call,
+        # rust ran 1.0, and that single difference was the whole +12%
+        # cost gap (actions per task are identical).
+        plan: dict[str, tuple[str, int, int]] = {}
+        # getattr: batch-guard tests build stub agents via object.__new__.
+        if not hasattr(self, "_index_to_selector"):
+            self._index_to_selector = {}
+        if not hasattr(self, "_batch_retargets"):
+            self._batch_retargets = 0
+            self._batch_skips = 0
+        for tc in tool_calls:
+            if tc.name in self._INDEXED_TOOLS and isinstance(tc.args, dict):
+                try:
+                    idx0 = int(tc.args.get("index"))
+                except (TypeError, ValueError):
+                    continue
+                sel = self._index_to_selector.get(idx0)
+                if not sel:
+                    continue
+                same = sorted(
+                    i for i, s in self._index_to_selector.items() if s == sel
+                )
+                plan[tc.id] = (sel, same.index(idx0) if idx0 in same else 0, len(same))
+        snapshot_fresh = False  # True once we re-snapshotted after the last mutation
+
+        async def _retarget(tc: ToolCall) -> tuple[ToolCall | None, str]:
+            """Re-resolve tc's index against a fresh snapshot. Returns
+            (updated call, note) or (None, reason) when the target is gone."""
+            nonlocal snapshot_fresh
+            info = plan.get(tc.id)
+            if info is None:
+                return None, "no identity captured for this target"
+            sel, ordinal, old_count = info
+            if not snapshot_fresh:
+                try:
+                    snap = await asyncio.wait_for(
+                        self.session.dom_snapshot(),
+                        timeout=min(getattr(self, "tool_timeout", 30.0) or 30.0, 30.0),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    return None, f"could not re-snapshot ({str(exc)[:60]})"
+                self._index_to_selector = {e.index: e.selector for e in snap.elements}
+                self._valid_indices = {e.index for e in snap.elements}
+                self._indices_invalidated = False
+                snapshot_fresh = True
+            cands = sorted(i for i, s in self._index_to_selector.items() if s == sel)
+            if len(cands) == 1:
+                new_idx = cands[0]
+            elif cands and len(cands) == old_count and ordinal < len(cands):
+                new_idx = cands[ordinal]
+            else:
+                return None, (
+                    "target element not found on the page after the previous "
+                    "action changed it" if not cands else
+                    "target is ambiguous after the page changed"
+                )
+            old_idx = int(tc.args.get("index"))
+            if new_idx == old_idx:
+                return tc, ""
+            new_args = dict(tc.args)
+            new_args["index"] = new_idx
+            self._batch_retargets += 1
+            logger.info(
+                "agent: batch retarget %s [%d] -> [%d] (%s)", tc.name, old_idx, new_idx, sel
+            )
+            return ToolCall(id=tc.id, name=tc.name, args=new_args), (
+                f" (target re-located: [{old_idx}] is now [{new_idx}])"
+            )
+
         for i, tc in enumerate(tool_calls):
             pair = await self._run_tool(tc)
             results.append(pair)
@@ -5574,6 +5652,7 @@ class Agent:
 
             if tc.name not in self._READ_ONLY_TOOLS:
                 indices_invalidated = True
+                snapshot_fresh = False
                 # Mirror to instance flag so the next-turn validation in
                 # _run_tool also knows the snapshot is stale (covers
                 # single-action turns and any mid-batch _run_tool calls).
@@ -5590,9 +5669,8 @@ class Agent:
                 continue
 
             # Need to filter the remaining calls. Read-only always runs;
-            # indexed runs only if neither URL nor DOM-index assumption
-            # was invalidated (which here means: not at all, since we're
-            # in this branch precisely because something was).
+            # indexed calls are RE-TARGETED against a fresh snapshot
+            # (v0.12.38) unless the page navigated away.
             for skipped in tool_calls[i + 1 :]:
                 if skipped.name in self._READ_ONLY_TOOLS:
                     pair = await self._run_tool(skipped)
@@ -5600,7 +5678,7 @@ class Agent:
                     continue
 
                 # Non-read tool. URL change kills everything; index
-                # invalidation kills indexed tools specifically.
+                # invalidation triggers retargeting for indexed tools.
                 if url_changed:
                     err = (
                         "skipped: page navigated mid-batch; re-plan "
@@ -5609,17 +5687,28 @@ class Agent:
                     )
                     is_error = True
                 elif skipped.name in self._INDEXED_TOOLS:
+                    updated, note = await _retarget(skipped)
+                    if updated is not None:
+                        pair = await self._run_tool(updated)
+                        ar, tm = pair
+                        if note and ar.extracted_content and isinstance(ar.extracted_content, str):
+                            ar.extracted_content = ar.extracted_content + note
+                        results.append((ar, tm))
+                        # This call mutated the page too — the next
+                        # indexed call must re-snapshot again.
+                        indices_invalidated = True
+                        snapshot_fresh = False
+                        self._indices_invalidated = True
+                        continue
                     err = (
-                        "skipped: an earlier action in this batch "
-                        "mutated the DOM; wait for the next fresh "
-                        "snapshot before indexed [N] tools. Do not "
-                        "chain type_text -> click."
+                        f"skipped: {note}; re-plan from the next fresh "
+                        f"snapshot."
                     )
                     is_error = True
+                    self._batch_skips += 1
                     logger.info(
-                        "agent: skipped %s in batch (indices invalidated by "
-                        "earlier mutating action)",
-                        skipped.name,
+                        "agent: skipped %s in batch (retarget failed: %s)",
+                        skipped.name, note,
                     )
                 else:
                     # Index-free non-read (e.g. another scroll, navigate,

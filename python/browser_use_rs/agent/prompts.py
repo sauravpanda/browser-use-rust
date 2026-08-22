@@ -73,6 +73,8 @@ Keep assistant text short. If you need a tool, call the tool; do not write a pro
 
 Check the browser state each step to verify your previous action achieved its goal. When chaining multiple actions, never take consequential actions (submitting forms, clicking consequential buttons) without confirming necessary changes occurred.
 
+Batch 2-3 actions in one turn when the plan on the current page is clear — e.g. `type_text` then `click` the search button, or `click` a filter then `extract_structured_data`. If an earlier action changes the page, later `[N]` targets are re-located by identity (id, label, text) on a fresh snapshot before acting; the batch stops on navigation. Each extra action per turn saves a model turn.
+
 Dynamic pages: if `[N]` returns "index not available" or "no longer present", do NOT retry [N] — the page state has shifted and that index is dead. Read the FRESH snapshot's [N] numbers and pick from those.
 
 
@@ -124,29 +126,19 @@ You receive a fresh page snapshot (URL + numbered interactive elements) at
 the start of every turn — do NOT call a snapshot tool yourself. Reference
 elements by their `[N]` index from the most recent snapshot.
 
-Multi-action turns: emit MULTIPLE tool calls in a single turn when the
-next steps don't depend on each other's output (e.g. `[scroll(800),
-get_text("h1.title")]`, or a sequence of scrolls to reveal a list).
-Calls execute sequentially in the order you provide. The batch STOPS
-automatically if any action navigates to a new URL — subsequent calls
-are skipped because their `[N]` indices were valid only for the page
-you saw at the start of the turn. This means you can plan 2-4 actions
-ahead and have them run without spending an extra LLM turn each.
-
-CRITICAL: Do NOT batch `type_text` followed by `click` (or any indexed
-action). Typing nearly always mutates the DOM — autocomplete dropdowns
-appear, form-validation messages shift elements, suggestion panels open.
-Your `[N]` index for the click was valid BEFORE you typed; after typing,
-the same `[N]` may point to a different element or no element at all.
-The runtime will skip the click and you'll waste a turn. Always:
-  - Type alone (single tool call), wait for the next turn's snapshot,
-    then click the up-to-date index.
-  - Or type and submit the form via Enter if the input supports it
-    (some sites do, in which case no click is needed).
-Safe batches: `[scroll, scroll, page_text]`, `[get_text, get_text]`,
-`[scroll_to_bottom, page_text]`. Risky batches: anything ending in a
-`[N]`-indexed call after a `type_text`, `click`, `upload_file`, or
-`navigate`.
+Multi-action turns: emit MULTIPLE tool calls in a single turn whenever
+you can predict the next 2-3 actions on the same page — e.g.
+`[type_text(index, "query"), click(search_button)]`,
+`[click(filter_option), extract_structured_data(...)]`,
+`[scroll, scroll, page_text]`. Calls execute sequentially in the order
+you provide. If an earlier action changes the page, the runtime
+re-locates each later `[N]` target by its identity (id, label, visible
+text) on a fresh snapshot before acting, so indices shifted by a
+dropdown or a re-render still hit the element you meant; an action
+whose target no longer exists is skipped and reported, and the batch
+stops if the page navigates to a new URL. Every extra action in a turn
+saves a full model turn — batch when the plan is clear, and use a
+single action when the next step depends on what the page will show.
 
 Strategy:
 - Read the page snapshot, then act. After clicks/navigates the next turn's

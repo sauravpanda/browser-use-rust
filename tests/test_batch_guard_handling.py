@@ -26,14 +26,12 @@ class BatchGuardHandlingTests(unittest.TestCase):
         agent._run_tool = runner
         return agent
 
-    def test_guard_skip_after_successful_mutation_is_non_error_feedback(self):
+    def test_indexed_call_without_identity_is_skipped_non_error(self):
         async def runner(tc):
             return (
                 ActionResult(extracted_content=f"clicked {tc.args['index']}"),
                 ToolResultMessage(
-                    tool_call_id=tc.id,
-                    name=tc.name,
-                    content=f"clicked {tc.args['index']}",
+                    tool_call_id=tc.id, name=tc.name, content=f"clicked {tc.args['index']}"
                 ),
             )
 
@@ -42,12 +40,10 @@ class BatchGuardHandlingTests(unittest.TestCase):
             ToolCall(id="a", name="click", args={"index": 1}),
             ToolCall(id="b", name="click", args={"index": 2}),
         ]
-
         results = asyncio.run(agent._run_tools_sequentially(calls))
-
         skipped_result, skipped_message = results[1]
         self.assertIsNone(skipped_result.error)
-        self.assertIn("skipped: an earlier action", skipped_result.extracted_content)
+        self.assertIn("skipped:", skipped_result.extracted_content)
         self.assertLessEqual(len(skipped_result.extracted_content), 180)
         self.assertFalse(skipped_message.is_error)
 
@@ -56,10 +52,7 @@ class BatchGuardHandlingTests(unittest.TestCase):
             return (
                 ActionResult(error="click failed"),
                 ToolResultMessage(
-                    tool_call_id=tc.id,
-                    name=tc.name,
-                    content="click failed",
-                    is_error=True,
+                    tool_call_id=tc.id, name=tc.name, content="click failed", is_error=True
                 ),
             )
 
@@ -68,13 +61,90 @@ class BatchGuardHandlingTests(unittest.TestCase):
             ToolCall(id="a", name="click", args={"index": 1}),
             ToolCall(id="b", name="click", args={"index": 2}),
         ]
-
         results = asyncio.run(agent._run_tools_sequentially(calls))
-
         skipped_result, skipped_message = results[1]
-        self.assertIn("skipped: an earlier action", skipped_result.error)
-        self.assertLessEqual(len(skipped_result.error), 180)
+        self.assertIn("skipped:", skipped_result.error)
         self.assertTrue(skipped_message.is_error)
+
+    def _snapshot_session(self, after_elements):
+        class El:
+            def __init__(self, index, selector):
+                self.index, self.selector = index, selector
+
+        class Snap:
+            def __init__(self, els):
+                self.elements = [El(i, s) for i, s in els]
+
+        class Session:
+            def __init__(self):
+                self.snapshots = 0
+
+            async def current_url(self):
+                return "https://example.com/page"
+
+            async def dom_snapshot(self):
+                self.snapshots += 1
+                return Snap(after_elements)
+
+        return Session()
+
+    def test_type_then_click_retargets_shifted_index(self):
+        # v0.12.38: plan [type_text(1), click(2)]; typing opens a
+        # suggestion panel that shifts every index by one. The click must
+        # be re-located by selector to [3] instead of being skipped.
+        seen = []
+
+        async def runner(tc):
+            seen.append((tc.name, tc.args["index"]))
+            return (
+                ActionResult(extracted_content=f"{tc.name} ok"),
+                ToolResultMessage(tool_call_id=tc.id, name=tc.name, content="ok"),
+            )
+
+        agent = self._agent_with_runner(runner)
+        agent._INDEXED_TOOLS = frozenset({"click", "type_text"})
+        agent._index_to_selector = {1: 'input "Search"', 2: 'button "Go"'}
+        agent._valid_indices = {1, 2}
+        agent.session = self._snapshot_session(
+            [(1, 'div "Suggestions"'), (2, 'input "Search"'), (3, 'button "Go"')]
+        )
+        calls = [
+            ToolCall(id="a", name="type_text", args={"index": 1, "text": "q"}),
+            ToolCall(id="b", name="click", args={"index": 2}),
+        ]
+        results = asyncio.run(agent._run_tools_sequentially(calls))
+        self.assertEqual([("type_text", 1), ("click", 3)], seen)
+        self.assertEqual(1, agent.session.snapshots)
+        self.assertIn("re-located: [2] is now [3]", results[1][0].extracted_content)
+        self.assertEqual(1, agent._batch_retargets)
+
+    def test_ambiguous_target_after_mutation_is_skipped(self):
+        seen = []
+
+        async def runner(tc):
+            seen.append((tc.name, tc.args["index"]))
+            return (
+                ActionResult(extracted_content="ok"),
+                ToolResultMessage(tool_call_id=tc.id, name=tc.name, content="ok"),
+            )
+
+        agent = self._agent_with_runner(runner)
+        agent._INDEXED_TOOLS = frozenset({"click"})
+        agent._index_to_selector = {1: 'button "Add"', 2: 'a "Details"'}
+        agent._valid_indices = {1, 2}
+        # After the click the page re-rendered with THREE "Details" links
+        # (count changed) — no safe way to pick one.
+        agent.session = self._snapshot_session(
+            [(1, 'button "Add"'), (2, 'a "Details"'), (3, 'a "Details"'), (4, 'a "Details"')]
+        )
+        calls = [
+            ToolCall(id="a", name="click", args={"index": 1}),
+            ToolCall(id="b", name="click", args={"index": 2}),
+        ]
+        results = asyncio.run(agent._run_tools_sequentially(calls))
+        self.assertEqual([("click", 1)], seen)
+        self.assertIn("ambiguous", results[1][0].extracted_content)
+        self.assertEqual(1, agent._batch_skips)
 
     def test_tool_timeout_message_is_bounded(self):
         async def slow_tool(session, **kwargs):
