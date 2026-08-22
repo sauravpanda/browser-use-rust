@@ -721,3 +721,91 @@ class SettleBeforeCaptureTests(unittest.TestCase):
         # No evaluate at all (object() session) must not raise either.
         bare = _make_agent(ScriptedLLM([]))
         asyncio.run(bare._settle_before_capture())
+
+
+class ActivateControlTests(unittest.TestCase):
+    """Browser-free checks of activate_control's dispatch logic; the JS
+    search itself is exercised by the headless fixture (scratchpad
+    fixture_chips.html: bare-li delegated chips, below-fold chip)."""
+
+    class _Session:
+        def __init__(self, occluded=False, click_at_ok=True):
+            self.occluded = occluded
+            self.click_at_ok = click_at_ok
+            self.clicked_at = None
+            self.js_clicked = False
+
+        async def evaluate(self, js):
+            import json as _json
+
+            if "__buActivateCandidates = top" in js:
+                return _json.dumps(
+                    {
+                        "hits": 2,
+                        "candidates": [
+                            {
+                                "i": 0,
+                                "tag": "li",
+                                "role": "",
+                                "text": "Review Bytes",
+                                "match": 3,
+                                "evidence": 1,
+                                "ev": ["delegated@ul^1:click"],
+                                "rect": {"x": 10, "y": 20, "w": 100, "h": 30},
+                                "inFrame": False,
+                                "inShadow": False,
+                            }
+                        ],
+                    }
+                )
+            if "scrollIntoView" in js:
+                return _json.dumps(
+                    {"x": 60, "y": 35, "occluded": self.occluded, "href": "http://x/"}
+                )
+            if "el.click()" in js:
+                self.js_clicked = True
+                return "clicked"
+            return ""
+
+        async def click_at(self, x, y):
+            if not self.click_at_ok:
+                raise RuntimeError("cdp down")
+            self.clicked_at = (x, y)
+
+        async def current_url(self):
+            return "http://x/?tab=bytes"
+
+    def test_list_reports_ranked_candidates_without_clicking(self):
+        from browser_use_rs._extra_tools import activate_control
+
+        s = self._Session()
+        out = asyncio.run(activate_control.func(s, "Review Bytes", action="list"))
+        self.assertIn("<li>Review Bytes</li>", out)
+        self.assertIn("delegated@ul^1:click", out)
+        self.assertIsNone(s.clicked_at)
+
+    def test_click_prefers_trusted_cdp_click(self):
+        from browser_use_rs._extra_tools import activate_control
+
+        s = self._Session()
+        out = asyncio.run(activate_control.func(s, "Review Bytes"))
+        self.assertEqual((60.0, 35.0), s.clicked_at)
+        self.assertFalse(s.js_clicked)
+        self.assertIn("URL changed", out)
+        self.assertIn("indices are stale", out)
+
+    def test_occluded_center_falls_back_to_element_click(self):
+        from browser_use_rs._extra_tools import activate_control
+
+        s = self._Session(occluded=True)
+        out = asyncio.run(activate_control.func(s, "Review Bytes"))
+        self.assertIsNone(s.clicked_at)
+        self.assertTrue(s.js_clicked)
+        self.assertIn("occluded", out)
+
+    def test_cdp_failure_falls_back_to_element_click(self):
+        from browser_use_rs._extra_tools import activate_control
+
+        s = self._Session(click_at_ok=False)
+        asyncio.run(activate_control.func(s, "Review Bytes"))
+        self.assertTrue(s.js_clicked)

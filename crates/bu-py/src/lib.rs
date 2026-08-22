@@ -305,6 +305,18 @@ impl BrowserSession {
         })
     }
 
+    fn click_at<'py>(&self, py: Python<'py>, x: f64, y: f64) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        future_into_py(py, async move {
+            let guard = inner.lock().await;
+            let s = guard
+                .as_ref()
+                .ok_or_else(|| map_err("session not started — call start() first"))?;
+            s.click_at(x, y).await.map_err(map_err)?;
+            Ok(())
+        })
+    }
+
     fn upload_file<'py>(
         &self,
         py: Python<'py>,

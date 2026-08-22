@@ -1951,6 +1951,246 @@ def _count_items_in_answer(text: str) -> int | None:
     return None  # no recognisable list shape — skip the guard
 
 
+# ---------------------------------------------------------------------------
+# v0.12.35 (roadmap rank 6): activate_control — on-demand find + operate
+# controls that bu-dom never indexed. Root cause of the 1211 class: bare
+# <li> chips with delegated JS listeners carry no intrinsic tag, role,
+# onclick, or cursor style, so the attribute-only walker renders them as
+# static text. Two ambient-exposure attempts (v0.12.24/25) lost their
+# gates because broad DOM growth costs more than it wins; this is the
+# zero-ambient-cost alternative — the only thing the model sees is one
+# tool description, and the search runs only when called.
+
+_ACTIVATE_SEARCH_JS = r"""
+(() => {
+  const NEEDLE = __NEEDLE__;
+  const needle = NEEDLE.trim().toLowerCase();
+  if (!needle) return JSON.stringify({error: "empty text"});
+  const MAX_HITS = 200, MAX_CANDS = 25;
+  const INTRINSIC = new Set(["a","button","input","select","option","summary","label"]);
+  const ROLES = new Set(["tab","button","option","menuitem","menuitemradio","menuitemcheckbox","link","checkbox","radio","switch","treeitem"]);
+  const EVT = ["click","mousedown","mouseup","pointerdown","pointerup","touchstart","keydown"];
+  const hits = [];
+  function visible(el) {
+    const st = el.ownerDocument.defaultView.getComputedStyle(el);
+    if (st.display === "none" || st.visibility === "hidden") return false;
+    const r = el.getBoundingClientRect();
+    return r.width >= 1 && r.height >= 1;
+  }
+  function ownText(el) {
+    let t = "";
+    for (const n of el.childNodes) if (n.nodeType === 3) t += n.textContent;
+    return t.replace(/\s+/g, " ").trim();
+  }
+  function walk(root) {
+    const w = root.createTreeWalker ? root.createTreeWalker(root, NodeFilter.SHOW_ELEMENT)
+            : root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+    let el;
+    while ((el = w.nextNode()) && hits.length < MAX_HITS) {
+      if (el.shadowRoot) walk(el.shadowRoot);
+      if (el.tagName === "IFRAME") {
+        try { const d = el.contentDocument; if (d && d.body) walk(d.body); } catch (e) {}
+        continue;
+      }
+      const tag = el.tagName.toLowerCase();
+      if (tag === "script" || tag === "style" || tag === "noscript") continue;
+      let txt = ownText(el);
+      let full = "";
+      if (!txt) {
+        full = (el.innerText || "").replace(/\s+/g, " ").trim();
+        if (!full || full.length > 80) continue;
+        txt = full;
+      }
+      const lower = txt.toLowerCase();
+      let score = 0;
+      if (lower === needle) score = 3;
+      else if (lower.startsWith(needle)) score = 2;
+      else if (lower.includes(needle)) score = 1;
+      if (!score) continue;
+      if (!visible(el)) continue;
+      hits.push({el, txt, score});
+    }
+  }
+  walk(document);
+  // Prefer leaves: drop a hit whose subtree contains another hit.
+  const leaf = hits.filter(h => !hits.some(o => o !== h && h.el.contains(o.el)));
+  function listeners(el) {
+    try {
+      if (typeof getEventListeners !== "function") return null;
+      const l = getEventListeners(el) || {};
+      return EVT.filter(k => l[k] && l[k].length);
+    } catch (e) { return null; }
+  }
+  function absRect(el) {
+    const r = el.getBoundingClientRect();
+    let x = r.left, y = r.top, w = el.ownerDocument.defaultView;
+    let guard = 0;
+    while (w && w !== window.top && w.frameElement && guard++ < 8) {
+      const fr = w.frameElement.getBoundingClientRect();
+      x += fr.left; y += fr.top; w = w.parent;
+    }
+    return {x: Math.round(x), y: Math.round(y), w: Math.round(r.width), h: Math.round(r.height)};
+  }
+  const cands = [];
+  for (const h of leaf) {
+    const el = h.el;
+    const tag = el.tagName.toLowerCase();
+    const role = el.getAttribute("role") || "";
+    const ev = [];
+    let evidence = 0;
+    if (INTRINSIC.has(tag)) { ev.push("intrinsic:" + tag); evidence += 3; }
+    if (ROLES.has(role)) { ev.push("role=" + role); evidence += 3; }
+    if (el.hasAttribute("onclick")) { ev.push("onclick"); evidence += 2; }
+    try {
+      if (el.ownerDocument.defaultView.getComputedStyle(el).cursor === "pointer") { ev.push("cursor:pointer"); evidence += 2; }
+    } catch (e) {}
+    if (el.tabIndex >= 0 && !INTRINSIC.has(tag)) { ev.push("tabindex"); evidence += 1; }
+    const own = listeners(el);
+    if (own && own.length) { ev.push("listeners:" + own.join("/")); evidence += 2; }
+    else {
+      let anc = el.parentElement;
+      for (let d = 1; anc && d <= 3; d++, anc = anc.parentElement) {
+        const l = listeners(anc);
+        if (l && l.length) { ev.push("delegated@" + anc.tagName.toLowerCase() + "^" + d + ":" + l.join("/")); evidence += 1; break; }
+      }
+    }
+    if (el.closest("a,button,[role=tab],[role=button]") && !INTRINSIC.has(tag) && !ROLES.has(role)) {
+      ev.push("inside-control"); evidence += 2;
+    }
+    const inFrame = el.ownerDocument !== document;
+    const inShadow = !!(el.getRootNode && el.getRootNode() instanceof ShadowRoot);
+    cands.push({el, tag, role, text: h.txt.slice(0, 80), match: h.score, evidence, ev, rect: absRect(el), inFrame, inShadow});
+  }
+  cands.sort((a, b) => (b.match - a.match) || (b.evidence - a.evidence) || (a.rect.y - b.rect.y));
+  const top = cands.slice(0, MAX_CANDS);
+  window.__buActivateCandidates = top.map(c => c.el);
+  return JSON.stringify({hits: hits.length, candidates: top.map((c, i) => ({
+    i, tag: c.tag, role: c.role, text: c.text, match: c.match, evidence: c.evidence,
+    ev: c.ev, rect: c.rect, inFrame: c.inFrame, inShadow: c.inShadow
+  }))});
+})()
+"""
+
+_ACTIVATE_CLICK_PREP_JS = r"""
+(() => {
+  const list = window.__buActivateCandidates || [];
+  const el = list[__I__];
+  if (!el || !el.isConnected) return JSON.stringify({error: "candidate gone — search again"});
+  try { el.scrollIntoView({block: "center", inline: "center"}); } catch (e) {}
+  const r = el.getBoundingClientRect();
+  let x = r.left + r.width / 2, y = r.top + r.height / 2;
+  let w = el.ownerDocument.defaultView, guard = 0;
+  while (w && w !== window.top && w.frameElement && guard++ < 8) {
+    const fr = w.frameElement.getBoundingClientRect();
+    x += fr.left; y += fr.top; w = w.parent;
+  }
+  let occluded = false;
+  try {
+    const hit = el.ownerDocument.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    occluded = !(hit && (hit === el || el.contains(hit) || hit.contains(el)));
+  } catch (e) {}
+  return JSON.stringify({x: Math.round(x), y: Math.round(y), occluded, href: location.href});
+})()
+"""
+
+_ACTIVATE_JS_CLICK_JS = r"""
+(() => {
+  const el = (window.__buActivateCandidates || [])[__I__];
+  if (!el) return "gone";
+  try { el.click(); return "clicked"; } catch (e) { return "error: " + e; }
+})()
+"""
+
+
+@tool
+async def activate_control(
+    session, text: str, action: str = "click", nth: int = 1
+) -> str:
+    """Find and operate a clickable control by its visible text, even when
+    it is NOT in the indexed element list: tab chips, filter pills, sort
+    options, accordion headers, "Load more" controls built from plain
+    <li>/<div>/<span> with JavaScript listeners, and controls below the
+    fold. Searches the whole page (iframes and shadow DOM included), ranks
+    candidates by evidence of interactivity, scrolls the best match into
+    view and clicks it. Use this when a control you can see in the
+    screenshot or page text has no [index], or when clicking its index did
+    nothing.
+
+    Args:
+        text: Visible text of the control, e.g. "Review Bytes", "Rating",
+            "Load more". Case-insensitive; exact match wins, substring works.
+        action: "click" (default) activates the best match; "list" shows the
+            ranked candidates without clicking.
+        nth: When several candidates match equally, which one to click
+            (1-based, in ranked order). Default 1.
+    """
+    action = (action or "click").strip().lower()
+    raw = await session.evaluate(_ACTIVATE_SEARCH_JS.replace("__NEEDLE__", json.dumps(text)))
+    try:
+        data = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        return f"(unparseable search result: {str(raw)[:200]})"
+    if "error" in data:
+        return f"(activate_control error: {data['error']})"
+    cands = data.get("candidates") or []
+    if not cands:
+        return (
+            f"(no visible element matches {text!r} — check the exact wording "
+            f"with page_text or find_text, or scroll first)"
+        )
+
+    def _line(c: dict) -> str:
+        where = " [iframe]" if c.get("inFrame") else (" [shadow]" if c.get("inShadow") else "")
+        role = f" role={c['role']}" if c.get("role") else ""
+        ev = ", ".join(c.get("ev") or []) or "no interactivity evidence"
+        r = c.get("rect") or {}
+        return (
+            f"{c['i'] + 1}. <{c['tag']}{role}>{c['text']}</{c['tag']}>{where} "
+            f"— {ev} — at ({r.get('x')},{r.get('y')}) {r.get('w')}x{r.get('h')}"
+        )
+
+    if action == "list":
+        head = f"{len(cands)} candidate(s) for {text!r} (ranked; {data.get('hits', 0)} text hits):"
+        return head + "\n" + "\n".join(_line(c) for c in cands[:10])
+
+    idx = max(1, int(nth or 1)) - 1
+    if idx >= len(cands):
+        return f"(only {len(cands)} candidate(s) match {text!r}; nth={nth} is out of range)"
+    chosen = cands[idx]
+    prep_raw = await session.evaluate(_ACTIVATE_CLICK_PREP_JS.replace("__I__", str(idx)))
+    try:
+        prep = json.loads(prep_raw) if prep_raw else {}
+    except json.JSONDecodeError:
+        prep = {}
+    if "error" in prep:
+        return f"(activate_control: {prep['error']})"
+    before_href = prep.get("href") or ""
+    how = ""
+    if not prep.get("occluded") and hasattr(session, "click_at") and prep.get("x") is not None:
+        try:
+            await session.click_at(float(prep["x"]), float(prep["y"]))
+            how = f"trusted click at ({prep['x']},{prep['y']})"
+        except Exception as exc:  # noqa: BLE001 - fall through to JS click
+            how = f"trusted click failed ({str(exc)[:60]}); "
+    if not how or how.endswith("; "):
+        js_res = await session.evaluate(_ACTIVATE_JS_CLICK_JS.replace("__I__", str(idx)))
+        how += f"element.click() → {js_res}"
+        if prep.get("occluded"):
+            how = "occluded at center, " + how
+    await asyncio.sleep(0.3)
+    try:
+        after_href = str(await session.current_url())
+    except Exception:  # noqa: BLE001
+        after_href = ""
+    nav = ""
+    if after_href and before_href and after_href != before_href:
+        nav = f"; URL changed to {after_href}"
+    return (
+        f"activated {_line(chosen)}\nvia {how}{nav}. "
+        f"The page may have changed — the element indices are stale; read the new state."
+    )
+
+
 # Stateless tools as a separate list — agent merges these with the
 # stateful ones via make_extra_tools.
 EXTRA_STATELESS_TOOLS = [
@@ -1967,4 +2207,5 @@ EXTRA_STATELESS_TOOLS = [
     extract_links,     # v0.6.5
     extract_images,    # v0.6.5
     dismiss_cookie_overlay,
+    activate_control,  # v0.12.35
 ]

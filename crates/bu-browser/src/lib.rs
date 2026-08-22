@@ -932,6 +932,14 @@ impl BrowserSession {
         self.dispatch_click(cx, cy).await
     }
 
+    /// v0.12.35: trusted CDP click at viewport coordinates. Public so the
+    /// `activate_control` tool can click candidates that bu-dom never
+    /// indexed (bare `<li>` chips with delegated listeners and the like)
+    /// after resolving their center in JS.
+    pub async fn click_at(&self, x: f64, y: f64) -> Result<()> {
+        self.dispatch_click(x, y).await
+    }
+
     async fn dispatch_click(&self, x: f64, y: f64) -> Result<()> {
         let sid = self.session_id().await;
         self.conn
@@ -1258,6 +1266,11 @@ impl BrowserSession {
                     "expression": expression,
                     "returnByValue": true,
                     "awaitPromise": true,
+                    // v0.12.35: expose the Command Line API so tool JS can
+                    // call getEventListeners(el) for listener attribution
+                    // (delegated-listener chips). Page globals are never
+                    // shadowed — the CLI API only fills undefined names.
+                    "includeCommandLineAPI": true,
                 }),
                 Some(&sid),
             )
