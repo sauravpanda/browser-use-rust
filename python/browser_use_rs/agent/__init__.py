@@ -319,6 +319,18 @@ EPHEMERAL_RESULT_TOOLS_RENDER: frozenset[str] = EPHEMERAL_RESULT_TOOLS | frozens
 # and v0.12.17 render mode so the two renders stay comparable.
 JOURNAL_FIRST_N = 3
 JOURNAL_LAST_M = 12
+# v0.12.39 cache-stable journal. A sliding last-M window rewrites the
+# journal text every step, so the provider's implicit prefix cache
+# stops at line FIRST_N and everything after it (journal tail, native
+# turn, page state) is billed fresh — measured 4.9k fresh tokens/step,
+# 54% of per-step cost on gemini-3-flash. Instead the rendered journal
+# is APPEND-ONLY between rare compactions: the tail grows until it
+# exceeds JOURNAL_TAIL_MAX lines, then compacts once to the last
+# JOURNAL_TAIL_KEEP lines (one cache miss per ~24 steps instead of one
+# per step). Cached lines cost 10% of fresh ones, so showing up to 40
+# recent lines is cheaper than re-sending 12 uncached.
+JOURNAL_TAIL_MAX = 40
+JOURNAL_TAIL_KEEP = 16
 
 BLOCKED_STATE_WINDOW = 8
 BLOCKED_STATE_NUDGE_COUNT = 3
@@ -1190,6 +1202,8 @@ class Agent:
         # v0.12.38 batch retargeting stats (logged; visible in results).
         self._batch_retargets: int = 0
         self._batch_skips: int = 0
+        # v0.12.39: pinned start of the rendered journal tail (0 = none).
+        self._journal_compact_from: int = 0
         # v0.12.31: wall-clock soft deadline. When set, the loop tracks
         # an EWMA of step duration and forces the final answer while
         # there is still time to land it, instead of letting the eval
@@ -4894,18 +4908,7 @@ class Agent:
         # service.py:150-186). Lines list itself is preserved in
         # `_collapsed_history` so we can show more if needed later;
         # only the LLM-facing render is windowed.
-        FIRST_N = JOURNAL_FIRST_N
-        LAST_M = JOURNAL_LAST_M
-        full = self._collapsed_history
-        if len(full) > FIRST_N + LAST_M:
-            omitted = len(full) - FIRST_N - LAST_M
-            rendered_lines = (
-                full[:FIRST_N]
-                + [f"  [... {omitted} earlier step(s) omitted to control context size ...]"]
-                + full[-LAST_M:]
-            )
-        else:
-            rendered_lines = full
+        rendered_lines = self._window_journal(self._collapsed_history)
 
         # Inject (or refresh) the [AGENT_HISTORY] message at the FRONT
         # of self._messages, right after the initial user task. This
@@ -5168,6 +5171,30 @@ class Agent:
             return None
         return choice
 
+    def _window_journal(self, full: list[str]) -> list[str]:
+        """v0.12.39: append-only journal view with rare compaction.
+
+        Returns first-N + "[K omitted]" + tail, where the tail START is
+        pinned (``_journal_compact_from``) and only moves when the tail
+        exceeds JOURNAL_TAIL_MAX lines. Between compactions each step
+        only APPENDS a line, so the rendered text of step k is a prefix
+        of step k+1's and the provider cache covers it.
+        """
+        n = len(full)
+        cf = getattr(self, "_journal_compact_from", 0)
+        if n - cf > JOURNAL_TAIL_MAX and n > JOURNAL_FIRST_N + JOURNAL_TAIL_KEEP:
+            cf = n - JOURNAL_TAIL_KEEP
+            self._journal_compact_from = cf
+            logger.info("agent: journal compacted (tail now starts at line %d of %d)", cf, n)
+        if cf <= JOURNAL_FIRST_N:
+            return list(full)
+        omitted = cf - JOURNAL_FIRST_N
+        return (
+            full[:JOURNAL_FIRST_N]
+            + [f"  [... {omitted} earlier step(s) omitted to control context size ...]"]
+            + full[cf:]
+        )
+
     def _render_journal_lines(self, *, exclude_last: bool) -> list[str]:
         """Render the machine-derived action journal from self._history.
 
@@ -5310,19 +5337,7 @@ class Agent:
         )
         journal_msgs: list[Message] = []
         if journal_lines:
-            full = journal_lines
-            if len(full) > JOURNAL_FIRST_N + JOURNAL_LAST_M:
-                omitted = len(full) - JOURNAL_FIRST_N - JOURNAL_LAST_M
-                rendered_lines = (
-                    full[:JOURNAL_FIRST_N]
-                    + [
-                        f"  [... {omitted} earlier step(s) omitted to "
-                        f"control context size ...]"
-                    ]
-                    + full[-JOURNAL_LAST_M:]
-                )
-            else:
-                rendered_lines = full
+            rendered_lines = self._window_journal(journal_lines)
             journal_msgs.append(
                 UserMessage(
                     content=(
