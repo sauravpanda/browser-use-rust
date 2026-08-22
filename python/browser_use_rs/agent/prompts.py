@@ -73,7 +73,7 @@ Keep assistant text short. If you need a tool, call the tool; do not write a pro
 
 Check the browser state each step to verify your previous action achieved its goal. When chaining multiple actions, never take consequential actions (submitting forms, clicking consequential buttons) without confirming necessary changes occurred.
 
-Batch 2-3 actions in one turn when the plan on the current page is clear — e.g. `type_text` then `click` the search button, or `click` a filter then `extract_structured_data`. If an earlier action changes the page, later `[N]` targets are re-located by identity (id, label, text) on a fresh snapshot before acting; the batch stops on navigation. Each extra action per turn saves a model turn.
+Default to 2-3 actions per turn. Plan the next few actions on the current page and emit them together — `type_text` then `click` the search button; `click` a filter then `extract_structured_data`; `scroll` then `extract_result_cards`; `select_dropdown` then `click` apply. If an earlier action changes the page, later `[N]` targets are re-located by identity (id, label, text) on a fresh snapshot before acting, and the batch stops on navigation, so batching is safe. Use a single action only when the next step genuinely depends on page content you have not seen yet. Every extra action per turn saves a full model turn.
 
 Dynamic pages: if `[N]` returns "index not available" or "no longer present", do NOT retry [N] — the page state has shifted and that index is dead. Read the FRESH snapshot's [N] numbers and pick from those.
 
