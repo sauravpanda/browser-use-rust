@@ -962,7 +962,24 @@ impl BrowserSession {
                 let occluded = false;
                 try {{
                     const hit = el.ownerDocument.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-                    occluded = !(hit && (hit === el || el.contains(hit) || hit.contains(el)));
+                    if (hit && hit !== el && !el.contains(hit) && !hit.contains(el)) {{
+                        // v0.12.37: only TRUE overlays count — fixed/sticky
+                        // surfaces and dialogs (modals, cookie banners,
+                        // sticky headers). Stretched-link siblings and
+                        // transparent hit-targets are legitimate click
+                        // receivers, and a synthetic click on the element
+                        // beneath them loses user activation (popup-blocked
+                        // target=_blank, ignored isTrusted checks). The
+                        // v0.12.36 rule flagged those too and printed 76.3.
+                        let n = hit;
+                        for (let d = 0; n && d < 4; d++, n = n.parentElement) {{
+                            const cs = n.ownerDocument.defaultView.getComputedStyle(n);
+                            if (cs.position === 'fixed' || cs.position === 'sticky'
+                                || n.tagName === 'DIALOG' || n.getAttribute('role') === 'dialog') {{
+                                occluded = true; break;
+                            }}
+                        }}
+                    }}
                 }} catch (e) {{}}
                 return {{ x: x + r.width / 2, y: y + r.height / 2, occluded }};
             }})()"#,
