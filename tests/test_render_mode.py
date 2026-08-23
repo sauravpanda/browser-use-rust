@@ -811,31 +811,18 @@ class ActivateControlTests(unittest.TestCase):
         self.assertTrue(s.js_clicked)
 
 
-class CacheStableJournalTests(unittest.TestCase):
-    def test_journal_is_append_only_between_compactions(self):
-        from browser_use_rs.agent import JOURNAL_TAIL_MAX, JOURNAL_TAIL_KEEP, JOURNAL_FIRST_N
+class JournalWindowTests(unittest.TestCase):
+    def test_sliding_window_shape(self):
+        from browser_use_rs.agent import JOURNAL_FIRST_N, JOURNAL_LAST_M
 
         agent = _make_agent(ScriptedLLM([]))
-        lines = [f"<step {i}> poke -> ok" for i in range(1, 60)]
-        prev = None; compactions = 0
-        for k in range(1, len(lines) + 1):
-            view = "\n".join(agent._window_journal(lines[:k]))
-            if prev is not None:
-                if view.startswith(prev):
-                    pass  # append-only: cache-stable step
-                else:
-                    compactions += 1
-            prev = view
-        # 59 steps with a 40-line tail cap → at most 2 compactions, never
-        # one per step (the old sliding window broke the prefix 44 times).
-        self.assertLessEqual(compactions, 2)
-        final = agent._window_journal(lines)
-        self.assertTrue(final[0].startswith("<step 1>"))
-        self.assertTrue(any("omitted" in l for l in final))
-        self.assertGreaterEqual(len(final), JOURNAL_FIRST_N + 1 + JOURNAL_TAIL_KEEP)
-        self.assertLessEqual(len(final), JOURNAL_FIRST_N + 1 + JOURNAL_TAIL_MAX)
+        lines = [f"<step {i}>" for i in range(1, 60)]
+        view = agent._window_journal(lines)
+        self.assertEqual(JOURNAL_FIRST_N + 1 + JOURNAL_LAST_M, len(view))
+        self.assertIn("omitted", view[JOURNAL_FIRST_N])
+        self.assertEqual(lines[-1], view[-1])
 
     def test_short_journal_is_rendered_in_full(self):
         agent = _make_agent(ScriptedLLM([]))
-        lines = [f"<step {i}>" for i in range(1, 20)]
+        lines = [f"<step {i}>" for i in range(1, 12)]
         self.assertEqual(lines, agent._window_journal(lines))
